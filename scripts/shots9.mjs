@@ -1,0 +1,12 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch();
+const p = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+await p.goto("http://localhost:3000/", { waitUntil: "networkidle" });
+await p.waitForTimeout(1300);
+await p.screenshot({ path: "tmp/shots3/doodle-hero.png" });
+const m = await browser.newPage({ viewport: { width: 390, height: 844 } });
+await m.goto("http://localhost:3000/", { waitUntil: "networkidle" });
+await m.waitForTimeout(1300);
+await m.screenshot({ path: "tmp/shots3/doodle-hero-mobile.png" });
+await m.close(); await p.close(); await browser.close();
+console.log("done");

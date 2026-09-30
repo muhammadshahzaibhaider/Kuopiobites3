@@ -1,0 +1,23 @@
+import { chromium } from "playwright";
+import { mkdirSync } from "fs";
+mkdirSync("tmp/shots3", { recursive: true });
+const browser = await chromium.launch();
+const p = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+await p.goto("http://localhost:3000/", { waitUntil: "networkidle" });
+await p.evaluate(async () => { const h = document.body.scrollHeight; for (let y = 0; y < h; y += 500) { window.scrollTo(0, y); await new Promise(r => setTimeout(r, 100)); } });
+await p.evaluate(() => window.scrollTo(0, 1450)); await p.waitForTimeout(500);
+await p.screenshot({ path: "tmp/shots3/cats-top.png" });
+await p.evaluate(() => window.scrollTo(0, 2050)); await p.waitForTimeout(500);
+await p.screenshot({ path: "tmp/shots3/cats-bottom.png" });
+await p.close();
+// menu drinks + dips categories
+const q = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+await q.goto("http://localhost:3000/menu?cat=drinks", { waitUntil: "networkidle" });
+await q.waitForTimeout(800);
+await q.screenshot({ path: "tmp/shots3/menu-drinks.png" });
+await q.goto("http://localhost:3000/menu?cat=dips", { waitUntil: "networkidle" });
+await q.waitForTimeout(800);
+await q.screenshot({ path: "tmp/shots3/menu-dips.png" });
+await q.close();
+await browser.close();
+console.log("done");

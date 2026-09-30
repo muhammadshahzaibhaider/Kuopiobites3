@@ -1,0 +1,10 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch();
+const p = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+await p.goto("http://localhost:3000/menu?cat=kebab", { waitUntil: "networkidle" });
+await p.waitForTimeout(1000);
+await p.evaluate(() => window.scrollTo(0, 500));
+await p.waitForTimeout(500);
+await p.screenshot({ path: "tmp/shots3/menu-kebab.png" });
+await p.close(); await browser.close();
+console.log("done");

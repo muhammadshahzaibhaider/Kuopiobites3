@@ -1,0 +1,10 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch();
+const p = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+await p.goto("http://localhost:3000/", { waitUntil: "networkidle" });
+await p.waitForTimeout(1200);
+await p.evaluate(() => window.scrollTo(0, 700));
+await p.waitForTimeout(600);
+await p.screenshot({ path: "tmp/shots3/hero-img.png" });
+await p.close(); await browser.close();
+console.log("done");

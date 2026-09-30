@@ -1,0 +1,12 @@
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+next-env.d.ts
+.DS_Store
+.env*
+!.env.example
+/tmp/
+/uploads/
+/backend/data/*.db*
+/.sudo_as_admin_successful

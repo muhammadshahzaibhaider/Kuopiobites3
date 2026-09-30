@@ -1,0 +1,21 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+await page.goto("http://localhost:3000/", { waitUntil: "networkidle" });
+await page.waitForTimeout(1000);
+const probe = async (y) => page.evaluate(async (v) => {
+  window.scrollTo(0, v);
+  await new Promise((r) => setTimeout(r, 350));
+  const img = document.querySelector(".fixed-bg img");
+  const r = img.getBoundingClientRect();
+  return { y: v, rect: [r.x, r.y, r.width, r.height].map((n) => Math.round(n * 100) / 100), transform: img.style.transform || getComputedStyle(img).transform };
+}, y);
+const a = await probe(0);
+const b = await probe(1500);
+const c = await probe(3000);
+console.log(JSON.stringify({ a, b, c }, null, 2));
+console.log("IDENTICAL:", JSON.stringify(a.rect) === JSON.stringify(b.rect) && JSON.stringify(b.rect) === JSON.stringify(c.rect));
+await page.evaluate(() => window.scrollTo(0, 1500));
+await page.waitForTimeout(300);
+await page.screenshot({ path: "tmp/shots4/static-1500.png" });
+await browser.close();
