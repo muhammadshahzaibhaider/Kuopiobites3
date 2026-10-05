@@ -84,9 +84,10 @@ export default function AboutPage() {
               className="rounded-3xl border border-cherry/10 bg-cream-deep p-7 shadow-card"
               onSubmit={(e) => {
                 e.preventDefault();
-                // STUB → POST /api/contact
+                /* Contact delivery is intentionally not faked in the browser. Wire
+                   this form to the backend mail/ticket provider before launch. */
                 setF({ name: "", email: "", msg: "" });
-                toast("Message sent — kiitos! We reply within a day.");
+                toast("Contact delivery is not configured yet — please email us.", "err");
               }}
             >
               <h3 className="font-display text-xl font-black text-cherry">{t("about.write")}</h3>

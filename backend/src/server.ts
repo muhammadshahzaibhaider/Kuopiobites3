@@ -1,468 +1,901 @@
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
+import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import bcrypt from "bcryptjs";
+import { createHmac, randomBytes, timingSafeEqual, createHash } from "node:crypto";
+import Stripe from "stripe";
 import { CFG } from "./config";
-import { db, getJSON, setJSON, logActivity } from "./db";
+import { authClient, db as supabaseDb, logActivity } from "./supabase";
+import { getItem, listCategories, listItems, toDatabaseItem } from "./supabase-menu";
+import { getOrder, listCustomerOrders, listOrders } from "./supabase-orders";
+import { saveSettings } from "./supabase-settings";
 import {
-  readAuth, requireCustomer, requireStaff, signCustomer, signStaff, staffRow, type TokenPayload,
+  clearSessionCookies, currentAuth, customerRow, ensureCsrfCookie, issueCustomerSession, issueStaffSession,
+  readAuth, requireCustomer, requireStaff, staffById, staffRow, csrfCookie,
+  type Role, type TokenPayload,
 } from "./auth";
 import { effectiveItems, loadSettings, orderStatus, priceCart, validateOrder } from "./logic";
+import { openInfo } from "./lib/hours";
 import type { CartLine, MenuItem, Order, Reservation, Settings, User } from "./lib/types";
+import {
+  accountPatchSchema, cartSchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema, customerOrderSchema,
+  loginSchema, menuItemSchema, paramId, promotionPatchSchema, registerSchema, reorderSchema, reservationSchema,
+  settingsSchema, specialPatchSchema, staffLoginSchema, statusSchema, translationSchema, newsletterSchema,
+} from "./schemas";
+import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
 
 const app = express();
-app.use(express.json({ limit: "8mb" }));
+app.set("trust proxy", CFG.isProduction ? 1 : false);
+
+/* Security headers apply to JSON, media, and error responses. The browser CSP
+   itself is also set by Next.js; this API policy is intentionally conservative. */
+app.use(helmet({
+  contentSecurityPolicy: false,
+  hsts: CFG.isProduction ? { maxAge: 63_072_000, includeSubDomains: true, preload: true } : false,
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+}));
+app.use((req, res, next) => {
+  const requestId = (req.headers["x-request-id"] as string | undefined)?.match(/^[A-Za-z0-9._-]{8,80}$/)?.[0]
+    ?? randomBytes(12).toString("hex");
+  (req as any).requestId = requestId;
+  res.setHeader("X-Request-ID", requestId);
+  res.setHeader("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(self)");
+  res.setHeader("X-Permitted-Cross-Domain-Policies", "none");
+  next();
+});
+
+if (CFG.isProduction) {
+  app.use((req, res, next) => {
+    const forwarded = String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim();
+    if (req.secure || forwarded === "https") return next();
+    return res.status(400).json({ error: "https.required" });
+  });
+}
+
 app.use(
   cors({
     origin: (origin, cb) => {
-      // same-origin tools (curl) send no origin — allow; browsers must be on the allowlist
+      /* No Origin is not a browser CORS request (health checks/CLI); browser
+         origins must match one configured origin byte-for-byte. */
       if (!origin || CFG.corsOrigins.includes(origin)) return cb(null, true);
       return cb(new Error("CORS: origin not allowed"));
     },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-CSRF-Token", "X-Session-Scope", "X-Request-ID"],
+    exposedHeaders: ["X-Request-ID"],
+    optionsSuccessStatus: 204,
   })
 );
-app.use(readAuth);
 
-const uid = (p: string) => p + "-" + Math.random().toString(36).slice(2, 8).toUpperCase();
-const ok = (res: Response, data: unknown, code = 200) => res.status(code).json({ data });
+/* Stripe webhooks must receive the exact raw bytes before express.json runs. */
+app.post(
+  "/api/webhooks/stripe",
+  express.raw({ type: "application/json", limit: "1mb" }),
+  async (req, res, next) => {
+    try {
+      await handleStripeWebhook(req, res);
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.use(express.json({ limit: CFG.jsonBodyLimit, strict: true }));
+app.use((req, res, next) => {
+  if (req.path.startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
+  next();
+});
+app.use((req, res, next) => {
+  ensureCsrfCookie(res, req);
+  next();
+});
+app.use(readAuth);
+app.use((req, res, next) => {
+  const mutating = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
+  const exempt = req.path === "/api/auth/csrf" || req.path === "/api/webhooks/stripe";
+  if (mutating && !exempt && !csrfMatches(req)) return res.status(403).json({ error: "csrf.invalid" });
+  next();
+});
+
+const businessError = /^(?:auth\.|avail\.|order\.|pre\.|preorder\.|resv\.|item\.|payment\.|validation\.|account\.|promo\.|https\.)/;
 const fail = (res: Response, code: number, error: string) => res.status(code).json({ error });
+const ok = (res: Response, data: unknown, code = 200) => res.status(code).json({ data });
 const wrap =
-  (fn: (req: Request, res: Response) => unknown) =>
+  (fn: (req: Request, res: Response) => unknown | Promise<unknown>) =>
   async (req: Request, res: Response, next: NextFunction) => {
     try {
       await fn(req, res);
-    } catch (e) {
-      if (e instanceof z.ZodError)
-        return fail(res, 400, "validation: " + e.issues.map((i) => i.path.join(".") + " " + i.message).join(", "));
-      const msg = e instanceof Error ? e.message : "internal";
-      if (msg.startsWith("avail.") || msg.startsWith("order.") || msg.startsWith("preorder."))
-        return fail(res, 400, msg);
-      next(e);
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        safeLogError((req as any).requestId || "unknown", new Error(`validation failed: ${error.issues.map((issue) => issue.path.join(".")).join(",")}`));
+        return fail(res, 400, "validation.failed");
+      }
+      const message = error instanceof Error ? error.message : "internal";
+      if (message === "auth.emailUnavailable" || message === "payment.unavailable" || message === "payment.required")
+        return fail(res, 503, message);
+      if (businessError.test(message)) return fail(res, 400, message);
+      next(error);
     }
   };
 
-/* rate limits on abuse-prone public endpoints */
-const authLimiter = rateLimit({ windowMs: 60_000, max: 10, standardHeaders: true });
-const orderLimiter = rateLimit({ windowMs: 15 * 60_000, max: 30 });
-const resvLimiter = rateLimit({ windowMs: 15 * 60_000, max: 20 });
+const uid = (prefix: string) => `${prefix}-${randomBytes(9).toString("base64url")}`;
+const publicUser = (row: any): Omit<User, "pass"> => ({
+  id: row.id,
+  name: row.name,
+  email: row.email,
+  phone: row.phone || "",
+  addresses: JSON.parse(row.addresses || "[]"),
+  marketing: Boolean(row.marketing),
+  createdAt: row.created_at,
+} as Omit<User, "pass">);
+const authUser = (req: Request) => (req as any).customer as any;
+const authStaff = (req: Request) => (req as any).staff as { id: string; username: string; role: Role };
 
-/* ── health / public reads ─────────────────────────────────────────────── */
-app.get("/api/health", (_req, res) => ok(res, { status: "ok", ts: Date.now() }));
+const authLimiter = rateLimit({ windowMs: CFG.rate.authWindowMs, limit: CFG.rate.authMax, standardHeaders: "draft-7", legacyHeaders: false });
+const loginLimiter = rateLimit({ windowMs: CFG.rate.loginWindowMs, limit: CFG.rate.loginMax, standardHeaders: "draft-7", legacyHeaders: false });
+const orderLimiter = rateLimit({ windowMs: CFG.rate.orderWindowMs, limit: CFG.rate.orderMax, standardHeaders: "draft-7", legacyHeaders: false });
+const resvLimiter = rateLimit({ windowMs: CFG.rate.reservationWindowMs, limit: CFG.rate.reservationMax, standardHeaders: "draft-7", legacyHeaders: false });
+const uploadLimiter = rateLimit({ windowMs: CFG.rate.uploadWindowMs, limit: CFG.rate.uploadMax, standardHeaders: "draft-7", legacyHeaders: false });
+const newsletterLimiter = rateLimit({ windowMs: CFG.rate.newsletterWindowMs, limit: CFG.rate.newsletterMax, standardHeaders: "draft-7", legacyHeaders: false });
 
-app.get("/api/categories", (_req, res) =>
-  ok(res, db.prepare(`SELECT id, title, en FROM categories ORDER BY sort`).all())
-);
-
-app.get("/api/items", (req, res) => {
-  const rows = (
-    req.query.cat
-      ? db.prepare(`SELECT data FROM items WHERE cat = ? ORDER BY sort`).all(String(req.query.cat))
-      : db.prepare(`SELECT data FROM items ORDER BY sort`).all()
-  ) as { data: string }[];
-  ok(res, rows.map((r) => JSON.parse(r.data)));
-});
-
-app.get("/api/items/:id", (req, res) => {
-  const row = db.prepare(`SELECT data FROM items WHERE id = ?`).get(req.params.id) as
-    | { data: string } | undefined;
-  if (!row) return fail(res, 404, "item.notFound");
-  ok(res, JSON.parse(row.data));
-});
-
-app.get("/api/settings", (_req, res) => {
-  const s = { ...loadSettings() } as Partial<Settings>;
-  delete (s as any).audit; // audit trail is staff-only (see /api/admin/activity)
-  ok(res, s);
-});
-
-app.get("/api/translations", (_req, res) => {
-  const rows = db.prepare(`SELECT lang, key, value FROM translations`).all() as {
-    lang: string; key: string; value: string;
-  }[];
-  const out: Record<string, Record<string, string>> = {};
-  for (const r of rows) (out[r.lang] ??= {})[r.key] = r.value;
-  ok(res, out);
-});
-
-app.get("/api/todays-special", (_req, res) => {
-  const s = loadSettings();
-  ok(res, { special: s.special, todaysSpecials: s.todaysSpecials });
-});
-
-/* ── auth ──────────────────────────────────────────────────────────────── */
-const registerSchema = z.object({
-  name: z.string().min(1).max(80),
-  email: z.string().email().max(120),
-  pass: z.string().min(4).max(120),
-  phone: z.string().max(30).optional(),
-});
-app.post("/api/auth/register", authLimiter, wrap((req, res) => {
-  const b = registerSchema.parse(req.body);
-  const exists = db.prepare(`SELECT id FROM users WHERE lower(email) = lower(?)`).get(b.email);
-  if (exists) return fail(res, 409, "auth.exists");
-  const u = {
-    id: uid("u"), name: b.name, email: b.email, phone: b.phone ?? "",
-    addresses: [], marketing: false, createdAt: Date.now(),
-  };
-  db.prepare(
-    `INSERT INTO users (id, name, email, pass_hash, phone, addresses, marketing, created_at)
-     VALUES (?, ?, ?, ?, ?, '[]', 0, ?)`
-  ).run(u.id, u.name, u.email, bcrypt.hashSync(b.pass, 10), u.phone, u.createdAt);
-  ok(res, { token: signCustomer(u.id, u.name), user: u }, 201);
+app.get("/api/health", wrap(async (_req, res) => {
+  const { error } = await supabaseDb.from("categories").select("id").limit(1);
+  if (error) throw error;
+  ok(res, { status: "ok", ts: Date.now() });
 }));
 
-app.post("/api/auth/login", authLimiter, wrap((req, res) => {
-  const b = z.object({ email: z.string().email(), pass: z.string() }).parse(req.body);
-  const row = db.prepare(`SELECT * FROM users WHERE lower(email) = lower(?)`).get(b.email) as
-    | (User & { pass_hash: string }) | undefined;
-  if (!row || !bcrypt.compareSync(b.pass, row.pass_hash)) return fail(res, 401, "auth.badCredentials");
-  const { pass_hash, ...user } = row;
-  ok(res, { token: signCustomer(row.id, row.name), user });
+app.get("/api/categories", wrap(async (_req, res) => ok(res, await listCategories())));
+app.get("/api/items", wrap(async (req, res) => {
+  const query = z.object({ cat: z.string().max(40).optional() }).strict().parse(req.query);
+  ok(res, await listItems(query.cat));
 }));
 
-app.post("/api/auth/admin-login", authLimiter, wrap((req, res) => {
-  const b = z.object({ username: z.string().max(40), password: z.string().max(120) }).parse(req.body);
-  const row = staffRow(b.username);
-  if (!row || !bcrypt.compareSync(b.password, row.pass_hash)) return fail(res, 401, "auth.badCredentials");
-  logActivity(row.username, row.role, "staff login");
-  ok(res, { token: signStaff(row.id, row.role, row.username), role: row.role });
-}));
+app.get("/api/items/:id", wrap(async (req, res) => {
+    const id = paramId.parse(req.params.id);
+    const item = await getItem(id);
+    if (!item) return fail(res, 404, "item.notFound");
+    ok(res, item);
+  }));
 
-/* stateless JWTs: logout = client discards the token */
-app.post("/api/auth/logout", (_req, res) => ok(res, { ok: true }));
+  app.get("/api/settings", wrap(async (_req, res) => {
+    const { audit: _audit, ...publicSettings } = await loadSettings();
+    ok(res, publicSettings);
+  }));
 
-/* ── server-side pricing (the price authority) ─────────────────────────── */
-const cartSchema = z.object({
-  lines: z.array(z.object({
-    itemId: z.string(), qty: z.number().int().min(1).max(99),
-    variantLabel: z.string(), options: z.array(z.string()).default([]),
-    pizza: z.object({
-      sizeLabel: z.string(), included: z.array(z.string()),
-      extras: z.array(z.object({ label: z.string(), count: z.number().int().min(1).max(9) })),
-      builder: z.boolean().optional(),
-    }).optional(),
-  })).min(1),
-  type: z.enum(["pickup", "delivery"]).default("pickup"),
-  lang: z.enum(["en", "fi"]).default("en"),
-  code: z.string().optional(),
-});
-app.post("/api/cart/price", wrap((req, res) => {
-  const b = cartSchema.parse(req.body);
-  ok(res, priceCart(loadSettings(), b.lines as CartLine[], b.type, b.lang, b.code));
-}));
+  app.get("/api/translations", wrap(async (_req, res) => {
+    const { data, error } = await supabaseDb.from("translation_strings").select("key, value_en, value_fi").limit(10000);
+    if (error) throw error;
+    const out: Record<string, Record<string, string>> = { en: {}, fi: {} };
+    for (const row of data ?? []) {
+      out.en[row.key] = row.value_en;
+      if (row.value_fi) out.fi[row.key] = row.value_fi;
+    }
+    ok(res, out);
+  }));
 
-/* ── orders ────────────────────────────────────────────────────────────── */
-const orderSchema = z.object({
-  type: z.enum(["pickup", "delivery"]),
-  customer: z.object({ name: z.string().min(1), email: z.string().email(), phone: z.string().min(3) }),
-  address: z.string().optional(), note: z.string().max(400).optional(),
-  lines: cartSchema.shape.lines.min(1),
-  total: z.number().min(0),
-  scheduled: z.object({ date: z.string(), time: z.string() }).optional(),
-  lang: z.enum(["en", "fi"]).optional(), code: z.string().optional(),
-});
-app.post("/api/orders", orderLimiter, requireCustomer, wrap((req, res) => {
-  const b = orderSchema.parse(req.body);
-  const auth = (req as any).auth as TokenPayload;
-  const s = loadSettings();
-  const priced = validateOrder(s, { ...b, lines: b.lines as CartLine[] });
-  if (b.type === "delivery" && priced.total < s.minOrder) return fail(res, 400, "order.minOrder");
-  const order: Order = {
-    id: uid("KB"), createdAt: Date.now(), type: b.type, customer: b.customer,
-    address: b.address, note: b.note, lines: priced.lines, subtotal: priced.subtotal,
-    deliveryFee: priced.deliveryFee, discount: priced.discount, total: priced.total,
-    vat: priced.vat, scheduled: b.scheduled, paymentId: "pi_" + Math.random().toString(36).slice(2),
-    userId: auth.sub,
-  };
-  db.prepare(`INSERT INTO orders (id, user_id, created_at, data) VALUES (?, ?, ?, ?)`)
-    .run(order.id, auth.sub, order.createdAt, JSON.stringify(order));
-  if (priced.discount?.offerId) {
-    const offers = s.offers.map((o) =>
-      o.id === priced.discount!.offerId ? { ...o, uses: (o.uses ?? 0) + 1 } : o);
-    setJSON("settings", { ...s, offers });
+  app.get("/api/todays-special", wrap(async (_req, res) => {
+    const settings = await loadSettings();
+    ok(res, { special: settings.special, todaysSpecials: settings.todaysSpecials });
+  }));
+
+  app.post("/api/newsletter", newsletterLimiter, wrap(async (req, res) => {
+    const { email } = newsletterSchema.parse(req.body);
+    const { error } = await supabaseDb.from("newsletter_subscribers").upsert(
+      { email: email.toLowerCase(), subscribed_at: new Date().toISOString() },
+      { onConflict: "email", ignoreDuplicates: true }
+    );
+    if (error) throw error;
+    ok(res, { subscribed: true });
+  }));
+
+  app.get("/api/auth/csrf", (req, res) => ok(res, { csrfToken: ensureCsrfCookie(res, req) }));
+  app.get("/api/auth/session", wrap(async (req, res) => {
+    const auth = currentAuth(req);
+    if (!auth) return ok(res, { user: null, role: null });
+    if (auth.scope === "customer") {
+      const row = await customerRow(auth.sub);
+      const verified = Boolean((req as any).supabaseUser?.email_confirmed_at);
+      return ok(res, { user: row && verified ? publicUser(row) : null, role: null });
+    }
+    const row = await staffById(auth.sub);
+    return ok(res, { user: null, role: row?.role ?? null });
+  }));
+
+  app.post("/api/auth/register", authLimiter, wrap(async (req, res) => {
+    const b = registerSchema.parse(req.body);
+    const { data, error } = await authClient().auth.signUp({
+      email: b.email,
+      password: b.pass,
+      options: { data: { name: b.name, phone: b.phone ?? null }, emailRedirectTo: `${CFG.publicWebUrl}/auth/confirm` },
+    });
+    if (error || !data.user) return fail(res, error?.code === "user_already_exists" ? 409 : 400, "auth.register");
+    if (data.session) issueCustomerSession(res, data.session.access_token, data.session.refresh_token);
+    const profile = await customerRow(data.user.id);
+    const user = profile ? publicUser(profile) : {
+      id: data.user.id, name: b.name, email: b.email, phone: b.phone ?? "", addresses: [], marketing: false, createdAt: Date.now(),
+    };
+    ok(res, { user, needsConfirmation: !data.session }, 201);
+  }));
+
+  async function verifyLogin(scope: "customer" | "staff", identifier: string, password: string, ip: string) {
+    const lockedUntil = loginIsLocked(scope, identifier, ip);
+    if (lockedUntil) return { lockedUntil, row: null, session: null, emailNotConfirmed: false } as const;
+    const staff = scope === "staff" ? await staffRow(identifier) : undefined;
+    const email = scope === "customer" ? identifier : staff?.email;
+    const { data, error } = await authClient().auth.signInWithPassword({
+      email: email ?? "missing-user@example.invalid",
+      password,
+    });
+    const correctIdentity = scope !== "staff" || Boolean(staff && data.user?.id === staff.id);
+    const row = data.user && correctIdentity
+      ? scope === "customer" ? await customerRow(data.user.id) : staff
+      : undefined;
+    if (error || !data.session || !row) {
+      if (error?.code === "email_not_confirmed") return { lockedUntil: 0, row: null, session: null, emailNotConfirmed: true } as const;
+      const lock = recordLoginFailure(scope, identifier, ip);
+      return { lockedUntil: lock || 0, row: null, session: null, emailNotConfirmed: false } as const;
+    }
+    clearLoginFailures(scope, identifier, ip);
+    return { row, session: data.session, lockedUntil: 0, emailNotConfirmed: false } as const;
   }
+
+  app.post("/api/auth/login", loginLimiter, wrap(async (req, res) => {
+    const b = loginSchema.parse(req.body);
+    const result = await verifyLogin("customer", b.email, b.pass, requestIp(req));
+    if (result.lockedUntil) {
+      res.setHeader("Retry-After", String(Math.max(1, Math.ceil((result.lockedUntil - Date.now()) / 1000))));
+      return fail(res, 429, "auth.tooManyAttempts");
+    }
+    if (result.emailNotConfirmed) return fail(res, 403, "auth.emailNotConfirmed");
+    if (!result.row || !result.session) return fail(res, 401, "auth.badCredentials");
+    issueCustomerSession(res, result.session.access_token, result.session.refresh_token);
+    ok(res, { user: publicUser(result.row) });
+  }));
+
+  app.post("/api/auth/admin-login", loginLimiter, wrap(async (req, res) => {
+    const b = staffLoginSchema.parse(req.body);
+    const result = await verifyLogin("staff", b.username, b.password, requestIp(req));
+    if (result.lockedUntil) {
+      res.setHeader("Retry-After", String(Math.max(1, Math.ceil((result.lockedUntil - Date.now()) / 1000))));
+      return fail(res, 429, "auth.tooManyAttempts");
+    }
+    if (result.emailNotConfirmed) return fail(res, 403, "auth.emailNotConfirmed");
+    if (!result.row || !result.session) return fail(res, 401, "auth.badCredentials");
+    const staff = result.row as { username: string; role: Role };
+    issueStaffSession(res, result.session.access_token, result.session.refresh_token);
+    logActivity(staff.username, staff.role, "staff login");
+    ok(res, { role: staff.role });
+  }));
+
+  app.post("/api/auth/confirm-email", authLimiter, wrap(async (req, res) => {
+    const body = z.union([
+      confirmEmailSchema,
+      z.object({ accessToken: z.string().min(1), refreshToken: z.string().min(1) }).strict(),
+    ]).parse(req.body);
+    if ("token" in body) {
+      const { data, error } = await authClient().auth.verifyOtp({ token_hash: body.token, type: "email" });
+      if (error || !data.user) return fail(res, 400, "auth.confirmationInvalid");
+      if (data.session) issueCustomerSession(res, data.session.access_token, data.session.refresh_token);
+    } else {
+      const { data, error } = await supabaseDb.auth.getUser(body.accessToken);
+      if (error || !data.user?.email_confirmed_at) return fail(res, 400, "auth.confirmationInvalid");
+      const profile = await customerRow(data.user.id);
+      if (!profile) return fail(res, 400, "auth.confirmationInvalid");
+      issueCustomerSession(res, body.accessToken, body.refreshToken);
+    }
+    ok(res, { confirmed: true });
+  }));
+/* stale SQLite auth block retained temporarily for safe reconstruction
+  const staff = scope === "staff" ? await staffRow(identifier) : undefined;
+  const email = scope === "customer" ? identifier : staff?.email;
+  const result = email
+    ? await authClient().auth.signInWithPassword({ email, password })
+    : { data: { user: null, session: null }, error: { code: "invalid_credentials" } };
+  const matchesStaff = scope !== "staff" || Boolean(staff && result.data.user?.id === staff.id);
+  const row = result.data.user && matchesStaff
+    ? scope === "customer" ? await customerRow(result.data.user.id) : staff
+    : undefined;
+  if (result.error || !result.data.session || !row) {
+    if (result.error?.code === "email_not_confirmed") return { lockedUntil: 0, row: null, session: null, emailNotConfirmed: true } as const;
+  db.transaction(() => {
+    return { lockedUntil: lock || 0, row: null, session: null, emailNotConfirmed: false } as const;
+      `INSERT INTO users (id, name, email, pass_hash, phone, addresses, marketing, created_at, email_verified)
+       VALUES (?, ?, ?, ?, ?, '[]', 0, ?, 0)`
+  return { row, session: result.data.session, lockedUntil: 0, emailNotConfirmed: false } as const;
+    db.prepare(`INSERT INTO email_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)`).run(tokenHash, user.id, Date.now() + 24 * 60 * 60 * 1000);
+  })();
+  try {
+    await sendConfirmationEmail(user.email, user.name, rawToken);
+  } catch (error) {
+    db.transaction(() => {
+      db.prepare(`DELETE FROM email_tokens WHERE token_hash = ?`).run(tokenHash);
+      db.prepare(`DELETE FROM users WHERE id = ?`).run(user.id);
+    })();
+    throw error;
+  }
+  ok(res, {
+    user,
+    needsConfirmation: true,
+    // Legacy email-confirmation note removed during the Supabase Auth migration.
+    ...(CFG.isProduction || smtpConfigured ? {} : { devConfirmationToken: rawToken }),
+  }, 201);
+}));
+
+*/
+app.post("/api/auth/logout", (req, res) => {
+  clearSessionCookies(res);
+  ok(res, { ok: true });
+});
+
+/* ── server-side pricing ───────────────────────────────────────────────── */
+app.post("/api/cart/price", wrap(async (req, res) => {
+  const b = cartSchema.parse(req.body);
+  ok(res, await priceCart(await loadSettings(), b.lines as CartLine[], b.type, b.lang, b.code));
+}));
+
+/* ── upload boundary ───────────────────────────────────────────────────── */
+function sniffImage(body: Buffer): { mime: "image/png" | "image/jpeg" | "image/webp"; ext: "png" | "jpg" | "webp" } | null {
+  if (body.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return { mime: "image/png", ext: "png" };
+  if (body.subarray(0, 3).equals(Buffer.from([255, 216, 255]))) return { mime: "image/jpeg", ext: "jpg" };
+  if (body.length >= 12 && body.subarray(0, 4).toString() === "RIFF" && body.subarray(8, 12).toString() === "WEBP") return { mime: "image/webp", ext: "webp" };
+  return null;
+}
+
+app.post("/api/uploads", uploadLimiter, requireStaff("manager"), express.raw({
+  type: ["image/png", "image/jpeg", "image/webp"], limit: CFG.maxUploadBytes,
+}), wrap(async (req, res) => {
+  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+  if (!body.length) return fail(res, 415, "validation.imageType");
+  const image = sniffImage(body);
+  if (!image) return fail(res, 415, "validation.imageType");
+  const filename = `${randomBytes(18).toString("hex")}.${image.ext}`;
+  const { error } = await supabaseDb.storage.from("menu-images").upload(filename, body, {
+    contentType: image.mime,
+    cacheControl: "31536000",
+    upsert: false,
+  });
+  if (error?.message.toLowerCase().includes("already exists")) return fail(res, 409, "upload.retry");
+  if (error) throw error;
+  const publicUrl = supabaseDb.storage.from("menu-images").getPublicUrl(filename).data.publicUrl;
+  const staff = authStaff(req);
+  logActivity(staff.username, staff.role, `image uploaded ${filename}`);
+  ok(res, { url: publicUrl, mime: image.mime }, 201);
+}));
+
+/* ── order creation / hosted checkout ──────────────────────────────────── */
+function validateDeliveryAddress(type: "pickup" | "delivery", address?: string): void {
+  if (type !== "delivery") return;
+  if (!address || address.length > 200) throw new Error("order.addressRequired");
+  const postcode = address.match(/\b(\d{5})\b/)?.[1];
+  if (!postcode || !postcode.startsWith("70")) throw new Error("order.postcode");
+}
+
+function helsinkiIso(date: string, time: string): string {
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const utcGuess = Date.UTC(year, month - 1, day, hour, minute);
+  const localParts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Helsinki", year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(new Date(utcGuess));
+  const part = (type: string) => Number(localParts.find((entry) => entry.type === type)?.value ?? 0);
+  const localAsUtc = Date.UTC(part("year"), part("month") - 1, part("day"), part("hour"), part("minute"));
+  return new Date(utcGuess - (localAsUtc - utcGuess)).toISOString();
+}
+
+function nextDate(date: string): string {
+  const value = new Date(`${date}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + 1);
+  return value.toISOString().slice(0, 10);
+}
+
+async function createPendingOrder(req: Request, body: z.infer<typeof customerOrderSchema>): Promise<{ order: Order; settings: Settings }> {
+  const auth = currentAuth(req);
+  const customer = authUser(req);
+  if (!auth || !customer) throw new Error("auth.required");
+  validateDeliveryAddress(body.type, body.address);
+  const settings = await loadSettings();
+  const priced = await validateOrder(settings, { type: body.type, lines: body.lines as CartLine[], scheduled: body.scheduled, lang: body.lang, code: body.code });
+  if (body.scheduled && settings.preorder.capacity) {
+    const start = helsinkiIso(body.scheduled.date, "00:00");
+    const end = helsinkiIso(nextDate(body.scheduled.date), "00:00");
+    const { data, error } = await supabaseDb.from("orders").select("order_items(quantity, is_preorder)")
+      .gte("scheduled_for", start).lt("scheduled_for", end).in("payment_status", ["pending", "paid"]);
+    if (error) throw error;
+    const reserved = (data ?? []).reduce((sum, row) => sum + (row.order_items ?? [])
+      .filter((line) => line.is_preorder).reduce((qty, line) => qty + line.quantity, 0), 0);
+    const requested = (body.lines as CartLine[]).filter((line) => Boolean(line.preorder)).reduce((qty, line) => qty + line.qty, 0);
+    if (reserved + requested > settings.preorder.capacity) throw new Error("pre.errCapacity");
+  }
+  if (!body.scheduled && !openInfo(settings.hours).open) throw new Error("order.closed");
+  if (body.type === "delivery" && priced.total < settings.minOrder) throw new Error("order.minOrder");
+  if (priced.total <= 0) throw new Error("payment.amountInvalid");
+
+  const order: Order = {
+    id: uid("KB"), createdAt: Date.now(), type: body.type,
+    customer: { name: customer.name, email: customer.email, phone: body.customer.phone || customer.phone || "" },
+    address: body.type === "delivery" ? body.address : undefined, note: body.note,
+    lines: priced.lines, subtotal: priced.subtotal, deliveryFee: priced.deliveryFee, discount: priced.discount,
+    total: priced.total, vat: priced.vat, scheduled: body.scheduled, paymentStatus: "pending", userId: auth.sub,
+  } as Order;
+  const { error } = await supabaseDb.rpc("create_order", {
+    p_order: {
+      id: order.id,
+      customer_id: auth.sub,
+      type: order.type,
+      subtotal: order.subtotal,
+      delivery_fee: order.deliveryFee,
+      discount: order.discount?.amount ?? 0,
+      discount_title: order.discount?.title ?? null,
+      offer_id: order.discount?.offerId ?? null,
+      vat: order.vat,
+      total: order.total,
+      payment_status: "pending",
+      payment_ref: null,
+      contact_name: order.customer.name,
+      contact_phone: order.customer.phone,
+      contact_email: order.customer.email,
+      address: order.address ?? null,
+      note: order.note ?? null,
+      scheduled_for: body.scheduled ? `${body.scheduled.date} ${body.scheduled.time} Europe/Helsinki` : null,
+    },
+    p_items: priced.lines.map((line) => ({
+      menu_item_id: line.itemId,
+      item_name_snapshot: line.name,
+      variant_label: line.variantLabel,
+      selected_toppings: line.pizza ? { included: line.pizza.included, extras: line.pizza.extras, builder: !!line.pizza.builder } : null,
+      options: line.options,
+      is_preorder: !!line.preorder,
+      quantity: line.qty,
+      unit_price: line.unitPrice,
+      line_price: Math.round(line.qty * line.unitPrice * 100) / 100,
+      note: line.note ?? null,
+    })),
+  });
+  if (error) {
+    if (error.message.includes("order.promoUnavailable")) throw new Error("promo.unavailable");
+    throw error;
+  }
+  return { order, settings };
+}
+
+async function releasePromoReservation(order: Order): Promise<void> {
+  if (!order.discount?.offerId) return;
+  const { data, error } = await supabaseDb.from("promotions").select("used_count").eq("id", order.discount.offerId).maybeSingle();
+  if (error) throw error;
+  if (data && data.used_count > 0) {
+    const { error: updateError } = await supabaseDb.from("promotions").update({ used_count: data.used_count - 1 }).eq("id", order.discount.offerId);
+    if (updateError) throw updateError;
+  }
+}
+
+const stripeClient = CFG.stripeSecretKey ? new Stripe(CFG.stripeSecretKey) : null;
+
+app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req, res) => {
+  const body = customerOrderSchema.parse(req.body);
+  if (!stripeClient) {
+    if (!CFG.allowDemoPayments) return fail(res, 503, "payment.unavailable");
+    const created = await createPendingOrder(req, body);
+    const demo = { ...created.order, paymentStatus: "demo_paid" } as Order;
+    const { error } = await supabaseDb.from("orders").update({ payment_status: "paid", payment_ref: `demo:${randomBytes(8).toString("hex")}` }).eq("id", demo.id);
+    if (error) throw error;
+    ok(res, { mode: "demo", order: { ...demo, status: orderStatus(demo) } });
+    return;
+  }
+  const created = await createPendingOrder(req, body);
+  try {
+    const session = await stripeClient.checkout.sessions.create({
+      mode: "payment",
+      line_items: [{
+        price_data: {
+          currency: "eur",
+          product_data: { name: `Kuopio Bites order ${created.order.id}` },
+          unit_amount: Math.round(created.order.total * 100),
+        },
+        quantity: 1,
+      }],
+      customer_email: created.order.customer.email,
+      metadata: { order_id: created.order.id, amount_eur: created.order.total.toFixed(2) },
+      success_url: `${CFG.publicWebUrl}/track/${created.order.id}?payment=success`,
+      cancel_url: `${CFG.publicWebUrl}/order?payment=cancelled`,
+      expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
+    });
+    const { error } = await supabaseDb.from("orders").update({ payment_ref: session.id }).eq("id", created.order.id);
+    if (error) throw error;
+    ok(res, { mode: "stripe", url: session.url, sessionId: session.id, orderId: created.order.id });
+  } catch (error) {
+    const { error: deleteError } = await supabaseDb.from("orders").delete().eq("id", created.order.id);
+    if (deleteError) throw deleteError;
+    await releasePromoReservation(created.order);
+    throw error;
+  }
+}));
+
+/* Direct order creation is retained only for an explicitly local demo. A real
+   deployment must use /api/checkout/session and the signed webhook below. */
+app.post("/api/orders", orderLimiter, requireCustomer, wrap(async (req, res) => {
+  if (!CFG.allowDemoPayments) return fail(res, 503, "payment.required");
+  const body = customerOrderSchema.parse(req.body);
+  const created = await createPendingOrder(req, body);
+  const order = { ...created.order, paymentStatus: "demo_paid" } as Order;
+  const { error } = await supabaseDb.from("orders").update({ payment_status: "paid", payment_ref: `demo:${randomBytes(8).toString("hex")}` }).eq("id", order.id);
+  if (error) throw error;
   ok(res, { ...order, status: orderStatus(order) }, 201);
 }));
 
-const withStatus = (data: string) => {
-  const o = JSON.parse(data) as Order;
-  return { ...o, status: orderStatus(o) };
-};
+function withStatus(order: Order) {
+  return { ...order, status: orderStatus(order) };
+}
 
-app.get("/api/orders", requireStaff("kitchen"), (req, res) => {
-  const rows = db.prepare(`SELECT data FROM orders ORDER BY created_at DESC LIMIT 300`).all() as { data: string }[];
-  ok(res, rows.map((r) => withStatus(r.data)));
-});
+app.get("/api/orders", requireStaff("kitchen"), wrap(async (_req, res) => {
+  const orders = await listOrders(300);
+  ok(res, orders
+    .filter((order) => order.paymentStatus === "paid" || order.paymentStatus === "demo_paid")
+    .map((order) => ({ ...order, status: orderStatus(order) })));
+}));
 
-app.get("/api/orders/:id", wrap((req, res) => {
-  const auth = (req as any).auth as TokenPayload | null;
-  const row = db.prepare(`SELECT user_id, data FROM orders WHERE id = ?`).get(req.params.id) as
-    | { user_id: string; data: string } | undefined;
-  if (!row) return fail(res, 404, "order.notFound");
-  const isOwner = auth?.scope === "customer" && auth.sub === row.user_id;
-  const isStaff = auth?.scope === "staff";
+app.get("/api/orders/:id", wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const auth = currentAuth(req);
+  const order = await getOrder(id);
+  if (!order) return fail(res, 404, "order.notFound");
+  const isOwner = auth?.scope === "customer" && auth.sub === order.userId;
+  const isStaff = auth?.scope === "staff" && Boolean(await staffById(auth.sub));
   if (!isOwner && !isStaff) return fail(res, 403, "auth.forbidden");
-  ok(res, withStatus(row.data));
+  ok(res, withStatus(order));
 }));
 
-const statusSchema = z.object({ status: z.enum(["placed", "accepted", "preparing", "ready", "completed"]) });
-app.patch("/api/orders/:id/status", requireStaff("kitchen"), wrap((req, res) => {
+app.patch("/api/orders/:id/status", requireStaff("kitchen"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
   const b = statusSchema.parse(req.body);
-  const row = db.prepare(`SELECT data FROM orders WHERE id = ?`).get(req.params.id) as { data: string } | undefined;
-  if (!row) return fail(res, 404, "order.notFound");
-  const o = JSON.parse(row.data) as Order;
-  o.statusOverride = b.status;
-  db.prepare(`UPDATE orders SET data = ? WHERE id = ?`).run(JSON.stringify(o), req.params.id);
-  const auth = (req as any).auth as TokenPayload;
-  logActivity(auth.name!, auth.role!, `order ${req.params.id} → ${b.status}`);
-  ok(res, { ...o, status: b.status });
+  const order = await getOrder(id);
+  if (!order) return fail(res, 404, "order.notFound");
+  if (order.paymentStatus !== "paid" && order.paymentStatus !== "demo_paid") return fail(res, 400, "payment.notPaid");
+  const { error } = await supabaseDb.from("orders").update({ status: b.status }).eq("id", id);
+  if (error) throw error;
+  order.statusOverride = b.status;
+  const staff = authStaff(req);
+  logActivity(staff.username, staff.role, `order ${id} -> ${b.status}`);
+  ok(res, { ...order, status: b.status });
 }));
 
-app.post("/api/orders/:id/refund", requireStaff("manager"), wrap((req, res) => {
-  const row = db.prepare(`SELECT data FROM orders WHERE id = ?`).get(req.params.id) as { data: string } | undefined;
-  if (!row) return fail(res, 404, "order.notFound");
-  const o = JSON.parse(row.data) as Order;
-  o.refunded = true; o.statusOverride = "completed";
-  db.prepare(`UPDATE orders SET data = ? WHERE id = ?`).run(JSON.stringify(o), req.params.id);
-  const auth = (req as any).auth as TokenPayload;
-  logActivity(auth.name!, auth.role!, `order ${req.params.id} refunded`);
-  ok(res, o);
+app.post("/api/orders/:id/refund", requireStaff("manager"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const order = await getOrder(id);
+  if (!order) return fail(res, 404, "order.notFound");
+  if (order.refunded) return ok(res, order);
+  if (order.paymentStatus === "demo_paid" && CFG.allowDemoPayments) {
+    order.refunded = true; order.paymentStatus = "refunded"; order.statusOverride = "completed";
+  } else {
+    if (!stripeClient || !order.paymentId) return fail(res, 503, "payment.unavailable");
+    await stripeClient.refunds.create({ payment_intent: order.paymentId }, { idempotencyKey: `refund-${id}` });
+    order.refunded = true; order.paymentStatus = "refunded"; order.statusOverride = "completed";
+  }
+  const { error } = await supabaseDb.from("orders").update({ payment_status: "refunded", status: "completed" }).eq("id", id);
+  if (error) throw error;
+  const staff = authStaff(req);
+  logActivity(staff.username, staff.role, `order ${id} refunded`);
+  ok(res, order);
 }));
+
+/* ── Stripe webhook: HMAC verification, idempotence, amount re-check ───── */
+function verifyStripeSignature(payload: Buffer, header: string, secret: string): boolean {
+  const pieces = Object.fromEntries(header.split(",").map((part) => part.split("=", 2) as [string, string]));
+  const timestamp = Number(pieces.t);
+  const received = pieces.v1 || "";
+  if (!Number.isFinite(timestamp) || Math.abs(Date.now() / 1000 - timestamp) > 300 || !/^[a-f0-9]{64}$/i.test(received)) return false;
+  const expected = createHmac("sha256", secret).update(`${timestamp}.${payload.toString("utf8")}`).digest("hex");
+  return timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(received, "hex"));
+}
+
+async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
+  if (!CFG.stripeWebhookSecret) return void fail(res, 503, "payment.webhookUnavailable");
+  const signature = req.headers["stripe-signature"];
+  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
+  if (typeof signature !== "string" || !verifyStripeSignature(body, signature, CFG.stripeWebhookSecret)) return void fail(res, 400, "payment.invalidSignature");
+  let event: any;
+  try { event = JSON.parse(body.toString("utf8")); } catch { return void fail(res, 400, "payment.invalidEvent"); }
+  if (!event?.id || typeof event.type !== "string") return void fail(res, 400, "payment.invalidEvent");
+  const { error: eventError } = await supabaseDb.from("stripe_events").insert({ event_id: event.id });
+  if (eventError?.code === "23505") return void ok(res, { received: true, duplicate: true });
+  if (eventError) throw eventError;
+  try {
+    const handledSuccess = event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded";
+    const handledFailure = event.type === "checkout.session.expired" || event.type === "checkout.session.async_payment_failed";
+    if (!handledSuccess && !handledFailure) return void ok(res, { received: true });
+    const session = event.data?.object;
+    const orderId = session?.metadata?.order_id;
+    if (typeof orderId !== "string") return void ok(res, { received: true });
+    const order = await getOrder(orderId);
+    if (!order) return void ok(res, { received: true });
+    if (handledFailure) {
+      const { error } = await supabaseDb.from("orders").delete().eq("id", orderId);
+      if (error) throw error;
+      await releasePromoReservation(order);
+      return void ok(res, { received: true });
+    }
+    const amountMatches = Number(session.amount_total) === Math.round(order.total * 100) && session.currency === "eur";
+    if (!amountMatches) {
+      await releasePromoReservation(order);
+      logActivity("stripe-webhook", "security", `amount mismatch for order ${orderId}`);
+      return void fail(res, 400, "payment.amountMismatch");
+    }
+    const paymentRef = typeof session.payment_intent === "string" ? session.payment_intent : order.checkoutSessionId;
+    const { error } = await supabaseDb.from("orders").update({ payment_status: "paid", payment_ref: paymentRef }).eq("id", orderId);
+    if (error) throw error;
+    ok(res, { received: true });
+  } catch (error) {
+    await supabaseDb.from("stripe_events").delete().eq("event_id", event.id);
+    throw error;
+  }
+}
 
 /* ── reservations ─────────────────────────────────────────────────────── */
-const resvSchema = z.object({
-  date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  time: z.string().regex(/^\d{2}:\d{2}$/),
-  party: z.number().int().min(1).max(30),
-  name: z.string().min(1).max(80), phone: z.string().min(3).max(30),
-  email: z.string().email().optional(), note: z.string().max(400).optional(),
-});
-app.post("/api/reservations", resvLimiter, wrap((req, res) => {
-  const b = resvSchema.parse(req.body);
-  const s = loadSettings();
-  if (s.blockedDates.includes(b.date)) return fail(res, 400, "resv.blockedDate");
-  if (s.blockedSlots.includes(`${b.date}T${b.time}`)) return fail(res, 400, "resv.blockedSlot");
-  const r: Reservation = { ...b, id: uid("R"), createdAt: Date.now(), status: "pending" };
-  db.prepare(`INSERT INTO reservations (id, created_at, data) VALUES (?, ?, ?)`)
-    .run(r.id, r.createdAt, JSON.stringify(r));
-  ok(res, r, 201);
+app.post("/api/reservations", resvLimiter, wrap(async (req, res) => {
+  const body = reservationSchema.parse(req.body);
+  const settings = await loadSettings();
+  if (settings.blockedDates.includes(body.date)) return fail(res, 400, "resv.blockedDate");
+  if (settings.blockedSlots.includes(`${body.date}T${body.time}`)) return fail(res, 400, "resv.blockedSlot");
+  const reservation: Reservation = { ...body, id: uid("R"), createdAt: Date.now(), status: "pending" };
+  const { error } = await supabaseDb.from("reservations").insert({
+    id: reservation.id,
+    customer_id: currentAuth(req)?.scope === "customer" ? currentAuth(req)?.sub : null,
+    date: reservation.date,
+    time: reservation.time,
+    party_size: reservation.party,
+    contact_name: reservation.name,
+    contact_phone: reservation.phone,
+    contact_email: reservation.email ?? null,
+    note: reservation.note ?? null,
+    status: reservation.status,
+  });
+  if (error) throw error;
+  ok(res, reservation, 201);
 }));
 
-app.get("/api/reservations", requireStaff("kitchen"), (_req, res) => {
-  const rows = db.prepare(`SELECT data FROM reservations ORDER BY created_at DESC LIMIT 300`).all() as { data: string }[];
-  ok(res, rows.map((r) => JSON.parse(r.data)));
-});
-
-app.patch("/api/reservations/:id", requireStaff("kitchen"), wrap((req, res) => {
-  const b = z.object({ status: z.enum(["pending", "accepted", "declined"]) }).parse(req.body);
-  const row = db.prepare(`SELECT data FROM reservations WHERE id = ?`).get(req.params.id) as { data: string } | undefined;
-  if (!row) return fail(res, 404, "resv.notFound");
-  const r = { ...JSON.parse(row.data), status: b.status } as Reservation;
-  db.prepare(`UPDATE reservations SET data = ? WHERE id = ?`).run(JSON.stringify(r), req.params.id);
-  const auth = (req as any).auth as TokenPayload;
-  logActivity(auth.name!, auth.role!, `reservation ${req.params.id} → ${b.status}`);
-  ok(res, r);
+app.get("/api/reservations", requireStaff("kitchen"), wrap(async (_req, res) => {
+  const { data, error } = await supabaseDb.from("reservations").select("*").order("created_at", { ascending: false }).limit(300);
+  if (error) throw error;
+  ok(res, (data ?? []).map((row) => ({
+    id: row.id, date: row.date, time: row.time, party: row.party_size,
+    name: row.contact_name, phone: row.contact_phone, email: row.contact_email ?? undefined,
+    note: row.note ?? undefined, status: row.status, createdAt: Date.parse(row.created_at),
+  })));
 }));
 
-app.delete("/api/reservations/:id", requireStaff("kitchen"), wrap((req, res) => {
-  db.prepare(`DELETE FROM reservations WHERE id = ?`).run(req.params.id);
-  const auth = (req as any).auth as TokenPayload;
-  logActivity(auth.name!, auth.role!, `reservation ${req.params.id} deleted`);
+app.patch("/api/reservations/:id", requireStaff("kitchen"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const body = z.object({ status: z.enum(["pending", "accepted", "declined"]) }).strict().parse(req.body);
+  const { data, error } = await supabaseDb.from("reservations").update({ status: body.status }).eq("id", id).select("*").maybeSingle();
+  if (error) throw error;
+  if (!data) return fail(res, 404, "resv.notFound");
+  const staff = authStaff(req);
+  logActivity(staff.username, staff.role, `reservation ${id} -> ${body.status}`);
+  ok(res, { id: data.id, date: data.date, time: data.time, party: data.party_size, name: data.contact_name, phone: data.contact_phone, email: data.contact_email ?? undefined, note: data.note ?? undefined, status: data.status, createdAt: Date.parse(data.created_at) });
+}));
+
+app.delete("/api/reservations/:id", requireStaff("kitchen"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const { data, error } = await supabaseDb.from("reservations").delete().eq("id", id).select("id").maybeSingle();
+  if (error) throw error;
+  if (!data) return fail(res, 404, "resv.notFound");
+  const staff = authStaff(req);
+  logActivity(staff.username, staff.role, `reservation ${id} deleted`);
   ok(res, { ok: true });
 }));
 
-/* ── customer account (GDPR export / update / erase) ───────────────────── */
-app.put("/api/account", requireCustomer, wrap((req, res) => {
-  const auth = (req as any).auth as TokenPayload;
-  const b = z.object({
-    name: z.string().min(1).max(80).optional(), phone: z.string().max(30).optional(),
-    addresses: z.array(z.string().max(160)).max(6).optional(), marketing: z.boolean().optional(),
-  }).parse(req.body);
-  const row = db.prepare(`SELECT * FROM users WHERE id = ?`).get(auth.sub) as any;
-  if (!row) return fail(res, 404, "auth.notFound");
-  const next = {
-    name: b.name ?? row.name, phone: b.phone ?? row.phone,
-    addresses: b.addresses ? JSON.stringify(b.addresses) : row.addresses,
-    marketing: b.marketing === undefined ? row.marketing : b.marketing ? 1 : 0,
-  };
-  db.prepare(`UPDATE users SET name = ?, phone = ?, addresses = ?, marketing = ? WHERE id = ?`)
-    .run(next.name, next.phone, next.addresses, next.marketing, auth.sub);
-  ok(res, { id: auth.sub, name: next.name, phone: next.phone, addresses: b.addresses ?? JSON.parse(row.addresses), marketing: !!next.marketing });
+/* ── customer account / GDPR ───────────────────────────────────────────── */
+app.get("/api/account", requireCustomer, wrap((req, res) => ok(res, publicUser(authUser(req)))));
+
+app.put("/api/account", requireCustomer, wrap(async (req, res) => {
+  const auth = currentAuth(req)!;
+  const body = accountPatchSchema.parse(req.body);
+  const row = authUser(req);
+  const addresses = body.addresses ?? JSON.parse(row.addresses || "[]");
+  const next = { name: body.name ?? row.name, phone: body.phone ?? row.phone, addresses, marketing: body.marketing ?? Boolean(row.marketing) };
+  const { data, error } = await supabaseDb.from("customers").update({
+    name: next.name,
+    phone: next.phone,
+    addresses: next.addresses,
+    marketing_consent: next.marketing,
+  }).eq("id", auth.sub).select("id, name, email, phone, addresses, marketing_consent, created_at").single();
+  if (error) throw error;
+  ok(res, publicUser({ ...data, addresses: JSON.stringify(data.addresses ?? []), marketing: data.marketing_consent ? 1 : 0, created_at: Date.parse(data.created_at) }));
 }));
 
-app.get("/api/account/export", requireCustomer, wrap((req, res) => {
-  const auth = (req as any).auth as TokenPayload;
-  const row = db.prepare(`SELECT * FROM users WHERE id = ?`).get(auth.sub) as any;
-  if (!row) return fail(res, 404, "auth.notFound");
-  const orders = (db.prepare(`SELECT data FROM orders WHERE user_id = ?`).all(auth.sub) as { data: string }[])
-    .map((r) => withStatus(r.data));
-  delete row.pass_hash;
-  ok(res, { profile: row, addresses: JSON.parse(row.addresses), orders });
+app.get("/api/account/orders", requireCustomer, wrap(async (req, res) => {
+  const auth = currentAuth(req)!;
+  const orders = await listCustomerOrders(auth.sub, 50);
+  ok(res, orders.map(withStatus));
 }));
 
-app.delete("/api/account", requireCustomer, wrap((req, res) => {
-  const auth = (req as any).auth as TokenPayload;
-  db.prepare(`DELETE FROM users WHERE id = ?`).run(auth.sub); // GDPR erase; orders keep denormalized contact
+app.get("/api/account/export", requireCustomer, wrap(async (req, res) => {
+  const profile = authUser(req);
+  const orders = await listCustomerOrders(currentAuth(req)!.sub, 10000);
+  ok(res, { profile: publicUser(profile), orders: orders.map(withStatus) });
+}));
+
+app.delete("/api/account", requireCustomer, wrap(async (req, res) => {
+  const auth = currentAuth(req)!;
+  const { error } = await supabaseDb.auth.admin.deleteUser(auth.sub);
+  if (error) throw error;
+  clearSessionCookies(res);
   ok(res, { ok: true });
 }));
 
-/* ── admin: menu CRUD ──────────────────────────────────────────────────── */
-const auth2 = () => (req: Request) => (req as any).auth as TokenPayload;
-
-app.post("/api/categories", requireStaff("manager"), wrap((req, res) => {
-  const b = z.object({ title: z.string().min(1).max(60), en: z.string().max(60).optional() }).parse(req.body);
-  const id = "cat-" + Math.random().toString(36).slice(2, 7);
-  const max = (db.prepare(`SELECT MAX(sort) m FROM categories`).get() as { m: number | null }).m ?? -1;
-  db.prepare(`INSERT INTO categories (id, title, en, sort) VALUES (?, ?, ?, ?)`).run(id, b.title, b.en ?? b.title, max + 1);
-  logActivity(auth2()(req).name!, auth2()(req).role!, `category + ${id}`);
-  ok(res, { id, title: b.title, en: b.en }, 201);
+/* ── admin menu/settings/content ───────────────────────────────────────── */
+app.post("/api/categories", requireStaff("manager"), wrap(async (req, res) => {
+  const b = categoryCreateSchema.parse(req.body);
+  const id = uid("cat");
+  const { data: last, error: readError } = await supabaseDb.from("categories").select("sort_order").order("sort_order", { ascending: false }).limit(1).maybeSingle();
+  if (readError) throw readError;
+  const { error } = await supabaseDb.from("categories").insert({ id, name_fi: b.title, name_en: b.en ?? b.title, sort_order: (last?.sort_order ?? -1) + 1 });
+  if (error?.code === "23505") return fail(res, 409, "item.exists");
+  if (error) throw error;
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `category + ${id}`);
+  ok(res, { id, title: b.title, en: b.en ?? b.title }, 201);
 }));
 
-app.put("/api/categories/:id", requireStaff("manager"), wrap((req, res) => {
-  const b = z.object({ title: z.string().min(1).max(60).optional(), en: z.string().max(60).optional() }).parse(req.body);
-  db.prepare(`UPDATE categories SET title = COALESCE(?, title), en = COALESCE(?, en) WHERE id = ?`)
-    .run(b.title ?? null, b.en ?? null, req.params.id);
-  logActivity(auth2()(req).name!, auth2()(req).role!, `category ~ ${req.params.id}`);
-  ok(res, { ok: true });
+app.put("/api/categories/:id", requireStaff("manager"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id); const b = categoryPatchSchema.parse(req.body);
+  const patch = { ...(b.title !== undefined ? { name_fi: b.title } : {}), ...(b.en !== undefined ? { name_en: b.en } : {}) };
+  const { data, error } = await supabaseDb.from("categories").update(patch).eq("id", id).select("id").maybeSingle();
+  if (error) throw error;
+  if (!data) return fail(res, 404, "item.notFound");
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `category ~ ${id}`); ok(res, { ok: true });
 }));
 
-app.delete("/api/categories/:id", requireStaff("manager"), wrap((req, res) => {
-  db.prepare(`DELETE FROM categories WHERE id = ?`).run(req.params.id);
-  logActivity(auth2()(req).name!, auth2()(req).role!, `category - ${req.params.id}`);
-  ok(res, { ok: true });
+app.delete("/api/categories/:id", requireStaff("manager"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const { data, error } = await supabaseDb.from("categories").delete().eq("id", id).select("id").maybeSingle();
+  if (error) throw error;
+  if (!data) return fail(res, 404, "item.notFound");
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `category - ${id}`); ok(res, { ok: true });
 }));
 
-const itemSchema = z.object({
-  id: z.string().min(1).max(60), cat: z.string().min(1).max(40),
-  name: z.string().min(1).max(80), prices: z.array(z.object({ label: z.string(), value: z.number().min(0) })).min(1),
-}).passthrough();
-app.post("/api/items", requireStaff("manager"), wrap((req, res) => {
-  const m = itemSchema.parse(req.body) as unknown as MenuItem;
-  const max = (db.prepare(`SELECT MAX(sort) m FROM items WHERE cat = ?`).get(m.cat) as { m: number | null }).m ?? -1;
-  db.prepare(`INSERT INTO items (id, cat, sort, data) VALUES (?, ?, ?, ?)`)
-    .run(m.id, m.cat, max + 1, JSON.stringify(m));
-  logActivity(auth2()(req).name!, auth2()(req).role!, `item + ${m.id}`);
-  ok(res, m, 201);
+app.post("/api/items", requireStaff("manager"), wrap(async (req, res) => {
+  const m = menuItemSchema.parse(req.body) as MenuItem;
+  const { data: last, error: readError } = await supabaseDb.from("menu_items").select("sort_order").eq("category_id", m.cat).order("sort_order", { ascending: false }).limit(1).maybeSingle();
+  if (readError) throw readError;
+  const { error } = await supabaseDb.from("menu_items").insert(toDatabaseItem(m, (last?.sort_order ?? -1) + 1));
+  if (error?.code === "23505") return fail(res, 409, "item.exists");
+  if (error) throw error;
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `item + ${m.id}`); ok(res, m, 201);
 }));
 
-app.put("/api/items/:id", requireStaff("manager"), wrap((req, res) => {
-  const m = itemSchema.parse({ ...req.body, id: req.params.id }) as unknown as MenuItem;
-  const row = db.prepare(`SELECT sort FROM items WHERE id = ?`).get(req.params.id) as { sort: number } | undefined;
+app.put("/api/items/:id", requireStaff("manager"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id); const m = menuItemSchema.parse({ ...req.body, id }) as MenuItem;
+  const { data: row, error: readError } = await supabaseDb.from("menu_items").select("sort_order").eq("id", id).maybeSingle();
+  if (readError) throw readError;
   if (!row) return fail(res, 404, "item.notFound");
-  db.prepare(`UPDATE items SET cat = ?, sort = ?, data = ? WHERE id = ?`)
-    .run(m.cat, row.sort, JSON.stringify(m), req.params.id);
-  logActivity(auth2()(req).name!, auth2()(req).role!, `item ~ ${m.id}`);
-  ok(res, m);
+  const { error } = await supabaseDb.from("menu_items").update(toDatabaseItem(m, row.sort_order)).eq("id", id);
+  if (error) throw error;
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `item ~ ${id}`); ok(res, m);
 }));
 
-app.delete("/api/items/:id", requireStaff("manager"), wrap((req, res) => {
-  db.prepare(`DELETE FROM items WHERE id = ?`).run(req.params.id);
-  logActivity(auth2()(req).name!, auth2()(req).role!, `item - ${req.params.id}`);
-  ok(res, { ok: true });
+app.delete("/api/items/:id", requireStaff("manager"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const { data, error } = await supabaseDb.from("menu_items").delete().eq("id", id).select("id").maybeSingle();
+  if (error) throw error;
+  if (!data) return fail(res, 404, "item.notFound");
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `item - ${id}`); ok(res, { ok: true });
 }));
 
-app.patch("/api/items/reorder", requireStaff("manager"), wrap((req, res) => {
-  const b = z.object({ cat: z.string(), order: z.array(z.string()).min(1) }).parse(req.body);
-  const stmt = db.prepare(`UPDATE items SET sort = ? WHERE id = ? AND cat = ?`);
-  const tx = db.transaction(() => b.order.forEach((id, i) => stmt.run(i, id, b.cat)));
-  tx();
-  const a = auth2()(req);
-  logActivity(a.name!, a.role!, `items reordered in ${b.cat}`);
-  ok(res, { ok: true });
+app.patch("/api/items/reorder", requireStaff("manager"), wrap(async (req, res) => {
+  const b = reorderSchema.parse(req.body);
+  for (const [sortOrder, id] of b.order.entries()) {
+    const { error } = await supabaseDb.from("menu_items").update({ sort_order: sortOrder }).eq("id", id).eq("category_id", b.cat);
+    if (error) throw error;
+  }
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `items reordered in ${b.cat}`); ok(res, { ok: true });
 }));
 
-/* ── admin: settings / specials / promotions / translations ───────────── */
-app.put("/api/settings", requireStaff("manager"), wrap((req, res) => {
-  const s = loadSettings();
-  const next = { ...s, ...req.body, audit: (s as any).audit } as Settings;
-  if (typeof next.paused !== "boolean" || typeof next.deliveryFee !== "number")
-    return fail(res, 400, "validation: settings shape");
-  setJSON("settings", next);
-  const a = auth2()(req);
-  logActivity(a.name!, a.role!, "settings updated");
-  ok(res, next);
+app.put("/api/settings", requireStaff("manager"), wrap(async (req, res) => {
+  const current = await loadSettings();
+  const next = settingsSchema.parse({ ...current, ...req.body, audit: current.audit }) as Settings;
+  await saveSettings(next);
+  const staff = authStaff(req); logActivity(staff.username, staff.role, "settings updated"); ok(res, next);
 }));
 
-app.put("/api/todays-special", requireStaff("manager"), wrap((req, res) => {
-  const s = loadSettings();
-  const next = { ...s, special: req.body.special ?? s.special, todaysSpecials: req.body.todaysSpecials ?? s.todaysSpecials };
-  setJSON("settings", next);
-  const a = auth2()(req);
-  logActivity(a.name!, a.role!, "today's special updated");
+app.put("/api/todays-special", requireStaff("manager"), wrap(async (req, res) => {
+  const patch = specialPatchSchema.parse(req.body); const current = await loadSettings();
+  const next = settingsSchema.parse({ ...current, special: patch.special ?? current.special, todaysSpecials: patch.todaysSpecials ?? current.todaysSpecials }) as Settings;
+  await saveSettings(next);
+  const staff = authStaff(req); logActivity(staff.username, staff.role, "today's special updated");
   ok(res, { special: next.special, todaysSpecials: next.todaysSpecials });
 }));
 
-app.get("/api/promotions", (_req, res) => ok(res, loadSettings().offers));
-app.post("/api/promotions", requireStaff("manager"), wrap((req, res) => {
-  const s = loadSettings();
-  const offer = { ...req.body, id: req.body.id || uid("of"), active: req.body.active ?? true };
-  setJSON("settings", { ...s, offers: [...s.offers, offer] });
-  const a = auth2()(req);
-  logActivity(a.name!, a.role!, `promotion + ${offer.id}`);
-  ok(res, offer, 201);
+app.get("/api/promotions", wrap(async (_req, res) => ok(res, (await loadSettings()).offers)));
+app.post("/api/promotions", requireStaff("manager"), wrap(async (req, res) => {
+  const current = await loadSettings();
+  const patch = promotionPatchSchema.parse(req.body);
+  const offer = { ...patch, id: uid("of") };
+  const next = settingsSchema.parse({ ...current, offers: [...current.offers, offer] }) as Settings;
+  await saveSettings(next); const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion + ${offer.id}`); ok(res, offer, 201);
 }));
-app.put("/api/promotions/:id", requireStaff("manager"), wrap((req, res) => {
-  const s = loadSettings();
-  const offers = s.offers.map((o) => (o.id === req.params.id ? { ...o, ...req.body, id: o.id } : o));
-  setJSON("settings", { ...s, offers });
-  const a = auth2()(req);
-  logActivity(a.name!, a.role!, `promotion ~ ${req.params.id}`);
-  ok(res, offers.find((o) => o.id === req.params.id));
+app.put("/api/promotions/:id", requireStaff("manager"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id); const current = await loadSettings();
+  const patch = promotionPatchSchema.parse(req.body);
+  if (!current.offers.some((offer) => offer.id === id)) return fail(res, 404, "promo.notFound");
+  const offers = current.offers.map((offer) => offer.id === id ? { ...patch, id, uses: offer.uses } : offer);
+  const next = settingsSchema.parse({ ...current, offers }) as Settings; await saveSettings(next);
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion ~ ${id}`); ok(res, offers.find((offer) => offer.id === id));
 }));
-app.delete("/api/promotions/:id", requireStaff("manager"), wrap((req, res) => {
-  const s = loadSettings();
-  setJSON("settings", { ...s, offers: s.offers.filter((o) => o.id !== req.params.id) });
-  const a = auth2()(req);
-  logActivity(a.name!, a.role!, `promotion - ${req.params.id}`);
-  ok(res, { ok: true });
+app.delete("/api/promotions/:id", requireStaff("manager"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id); const current = await loadSettings();
+  const next = settingsSchema.parse({ ...current, offers: current.offers.filter((offer) => offer.id !== id) }) as Settings;
+  await saveSettings(next); const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion - ${id}`); ok(res, { ok: true });
 }));
 
-app.put("/api/translations", requireStaff("manager"), wrap((req, res) => {
-  const b = z.object({ lang: z.enum(["en", "fi"]), key: z.string().min(1), value: z.string() }).parse(req.body);
-  db.prepare(`INSERT INTO translations (lang, key, value) VALUES (?, ?, ?)
-    ON CONFLICT(lang, key) DO UPDATE SET value = excluded.value`).run(b.lang, b.key, b.value);
-  const a = auth2()(req);
-  logActivity(a.name!, a.role!, `translation ~ ${b.lang}:${b.key}`);
-  ok(res, { ok: true });
+app.put("/api/translations", requireStaff("manager"), wrap(async (req, res) => {
+  const b = translationSchema.parse(req.body);
+  const { data: current, error: readError } = await supabaseDb.from("translation_strings").select("value_en, value_fi").eq("key", b.key).maybeSingle();
+  if (readError) throw readError;
+  const { error } = await supabaseDb.from("translation_strings").upsert({
+    key: b.key,
+    value_en: b.lang === "en" ? b.value : current?.value_en ?? b.value,
+    value_fi: b.lang === "fi" ? b.value : current?.value_fi ?? null,
+  }, { onConflict: "key" });
+  if (error) throw error;
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `translation ~ ${b.lang}:${b.key}`); ok(res, { ok: true });
 }));
 
-/* ── admin: customers / analytics / activity ───────────────────────────── */
-app.get("/api/customers", requireStaff("manager"), (_req, res) => {
-  const rows = db.prepare(`SELECT id, name, email, phone, marketing, created_at FROM users`).all();
-  ok(res, rows);
-});
-app.delete("/api/customers/:id", requireStaff("owner"), wrap((req, res) => {
-  db.prepare(`DELETE FROM users WHERE id = ?`).run(req.params.id);
-  const a = auth2()(req);
-  logActivity(a.name!, a.role!, `customer erased ${req.params.id} (GDPR)`);
+/* ── admin customers / marketing / analytics / append-only activity ────── */
+app.get("/api/admin/newsletter", requireStaff("manager"), wrap(async (_req, res) => {
+  const { data, error } = await supabaseDb.from("newsletter_subscribers").select("email, subscribed_at").order("subscribed_at", { ascending: false }).limit(10000);
+  if (error) throw error;
+  ok(res, data ?? []);
+}));
+app.delete("/api/admin/newsletter/:email", requireStaff("manager"), wrap(async (req, res) => {
+  const email = newsletterSchema.parse({ email: decodeURIComponent(req.params.email) }).email.toLowerCase();
+  const { error } = await supabaseDb.from("newsletter_subscribers").delete().eq("email", email);
+  if (error) throw error;
   ok(res, { ok: true });
 }));
-
-app.get("/api/analytics/summary", requireStaff("manager"), (_req, res) => {
-  const rows = (db.prepare(`SELECT data FROM orders`).all() as { data: string }[]).map((r) => JSON.parse(r.data) as Order);
-  const revenue = rows.filter((o) => !o.refunded).reduce((a, o) => a + o.total, 0);
+app.get("/api/customers", requireStaff("manager"), wrap(async (_req, res) => {
+  const { data, error } = await supabaseDb.from("customers").select("id, name, email, phone, marketing_consent, created_at").limit(10000);
+  if (error) throw error;
+  ok(res, (data ?? []).map((customer) => ({
+    id: customer.id, name: customer.name, email: customer.email, phone: customer.phone ?? "",
+    marketing: customer.marketing_consent, created_at: Date.parse(customer.created_at),
+  })));
+}));
+app.delete("/api/customers/:id", requireStaff("owner"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const { data: customer, error: readError } = await supabaseDb.from("customers").select("id").eq("id", id).maybeSingle();
+  if (readError) throw readError;
+  if (!customer) return fail(res, 404, "auth.notFound");
+  const { error: eraseError } = await supabaseDb.rpc("erase_customer", { p_customer_id: id });
+  if (eraseError) throw eraseError;
+  const { error: authError } = await supabaseDb.auth.admin.deleteUser(id);
+  if (authError) throw authError;
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `customer erased ${id} (GDPR)`); ok(res, { ok: true });
+}));
+app.get("/api/analytics/summary", requireStaff("manager"), wrap(async (_req, res) => {
+  const orders = await listOrders(10000);
+  const revenue = orders.filter((order) => !order.refunded && ["paid", "demo_paid"].includes(String(order.paymentStatus))).reduce((sum, order) => sum + order.total, 0);
   const byItem = new Map<string, number>();
-  for (const o of rows) for (const l of o.lines) byItem.set(l.name, (byItem.get(l.name) ?? 0) + l.qty);
-  const top = [...byItem.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10);
-  const pendingResv = (db.prepare(`SELECT data FROM reservations`).all() as { data: string }[])
-    .filter((r) => JSON.parse(r.data).status === "pending").length;
-  ok(res, {
-    orders: rows.length, revenue: Math.round(revenue * 100) / 100,
-    refunded: rows.filter((o) => o.refunded).length, topItems: top, pendingReservations: pendingResv,
-  });
-});
-
-app.get("/api/admin/activity", requireStaff("manager"), (_req, res) => {
-  ok(res, db.prepare(`SELECT ts, who, role, msg FROM activity ORDER BY id DESC LIMIT 200`).all());
-});
+  for (const order of orders) for (const line of order.lines) byItem.set(line.name, (byItem.get(line.name) ?? 0) + line.qty);
+  const { data: reservations, error } = await supabaseDb.from("reservations").select("status").eq("status", "pending").limit(10000);
+  if (error) throw error;
+  const pendingReservations = reservations?.length ?? 0;
+  ok(res, { orders: orders.length, revenue: Math.round(revenue * 100) / 100, refunded: orders.filter((order) => order.refunded).length, topItems: [...byItem.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10), pendingReservations });
+}));
+app.get("/api/admin/activity", requireStaff("manager"), wrap(async (_req, res) => {
+  const { data, error } = await supabaseDb.from("activity_log").select("created_at, actor_name, actor_role, action, details").order("created_at", { ascending: false }).limit(200);
+  if (error) throw error;
+  ok(res, (data ?? []).map((row) => ({ ts: Date.parse(row.created_at), who: row.actor_name, role: row.actor_role, msg: row.details?.message ?? row.action })));
+}));
 
 app.use("/api", (_req, res) => fail(res, 404, "route.notFound"));
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error(err.message);
-  fail(res, err.message.startsWith("CORS") ? 403 : 500, err.message.startsWith("CORS") ? err.message : "internal");
+app.use((err: Error & { status?: number; type?: string }, req: Request, res: Response, _next: NextFunction) => {
+  safeLogError((req as any).requestId || "unknown", err);
+  if (err.status === 413 || err.type === "entity.too.large") return fail(res, 413, "request.tooLarge");
+  fail(res, err.message.startsWith("CORS") ? 403 : 500, err.message.startsWith("CORS") ? "cors.forbidden" : "internal");
 });
 
-app.listen(CFG.port, "0.0.0.0", () =>
-  console.log(`backend listening on :${CFG.port} (origins: ${CFG.corsOrigins.join(", ")})`)
-);
+app.listen(CFG.port, "0.0.0.0", () => {
+  console.log(`backend listening on :${CFG.port} (origins: ${CFG.corsOrigins.join(", ")})`);
+});

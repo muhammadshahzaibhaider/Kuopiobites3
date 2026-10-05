@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useLang } from "@/lib/i18n";
 import { RESTAURANT } from "@/lib/menu";
 import { useShop } from "@/lib/store";
+import { apiSubscribeNewsletter } from "@/lib/api";
 
 export default function Footer() {
   const { settings, toast } = useShop();
@@ -107,20 +108,19 @@ export default function Footer() {
           ) : (
             <form
               className="mt-4 flex gap-2"
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
                 if (!/.+@.+\..+/.test(email)) {
                   toast("Please enter a valid email", "err");
                   return;
                 }
-                // STUB → POST /api/newsletter (persist locally so Admin ▸ Marketing shows sign-ups)
                 try {
-                  const raw = localStorage.getItem("kb_newsletter");
-                  const list: { email: string; at: number }[] = raw ? JSON.parse(raw) : [];
-                  if (!list.some((x) => x.email === email)) list.push({ email, at: Date.now() });
-                  localStorage.setItem("kb_newsletter", JSON.stringify(list));
-                } catch {}
-                setDone(true);
+                  await apiSubscribeNewsletter(email);
+                  setDone(true);
+                  setEmail("");
+                } catch (error) {
+                  toast((error as Error).message, "err");
+                }
               }}
             >
               <input

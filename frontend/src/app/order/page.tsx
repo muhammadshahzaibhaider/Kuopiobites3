@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import AuthForm from "@/components/AuthForm";
 import { LineThumb, QtyStepper } from "@/components/ui";
-import { cx, eur, fmtDate } from "@/lib/format";
+import { cx, eur, fmtDate, vatPct } from "@/lib/format";
 import { computeDiscount, etaLabel, isItemOff, validatePreorder } from "@/lib/v3";
 import { orderingInfo } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
@@ -15,7 +15,7 @@ import { useShop } from "@/lib/store";
 export default function OrderPage() {
   const shop = useShop();
   const router = useRouter();
-  const { cart, cartSubtotal, settings, user, setQty, removeLine, clearCart, placeOrder, toast, updateUser, priceCart, serverPricing } = shop;
+  const { cart, cartSubtotal, settings, user, setQty, removeLine, clearCart, startCheckout, toast, updateUser, priceCart, serverPricing } = shop;
 
   const [type, setType] = useState<"pickup" | "delivery">("pickup");
   const [address, setAddress] = useState("");
@@ -56,13 +56,11 @@ export default function OrderPage() {
   const pay = async () => {
     if (!user) return;
     setPaying(true);
-    // STUB → POST /api/checkout (Stripe hosted checkout session)
-    await new Promise((r) => setTimeout(r, 1200));
     if (type === "delivery" && !user.addresses.includes(address)) {
       await updateUser({ addresses: [...user.addresses, address] });
     }
     try {
-      const order = await placeOrder({
+      const checkout = await startCheckout({
         type,
         customer: { name: user.name, email: user.email, phone: phone || user.phone || "" },
         address: type === "delivery" ? address : RESTAURANT.address,
@@ -74,11 +72,18 @@ export default function OrderPage() {
         vat,
         userId: user.id,
         scheduled,
+        lang,
+        code: code || undefined,
         discount: disc.amount > 0 ? { amount: disc.amount, title: disc.title, offerId: disc.offer?.id } : undefined,
       });
+      if (checkout.mode === "stripe" && checkout.url) {
+        window.location.assign(checkout.url);
+        return;
+      }
+      if (!checkout.order) throw new Error("payment.unavailable");
       clearCart();
       toast(t("order.placed"));
-      router.push(`/track/${order.id}`);
+      router.push(`/track/${checkout.order.id}`);
     } catch (e) {
       toast(t((e as Error).message) ?? (e as Error).message, "err");
     } finally {
@@ -234,7 +239,7 @@ export default function OrderPage() {
             {disc.amount > 0 && (
               <div className="flex justify-between text-[#2e7d32]"><dt>− {disc.title}</dt><dd className="tabular-nums">−{eur(disc.amount)}</dd></div>
             )}
-            <div className="flex justify-between text-xs text-cherry/60"><dt>{t("order.vat")} {Math.round(settings.vatRate * 100)}%</dt><dd className="tabular-nums">{eur(vat)}</dd></div>
+            <div className="flex justify-between text-xs text-cherry/60"><dt>{t("order.vat")} {vatPct(settings.vatRate)}</dt><dd className="tabular-nums">{eur(vat)}</dd></div>
             <div className="flex justify-between pt-2 font-display text-xl font-black text-cherry"><dt>{t("order.total")}</dt><dd className="tabular-nums">{eur(total)}</dd></div>
           </dl>
           <div className="mt-3 space-y-2">

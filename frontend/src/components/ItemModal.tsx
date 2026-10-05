@@ -187,7 +187,7 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
                 addLine({
                   itemId: item.id,
                   name: item.name,
-                  variantLabel: item.prices[variant].label || "—",
+                  variantLabel: item.prices[variant].label,
                   qty,
                   unitPrice: off ? off.now : unit,
                   options,

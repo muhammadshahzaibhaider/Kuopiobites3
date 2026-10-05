@@ -81,7 +81,7 @@ export default function Home() {
           className="pointer-events-none absolute inset-0 mix-blend-multiply opacity-[0.14]"
           style={{
             backgroundImage: "url(/brand/doodles.png)",
-            backgroundSize: "170px auto",
+            backgroundSize: "37px auto",
             backgroundRepeat: "repeat",
             maskImage: "linear-gradient(to bottom, black 0%, black 72%, transparent 100%)",
             WebkitMaskImage: "linear-gradient(to bottom, black 0%, black 72%, transparent 100%)",
@@ -96,7 +96,7 @@ export default function Home() {
       <section className="relative overflow-hidden mt-4 sm:mt-8">
         <div aria-hidden className="absolute -right-40 -top-40 h-[480px] w-[480px] rounded-full bg-gold/15 blur-3xl" />
         <div className="container-x grid items-center gap-10">
-          <div className="relative z-10 max-w-2xl rounded-[2rem] bg-cream/85 p-6 shadow-card sm:p-8">
+          <div className="relative z-10 mx-auto max-w-2xl rounded-[2rem] bg-cream/85 p-6 shadow-card sm:p-8">
             <Reveal><OpenBadge big /></Reveal>
             <motion.p
               className="mt-5 max-w-md text-lg text-cherry/80"

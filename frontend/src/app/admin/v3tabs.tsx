@@ -9,6 +9,7 @@ import { todayStrHelsinki } from "@/lib/hours";
 import { DICTS, useLang } from "@/lib/i18n";
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
+import { apiActivity, apiUpload } from "@/lib/api";
 import { isPizzaItem, isPreorderItem, nextPreorderSundays, pizzaSlug } from "@/lib/v3";
 import type { MenuItem, Offer, SpecialItem, ToppingMeta, UploadedImg } from "@/lib/types";
 
@@ -413,6 +414,10 @@ export function BulkImageImport() {
     const matched: { file: string; items: MenuItem[]; key: string; data: string }[] = [];
     const unmatched: string[] = [];
     for (const f of files) {
+      if (!["image/png", "image/jpeg", "image/webp"].includes(f.type)) {
+        unmatched.push(`${f.name} (PNG, JPEG or WebP only)`);
+        continue;
+      }
       if (f.size > MAX_BYTES) {
         unmatched.push(`${f.name} (>5 MB)`);
         continue;
@@ -445,9 +450,11 @@ export function BulkImageImport() {
       const imgs: File[] = [];
       for (const name of Object.keys(archive.files)) {
         const entry = archive.files[name];
-        if (entry.dir || !/\.(webp|jpe?g|png|avif)$/i.test(name)) continue;
+        if (entry.dir || !/\.(webp|jpe?g|png)$/i.test(name)) continue;
         const blob = await entry.async("blob");
-        imgs.push(new File([blob], name.split("/").pop()!, { type: blob.type }));
+        const lower = name.toLowerCase();
+        const type = lower.endsWith(".webp") ? "image/webp" : lower.endsWith(".png") ? "image/png" : "image/jpeg";
+        imgs.push(new File([blob], name.split("/").pop()!, { type }));
       }
       setBusy(false);
       return readFiles(imgs);
@@ -457,20 +464,30 @@ export function BulkImageImport() {
     }
   };
 
-  const apply = () => {
+  const apply = async () => {
     if (!review) return;
-    const map = { ...settings.itemImages };
-    let n = 0;
-    for (const m of review.matched)
-      for (const it of m.items) {
-        map[it.id] = { src: m.data, altEn: it.name, altFi: it.name };
-        n++;
+    setBusy(true);
+    try {
+      const map = { ...settings.itemImages };
+      let n = 0;
+      for (const m of review.matched) {
+        const blob = await (await fetch(m.data)).blob();
+        const uploaded = await apiUpload(blob);
+        for (const it of m.items) {
+          map[it.id] = { src: uploaded.url, altEn: it.name, altFi: it.name };
+          n++;
+        }
       }
-    saveSettings({ ...settings, itemImages: map });
-    logAudit(`bulk image import — ${review.matched.length} files → ${n} items`);
-    toast(`${n} item images applied`);
-    setReview(null);
-    setQ("");
+      await saveSettings({ ...settings, itemImages: map });
+      logAudit(`bulk image import — ${review.matched.length} files → ${n} items`);
+      toast(`${n} item images applied`);
+      setReview(null);
+      setQ("");
+    } catch (e) {
+      toast(`Upload failed: ${(e as Error).message}`, "err");
+    } finally {
+      setBusy(false);
+    }
   };
 
   const replaced = review
@@ -841,13 +858,13 @@ export function TranslationsTab() {
               </p>
               <div className="mt-2 grid gap-2 sm:grid-cols-2">
                 <input
-                  defaultValue={tx?.name ?? ""}
+                  defaultValue={m.nameFi ?? ""}
                   placeholder="Nimi (FI)"
                   onBlur={(e) => { setItemText("fi", m.id, { name: e.target.value || undefined }); toast("FI copy saved"); }}
                   className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold"
                 />
                 <input
-                  defaultValue={tx?.desc ?? ""}
+                  defaultValue={m.descFi ?? ""}
                   placeholder="Kuvaus (FI)"
                   onBlur={(e) => { setItemText("fi", m.id, { desc: e.target.value || undefined }); toast("FI copy saved"); }}
                   className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold"
@@ -865,8 +882,9 @@ export function TranslationsTab() {
 /* ── audit log ───────────────────────────────────────── */
 
 export function AuditTab() {
-  const { settings } = useShop();
-  const rows = settings.audit ?? [];
+  /* backend-owned activity log (who/when/what) — cannot be bypassed from the client */
+  const [rows, setRows] = useState<{ ts: number; who: string; role: string; msg: string }[]>([]);
+  useEffect(() => { apiActivity().then(setRows).catch(() => {}); }, []);
   if (!rows.length) return <p className="rounded-xl bg-cream-deep p-8 text-center text-sm font-bold text-cherry/60">No changes logged yet.</p>;
   return (
     <table className="w-full text-left text-sm">

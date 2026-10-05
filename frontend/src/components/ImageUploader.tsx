@@ -2,13 +2,15 @@
 import { useRef, useState } from "react";
 import { cx } from "@/lib/format";
 import { fileToWebp, MAX_BYTES } from "@/lib/imgtool";
+import { apiUpload } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
 import type { UploadedImg } from "@/lib/types";
 
 /**
  * Reusable admin uploader: drag-drop / picker, ≤5 MB, aspect-preset center crop,
  * WebP compression, EN/FI alt text (required), replace/delete.
- * STUB → POST /api/uploads (swap body for S3/Cloudinary/Uploadthing later).
+ * The browser prepares a WebP, then the authenticated backend validates the
+ * magic bytes and stores an opaque media key. No client filename becomes a path.
  */
 export default function ImageUploader({
   value,
@@ -33,15 +35,20 @@ export default function ImageUploader({
       setErr("Max 5 MB");
       return;
     }
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      setErr("PNG, JPEG or WebP only");
+      return;
+    }
     if (!altEn.trim() || !altFi.trim()) {
       setErr(t("admin.altEn") + " & " + t("admin.altFi") + " required");
       return;
     }
     setBusy(true);
     try {
-      // STUB → POST /api/uploads (swap the data URL for an S3/Cloudinary key later)
-      const src = await fileToWebp(file, preset);
-      onChange({ src, altEn: altEn.trim(), altFi: altFi.trim() });
+      const dataUrl = await fileToWebp(file, preset);
+      const blob = await (await fetch(dataUrl)).blob();
+      const uploaded = await apiUpload(blob);
+      onChange({ src: uploaded.url, altEn: altEn.trim(), altFi: altFi.trim() });
     } catch (e) {
       setErr((e as Error).message);
     } finally {
@@ -72,7 +79,7 @@ export default function ImageUploader({
         ) : (
           <span>{t("admin.upload")}<br />({preset})</span>
         )}
-        <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={(e) => handle(e.target.files?.[0])} />
+        <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => handle(e.target.files?.[0])} />
       </div>
       {err && <p className="text-xs font-bold text-brick">{err}</p>}
       {value && (

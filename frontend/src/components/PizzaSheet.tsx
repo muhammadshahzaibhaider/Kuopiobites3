@@ -70,13 +70,13 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
     addLine({
       itemId: item.id,
       name: item.name,
-      variantLabel: sizeLabel || "—",
+      variantLabel: sizeLabel,
       qty,
       unitPrice: unit,
       options: opt,
       note: note.trim() || undefined,
       pizza: {
-        sizeLabel: sizeLabel || "—",
+        sizeLabel,
         included: isBuilder ? [] : included,
         extras: extraList,
         builder: isBuilder,

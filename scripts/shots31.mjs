@@ -1,0 +1,16 @@
+import { chromium } from "playwright";
+const browser = await chromium.launch();
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+await page.goto("http://localhost:3000/admin", { waitUntil: "networkidle" });
+await page.waitForTimeout(800);
+await page.fill("input[placeholder='Username']", "admin");
+await page.fill("input[placeholder='Password']", "kuopio2026");
+await page.click("button:has-text('Sign in')");
+await page.waitForTimeout(1200);
+await page.locator("aside button", { hasText: "Admin" }).last().click();
+await page.waitForTimeout(1000);
+const rows = await page.locator("tbody tr").count();
+console.log("audit tbody rows:", rows);
+console.log("has backend entries:", await page.locator("td", { hasText: "settings updated" }).count() > 0 || await page.locator("td", { hasText: "staff login" }).count() > 0);
+await page.screenshot({ path: "tmp/shots4/admin-audit2.png" });
+await browser.close();

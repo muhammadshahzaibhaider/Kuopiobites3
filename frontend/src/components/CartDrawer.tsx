@@ -2,7 +2,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { eur, fmtDate } from "@/lib/format";
+import { eur, fmtDate, vatPct } from "@/lib/format";
 import { isItemOff } from "@/lib/v3";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
@@ -129,7 +129,7 @@ export default function CartDrawer() {
                   </p>
                 )}
                 <p className="mt-1 text-xs text-cherry/60">
-                  {t("cart.vat")} {Math.round(settings.vatRate * 100)}% · {t("cart.deliveryNote")}
+                  {t("cart.vat")} {vatPct(settings.vatRate)} · {t("cart.deliveryNote")}
                 </p>
                 {unavailable.length > 0 && (
                   <p className="mt-2 rounded-xl bg-brick/10 p-3 text-xs font-black text-brick">

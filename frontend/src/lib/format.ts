@@ -9,6 +9,11 @@ export function eur(n: number): string {
   return "€" + n.toFixed(2);
 }
 
+/** VAT rate as a label: 0.135 → "13.5%", 0.14 → "14%" (decimal point, like prices). */
+export function vatPct(rate: number): string {
+  return Math.round(rate * 1000) / 10 + "%";
+}
+
 export function uid(prefix = ""): string {
   return (
     prefix +

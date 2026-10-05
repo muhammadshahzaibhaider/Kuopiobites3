@@ -7,8 +7,9 @@
  */
 import { readdirSync, statSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const root = new URL("../public/menu/", import.meta.url).pathname;
+const root = fileURLToPath(new URL("../public/menu/", import.meta.url));
 const out = [];
 
 function walk(dir, rel) {

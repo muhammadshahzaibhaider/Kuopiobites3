@@ -15,7 +15,7 @@ export default function Banner() {
 
   const img = (clip?: string) => (
     <Image
-      src="/brand/kuopio-bites-banner.png"
+      src="/brand/kuopio-bites-banner-transparent.png"
       alt={t("banner.alt")}
       fill
       priority
@@ -39,15 +39,6 @@ export default function Banner() {
           >
             {img("inset(0 0 30% 0)")}
           </motion.div>
-          <motion.div
-            className="absolute inset-0"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.25, ease: [0.22, 1, 0.36, 1] }}
-          >
-            {img("inset(64% 0 0 0)")}
-          </motion.div>
-
           {/* 1 · steam over the pizza "O" (~27% x) */}
           <div className="pointer-events-none absolute" style={{ left: "24%", top: "8%", width: "6%" }} aria-hidden>
             {[0, 1, 2].map((i) => (

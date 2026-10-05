@@ -5,10 +5,11 @@ import { todayStrHelsinki } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
 import { MENU, RESTAURANT } from "@/lib/menu";
 import { useShop } from "@/lib/store";
+import { apiDeleteNewsletter, apiNewsletter } from "@/lib/api";
 import { itemImagePath } from "@/lib/images";
 import { AuditTab, BulkImageImport, ImageCoveragePanel, OffersTab, Switch, TranslationsTab } from "@/app/admin/v3tabs";
 import { Ic } from "./icons";
-import { Bars, DataTable, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, SubTabs, downloadCSV, fmtDT, inputCls, useLocal, useDelayedReady, type Col } from "./ui";
+import { Bars, DataTable, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, SubTabs, downloadCSV, fmtDT, inputCls, useDelayedReady, type Col } from "./ui";
 
 /* ══ MARKETING ▸ promos & subscribers ══ */
 export function MarketingView({ mode }: { mode: "promos" | "subscribers" }) {
@@ -22,21 +23,16 @@ export function MarketingView({ mode }: { mode: "promos" | "subscribers" }) {
 }
 
 function SubscribersView() {
-  type Sub = { email: string; at: number };
+  type Sub = { email: string; subscribed_at: number };
   const [subs, setSubs] = useState<Sub[]>([]);
   const { toast } = useShop();
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem("kb_newsletter");
-      if (raw) setSubs(JSON.parse(raw));
-    } catch {}
-  }, []);
-  const sorted = [...subs].sort((a, b) => b.at - a.at);
+  useEffect(() => { apiNewsletter().then(setSubs).catch((error) => toast((error as Error).message, "err")); }, [toast]);
+  const sorted = [...subs].sort((a, b) => b.subscribed_at - a.subscribed_at);
   return (
     <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-cherry/10 px-4 py-3">
         <p className="text-sm font-black text-cherry">Newsletter sign-ups — <span className="tabular-nums">{subs.length}</span></p>
-        <GhostBtn onClick={() => downloadCSV("subscribers.csv", [["email", "date"], ...sorted.map((s) => [s.email, new Date(s.at).toISOString()])])}><Ic n="csv" size={13} /> Export CSV</GhostBtn>
+        <GhostBtn onClick={() => downloadCSV("subscribers.csv", [["email", "date"], ...sorted.map((s) => [s.email, new Date(s.subscribed_at).toISOString()])])}><Ic n="csv" size={13} /> Export CSV</GhostBtn>
       </div>
       <DataTable
         rows={sorted}
@@ -44,20 +40,16 @@ function SubscribersView() {
         search={(s, q) => s.email.includes(q)}
         cols={[
           { key: "email", label: "Email", sort: (s) => s.email, render: (s) => <span className="font-bold">{s.email}</span> },
-          { key: "at", label: "Signed up", sort: (s) => s.at, render: (s) => <span className="tabular-nums text-cherry/60">{fmtDT(s.at)}</span> },
+          { key: "at", label: "Signed up", sort: (s) => s.subscribed_at, render: (s) => <span className="tabular-nums text-cherry/60">{fmtDT(s.subscribed_at)}</span> },
         ]}
-        rowMenu={(s) => [
-          {
-            label: "Remove", icon: "trash", danger: true,
-            onClick: () => {
-              const next = sorted.filter((x) => x.email !== s.email);
-              setSubs(next);
-              localStorage.setItem("kb_newsletter", JSON.stringify(next));
-              toast("Subscriber removed", "err");
-            },
+        rowMenu={(s) => [{
+          label: "Remove", icon: "trash", danger: true,
+          onClick: async () => {
+            try { await apiDeleteNewsletter(s.email); setSubs((current) => current.filter((x) => x.email !== s.email)); toast("Subscriber removed", "err"); }
+            catch (error) { toast((error as Error).message, "err"); }
           },
-        ]}
-        empty={<EmptyState icon="bell" title="No subscribers yet" sub="Footer newsletter sign-ups appear here (demo storage)." />}
+        }]}
+        empty={<EmptyState icon="bell" title="No subscribers yet" sub="Footer newsletter sign-ups are stored by the backend." />}
       />
     </div>
   );
@@ -316,50 +308,17 @@ export function AnalyticsView({ mode }: { mode: "sales" | "items" | "peaks" }) {
 }
 
 /* ══ ADMIN ▸ staff + activity ══ */
-export type Staff = { name: string; role: "Owner" | "Manager" | "Kitchen"; since: number };
 export function AdminStaffView() {
-  const [staff, setStaff] = useLocal<Staff[]>("kb_staff", [{ name: "admin", role: "Owner", since: Date.now() }]);
-  const [draft, setDraft] = useState({ name: "", role: "Manager" as Staff["role"] });
-  const { settings } = useShop();
+  const { staffRole } = useShop();
   return (
     <div className="space-y-4">
-      <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
-        <p className="border-b border-cherry/10 px-4 py-3 text-sm font-black text-cherry">Staff accounts</p>
-        <table className="w-full text-left text-sm">
-          <thead><tr className="border-b border-cherry/10 text-[11px] font-black uppercase text-cherry/50"><th className="px-4 py-2">Name</th><th className="px-3 py-2">Role</th><th className="px-3 py-2">Since</th><th className="px-3 py-2" /></tr></thead>
-          <tbody>
-            {staff.map((s) => (
-              <tr key={s.name} className="border-b border-cherry/5">
-                <td className="px-4 py-2.5 font-black text-cherry">{s.name}</td>
-                <td className="px-3 py-2.5"><Pill tone={s.role === "Owner" ? "gold" : s.role === "Manager" ? "teal" : "gray"}>{s.role}</Pill></td>
-                <td className="px-3 py-2.5 tabular-nums text-cherry/60">{new Date(s.since).toLocaleDateString("fi-FI")}</td>
-                <td className="px-3 py-2.5 text-right">
-                  {s.role !== "Owner" && (
-                    <button onClick={() => setStaff(staff.filter((x) => x.name !== s.name))} className="text-xs font-black text-brick underline">remove</button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <form
-          className="flex flex-wrap items-end gap-2 border-t border-cherry/10 p-4"
-          onSubmit={(e) => {
-            e.preventDefault();
-            if (!draft.name.trim() || staff.some((s) => s.name === draft.name)) return;
-            setStaff([...staff, { name: draft.name.trim(), role: draft.role, since: Date.now() }]);
-            setDraft({ name: "", role: "Manager" });
-          }}
-        >
-          <Field label="Name"><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className={inputCls} /></Field>
-          <Field label="Role">
-            <select value={draft.role} onChange={(e) => setDraft({ ...draft, role: e.target.value as Staff["role"] })} className={inputCls}>
-              <option>Manager</option><option>Kitchen</option><option>Owner</option>
-            </select>
-          </Field>
-          <PrimaryBtn>Add staff</PrimaryBtn>
-        </form>
-        <p className="px-4 pb-3 text-[11px] text-cherry/40">Roles: Owner = everything · Manager = no Settings/Admin · Kitchen = Orders + Menu availability only. Demo storage — wire to auth in production.</p>
+      <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-5">
+        <p className="text-sm font-black text-cherry">Current staff session</p>
+        <p className="mt-2 text-sm text-cherry/70">Signed in role: <strong>{staffRole ?? "not authenticated"}</strong></p>
+        <p className="mt-4 text-sm text-cherry/70">
+          Staff provisioning and removal are intentionally not client-side features. Create, disable, and rotate staff accounts in the trusted backend/identity administration path; the browser cannot change its own role or manufacture a staff record.
+        </p>
+        <p className="mt-3 text-[11px] text-cherry/50">Roles remain Owner, Manager, and kitchen. Server middleware re-checks the current role on every request.</p>
       </div>
       <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
         <AuditTab />

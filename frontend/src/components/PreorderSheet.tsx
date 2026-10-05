@@ -100,9 +100,9 @@ export default function PreorderSheet({ item, onClose }: { item: MenuItem | null
                 disabled={!valid}
                 onClick={() => {
                   const po = { date, time };
-                  addLine({ itemId: item.id, name: item.name, variantLabel: "—", qty, unitPrice: unit, options: [], preorder: po });
+                  addLine({ itemId: item.id, name: item.name, variantLabel: item.prices[0]?.label ?? "", qty, unitPrice: unit, options: [], preorder: po });
                   if (extraPuri > 0 && extraItem)
-                    addLine({ itemId: extraItem.id, name: extraItem.name, variantLabel: "—", qty: extraPuri, unitPrice: extraItem.prices[0].value, options: [], preorder: po });
+                    addLine({ itemId: extraItem.id, name: extraItem.name, variantLabel: extraItem.prices[0]?.label ?? "", qty: extraPuri, unitPrice: extraItem.prices[0].value, options: [], preorder: po });
                   toast(`${item.name} ${t("menu.added")}`);
                   onClose();
                 }}

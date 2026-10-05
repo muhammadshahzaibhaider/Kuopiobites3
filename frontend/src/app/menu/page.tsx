@@ -97,7 +97,7 @@ function MenuInner() {
     }
     if (m.prices.length === 1 && !m.mods?.length) {
       const off = offerPrice(settings, m, 0);
-      addLine({ itemId: m.id, name: m.name, variantLabel: "—", qty: 1, unitPrice: off ? off.now : m.prices[0].value, options: [] });
+      addLine({ itemId: m.id, name: m.name, variantLabel: m.prices[0]?.label ?? "", qty: 1, unitPrice: off ? off.now : m.prices[0].value, options: [] });
       toast(`${trName(lang, m)} ${t("menu.added")}`);
     } else {
       setModal(m);

@@ -171,6 +171,8 @@ export function validatePreorder(s: Settings, lines: CartLine[], scheduled?: { d
   if (!scheduled) return "pre.errSlot";
   const d = new Date(scheduled.date + "T12:00:00");
   if (d.getDay() !== 0) return "pre.errSunday";
+  if (!s.preorder.slots.includes(scheduled.time)) return "pre.errSlot";
+  if (s.blockedSlots.includes(`${scheduled.date}T${scheduled.time}`)) return "pre.errSlot";
   if (!nextPreorderSundays(s, 3).includes(scheduled.date)) return "pre.errCutoff";
   return null;
 }

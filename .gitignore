@@ -4,9 +4,19 @@ out/
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store
-.env*
+
+# secrets — only *.env.example templates are committed
+.env
+.env.*
 !.env.example
-/tmp/
-/uploads/
-/backend/data/*.db*
-/.sudo_as_admin_successful
+# Supabase CLI local state
+supabase/.temp/
+supabase/.branches/
+# guide verification scratch
+scripts/supabase-guide-check/.ts-check/
+# local tools, customer data, and user uploads
+tmp/
+uploads/
+backend/data/
+.supabase/
+.sudo_as_admin_successful

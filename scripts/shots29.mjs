@@ -1,0 +1,16 @@
+import { readFileSync } from "node:fs";
+import { chromium } from "playwright";
+const browser = await chromium.launch();
+const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+await ctx.addInitScript((tk) => localStorage.setItem("kb_token", tk), readFileSync("/tmp/tk_cust2","utf8").trim());
+const page = await ctx.newPage();
+await page.goto("http://localhost:3000/track/KB-O856V5", { waitUntil: "networkidle" });
+await page.waitForTimeout(1500);
+console.log("track shows order:", await page.locator("text=KB-O856V5").count() > 0);
+await page.goto("http://localhost:3000/menu?cat=drinks", { waitUntil: "networkidle" });
+await page.waitForTimeout(1200);
+await page.evaluate(() => window.scrollTo(0, 500));
+await page.waitForTimeout(400);
+await page.screenshot({ path: "tmp/shots4/menu-drinks.png" });
+await browser.close();
+console.log("done");

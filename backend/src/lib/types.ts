@@ -94,7 +94,9 @@ export interface Order {
   scheduled?: { date: string; time: string };
   statusOverride?: OrderStatus;
   refunded?: boolean;
-  paymentId: string;
+  paymentStatus?: "pending" | "paid" | "failed" | "refunded" | "demo_paid";
+  paymentId?: string;
+  checkoutSessionId?: string;
   userId: string;
 }
 
@@ -191,7 +193,7 @@ export interface SpecialCfg {
 }
 
 export interface UploadedImg {
-  src: string; // data URL (WebP) — stub for POST /api/uploads
+  src: string; // server media key or validated bundled/provider URL
   altEn: string;
   altFi: string;
 }

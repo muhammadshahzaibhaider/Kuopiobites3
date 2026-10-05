@@ -20,7 +20,9 @@ export default function AuthForm({ onDone }: { onDone?: () => void }) {
         ? await login(f.email, f.pass)
         : await register({ name: f.name, email: f.email, pass: f.pass, phone: f.phone });
     setBusy(false);
-    if (error) setErr(error);
+    if (error === "auth.confirmationSent") {
+      setErr("Account created. Check your email to confirm it before signing in.");
+    } else if (error) setErr(error);
     else {
       toast(mode === "login" ? "Welcome back! 👋" : "Account created — tervetuloa!");
       onDone?.();
@@ -57,7 +59,7 @@ export default function AuthForm({ onDone }: { onDone?: () => void }) {
           </>
         )}
         <input required type="email" className={field} placeholder="Email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
-        <input required type="password" minLength={4} className={field} placeholder="Password" value={f.pass} onChange={(e) => setF({ ...f, pass: e.target.value })} />
+        <input required type="password" minLength={mode === "register" ? 12 : 1} className={field} placeholder={mode === "register" ? "Password (12+ characters)" : "Password"} value={f.pass} onChange={(e) => setF({ ...f, pass: e.target.value })} />
         {err && <p className="text-sm font-bold text-cherry-bright">{err}</p>}
         <button
           disabled={busy}

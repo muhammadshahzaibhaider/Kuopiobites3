@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useRef, useState } from "react";
 import { fileToWebp } from "@/lib/imgtool";
+import { apiUpload } from "@/lib/api";
 import { MenuImage } from "@/components/ui";
 import { CATEGORY_SLUG } from "@/lib/images";
 import { eur, cx } from "@/lib/format";
@@ -151,8 +152,11 @@ function ItemEditor({ item, onClose }: { item: MenuItem; onClose: () => void }) 
 
   const onUpload = async (f: File) => {
     try {
+      if (!["image/png", "image/jpeg", "image/webp"].includes(f.type)) throw new Error("type");
       const dataUrl = await fileToWebp(f, "1:1", 1200);
-      saveSettings({ ...settings, itemImages: { ...settings.itemImages, [item.id]: { src: dataUrl, altEn: item.name, altFi: item.name } } });
+      const blob = await (await fetch(dataUrl)).blob();
+      const uploaded = await apiUpload(blob);
+      saveSettings({ ...settings, itemImages: { ...settings.itemImages, [item.id]: { src: uploaded.url, altEn: item.name, altFi: item.name } } });
       toast("Image applied — site shows it immediately");
     } catch {
       toast("Upload failed — check the file", "err");
@@ -182,7 +186,7 @@ function ItemEditor({ item, onClose }: { item: MenuItem; onClose: () => void }) 
                 <p className="mb-2 text-[11px] text-cherry/40">
                   {settings.itemImages[item.id] ? "Custom uploaded image in use" : `/menu/${CATEGORY_SLUG[item.cat] ?? item.cat}/${item.imageKey ?? item.id}.webp (generated)`}
                 </p>
-                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])} />
+                <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])} />
                 <GhostBtn onClick={() => fileRef.current?.click()}>Upload / replace…</GhostBtn>
                 {settings.itemImages[item.id] && (
                   <GhostBtn className="ml-2" onClick={() => { const m = { ...settings.itemImages }; delete m[item.id]; saveSettings({ ...settings, itemImages: m }); }}>Revert to generated</GhostBtn>

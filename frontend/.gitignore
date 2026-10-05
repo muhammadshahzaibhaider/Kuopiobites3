@@ -1,0 +1,14 @@
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+# env files: only placeholder examples are committed (never put secrets in NEXT_PUBLIC_*)
+.env
+.env.*
+!.env.example
+!.env.local.example
+# private keys and certificates
+*.pem
+*.key
+*.p12
+*.pfx

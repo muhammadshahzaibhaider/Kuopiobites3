@@ -6,15 +6,21 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
-    "seed": "tsx src/seed.ts"
+    "seed": "tsx src/seed.ts",
+    "security-check": "node scripts/security-check.mjs"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.2",
     "bcryptjs": "^2.4.3",
-    "better-sqlite3": "^11.3.0",
+    "better-sqlite3": "^11.10.0",
+    "clsx": "^2.1.1",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "express-rate-limit": "^7.4.0",
+    "helmet": "^8.3.0",
     "jsonwebtoken": "^9.0.2",
+    "nodemailer": "^10.0.13",
+    "stripe": "^18.5.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
@@ -24,6 +30,7 @@
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.6",
     "@types/node": "^20.14.0",
+    "@types/nodemailer": "^7.0.12",
     "tsx": "^4.16.0",
     "typescript": "^5.5.0"
   }

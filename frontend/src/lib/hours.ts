@@ -24,7 +24,7 @@ export const DEFAULT_SETTINGS: Settings = {
   deliveryFee: 2.5,
   minOrder: 15,
   radiusKm: 6,
-  vatRate: 0.14,
+  vatRate: 0.135, // FI restaurant/takeaway food VAT since 1.1.2026 (was 0.14)
   toppings: DEFAULT_TOPPINGS,
   special: { itemId: "specials-3", active: true }, // Karachi Biryani
   blockedSlots: [],
