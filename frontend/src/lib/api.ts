@@ -40,6 +40,7 @@ export const apiUpload = (body: Blob) => apiBinary<{ url: string; mime: string }
 export const apiCurrentAccount = () => api<Omit<User, "pass">>("/api/account");
 export const apiUpdateAccount = (patch: Partial<Pick<User, "name" | "phone" | "addresses" | "marketing" | "favorites">>) =>
   api<User>("/api/account", { method: "PUT", body: patch });
+export const apiChangePassword = (current: string, next: string) => api<{ ok: true }>("/api/account/password", { method: "PUT", body: { current, next } });
 export const apiAccountOrders = () => api<Order[]>("/api/account/orders");
 export const apiCustomers = () =>
   api<{ id: string; name: string; email: string; phone: string; marketing: number; created_at: number }[]>("/api/customers", { staff: true });

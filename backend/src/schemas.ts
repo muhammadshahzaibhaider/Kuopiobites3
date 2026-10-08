@@ -159,6 +159,7 @@ export const accountPatchSchema = z.object({
   name: text(80).min(1).optional(), phone: text(30).optional(), addresses: z.array(text(160)).max(6).optional(), marketing: z.boolean().optional(),
   favorites: z.array(text(100)).max(500).optional(),
 }).strict();
+export const passwordChangeSchema = z.object({ current: z.string().min(1).max(200), next: z.string().min(12).max(200) }).strict();
 export const translationSchema = z.object({ lang: z.enum(["en", "fi"]), key: text(160).min(1), value: text(2000) }).strict();
 export const newsletterSchema = z.object({ email: z.string().trim().email().max(160) }).strict();
 export const promotionPatchSchema = offerSchema.omit({ id: true }).strict();

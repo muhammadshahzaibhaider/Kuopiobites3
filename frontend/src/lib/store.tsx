@@ -41,6 +41,7 @@ interface ShopCtx {
   login: (email: string, pass: string) => Promise<string | null>;
   logout: () => void;
   updateUser: (patch: Partial<User>) => Promise<void>;
+  changePassword: (current: string, next: string) => Promise<string | null>;
   favorites: string[];
   isFavorite: (itemId: string) => boolean;
   toggleFavorite: (itemId: string) => Promise<void>;
@@ -205,6 +206,10 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     const u = await api.apiUpdateAccount(patch);
     setUser({ ...user, ...u } as User);
     if (patch.favorites) setFavorites(Array.from(new Set(patch.favorites)));
+  };
+  const changePassword: ShopCtx["changePassword"] = async (current, next) => {
+    try { await api.apiChangePassword(current, next); return null; }
+    catch (e) { return (e as Error).message; }
   };
   const isFavorite = useCallback((itemId: string) => favorites.includes(itemId), [favorites]);
   const toggleFavorite: ShopCtx["toggleFavorite"] = async (itemId) => {
@@ -495,7 +500,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     overrides: { items: {}, order: {} },
     patchItem, moveItem, moveItemTo, addItem, removeAdded, addCat, setItemText,
     effectiveMenu, categories,
-    user, users, register, login, logout, updateUser, favorites, isFavorite, toggleFavorite, adminLogin, adminLogout, staffRole,
+    user, users, register, login, logout, updateUser, changePassword, favorites, isFavorite, toggleFavorite, adminLogin, adminLogout, staffRole,
     cart, addLine, setQty, removeLine, clearCart, cartOpen, setCartOpen, cartCount, cartSubtotal,
     pulse, priceCart, serverPricing,
     orders, startCheckout, placeOrder, setOrderStatus, refundOrder, orderStatus,

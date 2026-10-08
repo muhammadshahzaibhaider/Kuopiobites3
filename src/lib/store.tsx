@@ -82,6 +82,7 @@ interface ShopCtx {
   login: (email: string, pass: string) => Promise<string | null>;
   logout: () => void;
   updateUser: (patch: Partial<User>) => Promise<void>;
+  changePassword: (current: string, next: string) => Promise<string | null>;
   favorites: string[];
   isFavorite: (itemId: string) => boolean;
   toggleFavorite: (itemId: string) => Promise<void>;
@@ -206,6 +207,10 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     if (updated) setUsers((p) => p.map((x) => (x.id === updated.id ? updated : x)));
   };
 
+  const changePassword: ShopCtx["changePassword"] = async (current, next) => {
+    if (!user) return "auth.required";
+    return api.apiChangePassword(user.id, current, next);
+  };
   const favorites = useMemo(() => Array.from(new Set(user?.favorites ?? guestFavorites)), [user?.favorites, guestFavorites]);
   const isFavorite = useCallback((itemId: string) => favorites.includes(itemId), [favorites]);
   const toggleFavorite: ShopCtx["toggleFavorite"] = async (itemId) => {
@@ -486,7 +491,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     register,
     login,
     logout,
-    updateUser,
+    updateUser, changePassword,
     favorites, isFavorite, toggleFavorite,
     cart,
     addLine,
