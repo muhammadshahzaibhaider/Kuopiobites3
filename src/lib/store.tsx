@@ -69,7 +69,7 @@ interface ShopCtx {
   patchItem: (id: string, patch: { soldOut?: boolean; name?: string; prices?: number[] }) => void;
   moveItem: (cat: string, id: string, dir: -1 | 1) => void;
   moveItemTo: (cat: string, dragId: string, overId: string) => void;
-  addItem: (cat: string, name: string, price: number) => void;
+  addItem: (cat: string, name: string, price: number, desc?: string, image?: import("./types").UploadedImg) => void;
   removeAdded: (id: string) => void;
   addCat: (title: string, en: string) => void;
   setItemText: (lang: Lang, id: string, text: { name?: string; desc?: string }) => void;
@@ -256,17 +256,20 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       return { ...p, order: { ...p.order, [cat]: list } };
     });
 
-  const addItem: ShopCtx["addItem"] = (cat, name, price) =>
+  const addItem: ShopCtx["addItem"] = (cat, name, price, desc, image) => {
+    const id = "custom-" + uid().slice(0, 6);
     setOverrides((p) => ({
       ...p,
       added: {
         ...p.added,
         [cat]: [
           ...(p.added?.[cat] ?? []),
-          { id: "custom-" + uid().slice(0, 6), cat, name, prices: [{ label: "", value: price }] },
+          { id, cat, name, desc: desc?.trim() || undefined, imageUrl: image?.src, prices: [{ label: "", value: price }] },
         ],
       },
     }));
+    if (image) setSettings((p) => ({ ...p, itemImages: { ...p.itemImages, [id]: image } }));
+  };
 
   const removeAdded: ShopCtx["removeAdded"] = (id) =>
     setOverrides((p) => {

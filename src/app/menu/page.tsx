@@ -16,7 +16,7 @@ import type { MenuItem } from "@/lib/types";
 
 function MenuInner() {
   const params = useSearchParams();
-  const { addLine, toast, overrides, effectiveMenu, categories, settings } = useShop();
+  const { toast, overrides, effectiveMenu, categories, settings } = useShop();
   const { t, lang } = useLang();
   const reduce = useReducedMotion();
   const cats = categories().filter((c) => !settings.catMeta[c.id]?.hidden);
@@ -84,10 +84,6 @@ function MenuInner() {
   const quickAdd = (m: MenuItem) => {
     if (isItemOff(settings, m.id) || isCatOff(settings, m.cat) || overrides.items[m.id]?.soldOut) return;
     if (isPreorderItem(m)) {
-      if (!settings.preorder.enabled) {
-        toast(t("pre.closed"), "err");
-        return;
-      }
       setPreItem(m);
       return;
     }
@@ -95,13 +91,9 @@ function MenuInner() {
       setPizzaItem(m);
       return;
     }
-    if (m.prices.length === 1 && !m.mods?.length) {
-      const off = offerPrice(settings, m, 0);
-      addLine({ itemId: m.id, name: m.name, variantLabel: "—", qty: 1, unitPrice: off ? off.now : m.prices[0].value, options: [] });
-      toast(`${trName(lang, m)} ${t("menu.added")}`);
-    } else {
-      setModal(m);
-    }
+    // Every non-pizza item gets the same configurable detail modal instead of
+    // bypassing it with an immediate one-click add.
+    setModal(m);
   };
 
   return (

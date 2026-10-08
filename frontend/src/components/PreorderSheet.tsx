@@ -1,13 +1,14 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { cx, eur, fmtDate } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
 import { nextPreorderSundays } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
-import { QtyStepper } from "./ui";
+import { MenuImage, QtyStepper } from "./ui";
+import { useModalA11y } from "./useModalA11y";
 
 export default function PreorderSheet({ item, onClose }: { item: MenuItem | null; onClose: () => void }) {
   const { settings, addLine, toast } = useShop();
@@ -17,6 +18,8 @@ export default function PreorderSheet({ item, onClose }: { item: MenuItem | null
   const [time, setTime] = useState<string>("");
   const [qty, setQty] = useState(1);
   const [extraPuri, setExtraPuri] = useState(0);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(!!item, onClose, dialogRef);
 
   if (!item) return null;
   const pre = settings.preorder;
@@ -35,6 +38,8 @@ export default function PreorderSheet({ item, onClose }: { item: MenuItem | null
         onClick={onClose}
       >
         <motion.div
+          ref={dialogRef}
+          tabIndex={-1}
           className="max-h-[86vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-cream p-6 shadow-lift"
           initial={{ opacity: 0, y: 40 }}
           animate={{ opacity: 1, y: 0 }}
@@ -43,14 +48,19 @@ export default function PreorderSheet({ item, onClose }: { item: MenuItem | null
           onClick={(e) => e.stopPropagation()}
           role="dialog"
           aria-modal="true"
+          aria-label={item.name}
         >
           <div className="flex items-start justify-between gap-4">
-            <div>
-              <p className="font-display text-xs font-black uppercase tracking-[0.25em] text-gold-deep">{t("pre.title")}</p>
-              <h3 className="mt-1 font-display text-2xl font-black text-cherry">{item.name}</h3>
-              <p className="mt-1 inline-flex rounded-full bg-gold/20 px-3 py-1 text-xs font-black text-gold-deep">{t("pre.badge")}</p>
+            <div className="flex min-w-0 items-start gap-3">
+              <MenuImage item={item} sizes="96px" className="h-24 w-24 shrink-0 rounded-2xl" />
+              <div>
+                <p className="font-display text-xs font-black uppercase tracking-[0.25em] text-gold-deep">{t("pre.title")}</p>
+                <h3 className="mt-1 font-display text-2xl font-black text-cherry">{item.name}</h3>
+                {item.desc && <p className="mt-1 text-sm text-cherry/70">{item.desc}</p>}
+                <p className="mt-1 inline-flex rounded-full bg-gold/20 px-3 py-1 text-xs font-black text-gold-deep">{t("pre.badge")}</p>
+              </div>
             </div>
-            <button onClick={onClose} aria-label="Close" className="grid h-11 w-11 place-items-center rounded-full border border-cherry/20 text-cherry hover:bg-cherry hover:text-cream">✕</button>
+            <button onClick={onClose} aria-label="Close item details" className="grid h-11 w-11 place-items-center rounded-full border border-cherry/20 text-cherry hover:bg-cherry hover:text-cream">✕</button>
           </div>
 
           {!pre.enabled ? (

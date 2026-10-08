@@ -44,6 +44,8 @@ export interface MenuItem {
   availability?: Availability;
   /** several items can point at one photo file (size/meal variants) */
   imageKey?: string;
+  /** optional persisted image reference for custom/live menu items */
+  imageUrl?: string;
 }
 
 export interface Category {

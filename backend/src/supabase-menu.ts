@@ -17,6 +17,7 @@ type ItemRow = {
   lead_time_hours: number | null;
   mods: MenuItem["mods"] | null;
   tags: string[] | null;
+  photo_url: string | null;
 };
 
 export function toApiItem(row: ItemRow): MenuItem {
@@ -33,6 +34,7 @@ export function toApiItem(row: ItemRow): MenuItem {
       : [{ label: "", value: row.price_med }]),
     tags: (row.tags ?? []) as Tag[],
     mods: row.mods ?? undefined,
+    imageUrl: row.photo_url ?? undefined,
     availability: row.pre_order_only || days.length || row.preorder_cutoff || row.lead_time_hours !== null
       ? {
           days,
@@ -84,6 +86,9 @@ export function toDatabaseItem(item: MenuItem, sortOrder: number) {
     topping_tier_included: top?.min ?? (classic ? Number(classic[1]) : 0),
     mods: item.mods ?? [],
     tags: item.tags ?? [],
+    photo_url: item.imageUrl ?? null,
+    photo_alt_fi: null,
+    photo_alt_en: null,
     sort_order: sortOrder,
   };
 }

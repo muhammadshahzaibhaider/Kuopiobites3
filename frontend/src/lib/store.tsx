@@ -28,7 +28,7 @@ interface ShopCtx {
   patchItem: (id: string, patch: { soldOut?: boolean; name?: string; prices?: number[] }) => Promise<boolean>;
   moveItem: (cat: string, id: string, dir: -1 | 1) => Promise<boolean>;
   moveItemTo: (cat: string, dragId: string, overId: string) => Promise<boolean>;
-  addItem: (cat: string, name: string, price: number) => Promise<boolean>;
+  addItem: (cat: string, name: string, price: number, desc?: string, image?: import("./types").UploadedImg) => Promise<boolean>;
   removeAdded: (id: string) => Promise<boolean>;
   addCat: (title: string, en: string) => Promise<boolean>;
   setItemText: (lang: Lang, id: string, text: { name?: string; desc?: string }) => Promise<boolean>;
@@ -274,11 +274,22 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
   };
-  const addItem: ShopCtx["addItem"] = async (cat, name, price) => {
+  const addItem: ShopCtx["addItem"] = async (cat, name, price, desc, image) => {
     try {
-      await api.apiPostItem({
-        id: "custom-" + uid().slice(0, 6), cat, name, prices: [{ label: "", value: price }],
-      } as MenuItem);
+      const item = {
+        id: "custom-" + uid().slice(0, 6),
+        cat,
+        name,
+        desc: desc?.trim() || undefined,
+        imageUrl: image?.src,
+        prices: [{ label: "", value: price }],
+      } as MenuItem;
+      await api.apiPostItem(item);
+      await refresh();
+      if (image) {
+        const saved = await saveSettings({ ...settings, itemImages: { ...settings.itemImages, [item.id]: image } });
+        if (!saved) return false;
+      }
       await refresh();
       return true;
     } catch {

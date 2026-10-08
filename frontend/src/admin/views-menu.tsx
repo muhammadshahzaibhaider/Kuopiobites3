@@ -1,14 +1,13 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { fileToWebp } from "@/lib/imgtool";
-import { apiUpload } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
 import { MenuImage } from "@/components/ui";
+import ImageUploader from "@/components/ImageUploader";
 import { CATEGORY_SLUG } from "@/lib/images";
 import { eur, cx } from "@/lib/format";
 import { todayStrHelsinki } from "@/lib/hours";
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
-import type { MenuItem } from "@/lib/types";
+import type { MenuItem, UploadedImg } from "@/lib/types";
 import { CatsTab, SpecialsPanel, ToppingsMetaPanel } from "@/app/admin/v3tabs";
 import { Ic } from "./icons";
 import { Confirm, DataTable, Drawer, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, SubTabs, Toolbar, downloadCSV, inputCls, useDelayedReady, type Col, type FilterDef } from "./ui";
@@ -35,8 +34,11 @@ export function MenuItemsView() {
 
   const rows = useMemo(() => {
     const added = Object.values(overrides.added ?? {}).flat();
-    return [...MENU, ...added];
-  }, [overrides.added, settings]);
+    return [...MENU, ...added].map((item) => {
+      const text = overrides.texts?.en?.[item.id];
+      return text ? { ...item, name: text.name ?? item.name, desc: text.desc ?? item.desc } : item;
+    });
+  }, [overrides.added, overrides.texts, settings]);
 
   const isOff = (id: string) => {
     const st = settings.offItems[id];
@@ -153,14 +155,35 @@ function NewItemEditor({
 }: {
   categories: { id: string; title: string; en?: string }[];
   defaultCategory?: string;
-  addItem: (cat: string, name: string, price: number) => Promise<boolean>;
+  addItem: (cat: string, name: string, price: number, desc?: string, image?: UploadedImg) => Promise<boolean>;
   onClose: () => void;
   toast: (msg: string, kind?: "ok" | "err") => void;
 }) {
   const [cat, setCat] = useState(defaultCategory ?? categories[0]?.id ?? "specials");
   const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
   const [price, setPrice] = useState("");
+  const [image, setImage] = useState<UploadedImg | undefined>();
+  const [imageUrl, setImageUrl] = useState("");
   const [error, setError] = useState("");
+  const [imageError, setImageError] = useState("");
+  const urlIsValid = (value: string) => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
+
+  const setUrl = (value: string) => {
+    setImageUrl(value);
+    setImageError(value.trim() && !urlIsValid(value.trim()) ? "Enter a valid http(s) image URL." : "");
+    if (value.trim()) setImage(undefined);
+  };
+  const previewImage = imageUrl.trim() && urlIsValid(imageUrl.trim())
+    ? { src: imageUrl.trim(), altEn: name.trim(), altFi: name.trim() }
+    : image;
 
   return (
     <Drawer open onClose={onClose} title="Add menu item">
@@ -169,11 +192,27 @@ function NewItemEditor({
         onSubmit={async (e) => {
           e.preventDefault();
           const amount = Number(price);
-          if (!cat || !name.trim() || !Number.isFinite(amount) || amount < 0) {
-            setError("Choose a category, enter a name, and enter a valid price.");
+          const trimmedUrl = imageUrl.trim();
+          if (!cat) {
+            setError("Choose a valid category.");
             return;
           }
-          const saved = await addItem(cat, name.trim(), amount);
+          if (!name.trim()) {
+            setError("Name is required.");
+            return;
+          }
+          if (!price.trim() || !Number.isFinite(amount) || amount < 0) {
+            setError("Enter a valid price.");
+            return;
+          }
+          if (trimmedUrl && !urlIsValid(trimmedUrl)) {
+            setImageError("Enter a valid http(s) image URL.");
+            return;
+          }
+          const imageRef = trimmedUrl
+            ? { src: trimmedUrl, altEn: name.trim(), altFi: name.trim() }
+            : image;
+          const saved = await addItem(cat, name.trim(), amount, desc.trim() || undefined, imageRef);
           if (!saved) {
             setError("The item could not be saved. Please try again.");
             return;
@@ -183,16 +222,33 @@ function NewItemEditor({
         }}
       >
         <Field label="Category">
-          <select value={cat} onChange={(e) => setCat(e.target.value)} className={inputCls}>
+          <select value={cat} onChange={(e) => { setCat(e.target.value); setError(""); }} className={inputCls}>
             {categories.map((c) => <option key={c.id} value={c.id}>{c.title}{c.en ? ` · ${c.en}` : ""}</option>)}
           </select>
         </Field>
         <Field label="Name">
           <input autoFocus value={name} onChange={(e) => { setName(e.target.value); setError(""); }} className={inputCls} placeholder="e.g. Chicken biryani" />
         </Field>
+        <Field label="Description">
+          <textarea rows={3} value={desc} onChange={(e) => { setDesc(e.target.value); setError(""); }} className={inputCls} placeholder="Short description or ingredients" maxLength={500} />
+        </Field>
         <Field label="Price (€)">
           <input type="number" min="0" step="0.1" value={price} onChange={(e) => { setPrice(e.target.value); setError(""); }} className={inputCls} placeholder="0.00" />
         </Field>
+        <div className="space-y-2 rounded-xl border border-cherry/10 bg-cream p-3">
+          <p className="text-xs font-black uppercase tracking-wide text-cherry/60">Image (optional)</p>
+          <ImageUploader
+            preset="1:1"
+            value={previewImage}
+            fallbackAlt={name}
+            onChange={(next) => { if (!next && imageUrl.trim()) setImageUrl(""); setImage(next ?? undefined); if (next) setImageUrl(""); setImageError(""); }}
+          />
+          <label className="block text-xs font-bold text-cherry/70">
+            Or image URL
+            <input value={imageUrl} onChange={(e) => setUrl(e.target.value)} className={inputCls + " mt-1"} placeholder="https://…" inputMode="url" />
+          </label>
+          {imageError && <p className="text-xs font-bold text-brick">{imageError}</p>}
+        </div>
         {error && <p className="text-xs font-bold text-brick">{error}</p>}
         <div className="flex justify-end gap-2">
           <button type="button" onClick={onClose} className="min-h-[36px] rounded-lg border border-cherry/20 px-3 text-xs font-black text-cherry">Cancel</button>
@@ -207,21 +263,18 @@ function ItemEditor({ item, onClose }: { item: MenuItem; onClose: () => void }) 
   const { settings, saveSettings, overrides, setItemText, patchItem, toast } = useShop();
   const [tab, setTab] = useState("general");
   const [confirmOff, setConfirmOff] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const offRec = settings.offItems[item.id];
   const isOff = !!offRec && (offRec.off === true || offRec.offToday === TODAY());
   const textEn = overrides.texts?.en?.[item.id];
   const textFi = overrides.texts?.fi?.[item.id];
 
-  const onUpload = async (f: File) => {
+  const saveImage = async (next: UploadedImg | null) => {
     try {
-      if (!["image/png", "image/jpeg", "image/webp"].includes(f.type)) throw new Error("type");
-      const dataUrl = await fileToWebp(f, "1:1", 1200);
-      const blob = await (await fetch(dataUrl)).blob();
-      const uploaded = await apiUpload(blob);
-      const saved = await saveSettings({ ...settings, itemImages: { ...settings.itemImages, [item.id]: { src: uploaded.url, altEn: item.name, altFi: item.name } } });
-      if (saved) toast("Image applied — site shows it immediately");
+      const itemImages = { ...settings.itemImages };
+      if (next) itemImages[item.id] = next;
+      else delete itemImages[item.id];
+      if (await saveSettings({ ...settings, itemImages })) toast(next ? "Image applied — site shows it immediately" : "Image removed");
     } catch {
       toast("Upload failed — check the file", "err");
     }
@@ -250,11 +303,13 @@ function ItemEditor({ item, onClose }: { item: MenuItem; onClose: () => void }) 
                 <p className="mb-2 text-[11px] text-cherry/40">
                   {settings.itemImages[item.id] ? "Custom uploaded image in use" : `/menu/${CATEGORY_SLUG[item.cat] ?? item.cat}/${item.imageKey ?? item.id}.webp (generated)`}
                 </p>
-                <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])} />
-                <GhostBtn onClick={() => fileRef.current?.click()}>Upload / replace…</GhostBtn>
-                {settings.itemImages[item.id] && (
-                  <GhostBtn className="ml-2" onClick={() => { const m = { ...settings.itemImages }; delete m[item.id]; saveSettings({ ...settings, itemImages: m }); }}>Revert to generated</GhostBtn>
-                )}
+                <ImageUploader
+                  preset="1:1"
+                  value={settings.itemImages[item.id]}
+                  fallbackAlt={item.name}
+                  onChange={(next) => { void saveImage(next); }}
+                />
+                {settings.itemImages[item.id] && <p className="text-[11px] text-cherry/40">Delete / replace above to return to the generated placeholder.</p>}
               </div>
             </div>
           </>

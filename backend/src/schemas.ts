@@ -58,7 +58,7 @@ export const menuItemSchema = z.object({
   nameFi: text(120).optional(), desc: text(500).optional(), descFi: text(500).optional(),
   prices: z.array(priceSchema).min(1).max(10), tags: z.array(z.enum(["veg", "spicy", "popular"])).max(3).optional(),
   mods: z.array(modGroupSchema).max(30).optional(), availability: availabilitySchema.optional(),
-  imageKey: text(160).optional(),
+  imageKey: text(160).optional(), imageUrl: imageSource.optional(),
 }).strict();
 
 const preorderSchema = z.object({ date, time: hhmm }).strict();
