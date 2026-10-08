@@ -58,7 +58,7 @@ export const menuItemSchema = z.object({
   nameFi: text(120).optional(), desc: text(500).optional(), descFi: text(500).optional(),
   prices: z.array(priceSchema).min(1).max(10), tags: z.array(z.enum(["veg", "spicy", "popular"])).max(3).optional(),
   mods: z.array(modGroupSchema).max(30).optional(), availability: availabilitySchema.optional(),
-  imageKey: text(160).optional(),
+  imageKey: text(160).optional(), imageUrl: imageSource.optional(),
 }).strict();
 
 const preorderSchema = z.object({ date, time: hhmm }).strict();
@@ -157,6 +157,7 @@ export const statusSchema = z.object({ status: z.enum(["placed", "accepted", "pr
 export const reorderSchema = z.object({ cat: text(40).min(1), order: z.array(text(60).min(1)).min(1).max(1000) }).strict();
 export const accountPatchSchema = z.object({
   name: text(80).min(1).optional(), phone: text(30).optional(), addresses: z.array(text(160)).max(6).optional(), marketing: z.boolean().optional(),
+  favorites: z.array(text(100)).max(500).optional(),
 }).strict();
 export const translationSchema = z.object({ lang: z.enum(["en", "fi"]), key: text(160).min(1), value: text(2000) }).strict();
 export const newsletterSchema = z.object({ email: z.string().trim().email().max(160) }).strict();

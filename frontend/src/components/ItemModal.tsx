@@ -1,12 +1,14 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cx, eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
 import { offerPrice, optionOff, trDesc, trIng, trLabel, trName } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
-import { QtyStepper, TagBadge } from "./ui";
+import { MenuImage, QtyStepper, TagBadge } from "./ui";
+import { useModalA11y } from "./useModalA11y";
+import FavoriteButton from "./FavoriteButton";
 
 export default function ItemModal({ item, onClose }: { item: MenuItem | null; onClose: () => void }) {
   const { addLine, toast, settings } = useShop();
@@ -14,11 +16,15 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
   const [variant, setVariant] = useState(0);
   const [qty, setQty] = useState(1);
   const [sel, setSel] = useState<Record<string, string[]>>({});
+  const [note, setNote] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(!!item, onClose, dialogRef);
 
   useEffect(() => {
     setVariant(0);
     setQty(1);
     setSel({});
+    setNote("");
   }, [item?.id]);
 
   const isBuilder = !!item?.mods?.some((g) => g.id === "top");
@@ -47,6 +53,7 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
   }, [item, variant, sel]);
 
   if (!item) return null;
+  const description = trDesc(lang, item);
   const off = offerPrice(settings, item, variant);
 
   const optKey = (g: { id: string }) =>
@@ -72,6 +79,8 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
         onClick={onClose}
       >
         <motion.div
+          ref={dialogRef}
+          tabIndex={-1}
           className="max-h-[86vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-cream p-6 shadow-lift"
           initial={{ opacity: 0, y: 40, scale: 0.96 }}
           animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -88,12 +97,18 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
             </p>
           )}
           <div className="mt-1 flex items-start justify-between gap-4">
-            <div>
-              <h3 className="font-display text-2xl font-black text-cherry">{trName(lang, item)}</h3>
-              {item.desc && <p className="mt-1 text-sm text-cherry/70">{trDesc(lang, item)}</p>}
-              <div className="mt-2 flex gap-2">{item.tags?.map((tag) => <TagBadge key={tag} tag={tag} />)}</div>
+            <div className="flex min-w-0 items-start gap-3">
+              <MenuImage item={item} sizes="96px" className="h-24 w-24 shrink-0 rounded-2xl" />
+              <div className="min-w-0">
+                <h3 className="font-display text-2xl font-black text-cherry">{trName(lang, item)}</h3>
+                {description && <p className="mt-1 text-sm text-cherry/70">{description}</p>}
+                <div className="mt-2 flex flex-wrap gap-2">{item.tags?.map((tag) => <TagBadge key={tag} tag={tag} />)}</div>
+              </div>
             </div>
-            <button onClick={onClose} aria-label="Close" className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-cherry/20 text-cherry hover:bg-cherry hover:text-cream">✕</button>
+            <div className="flex shrink-0 items-center gap-2">
+              <FavoriteButton itemId={item.id} />
+              <button onClick={onClose} aria-label="Close item details" className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-cherry/20 text-cherry hover:bg-cherry hover:text-cream">✕</button>
+            </div>
           </div>
 
           {item.prices.length > 1 && (
@@ -166,6 +181,17 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
             );
           })}
 
+          <label className="mt-5 block text-xs font-black uppercase tracking-wide text-cherry/60">
+            Special instructions (optional)
+            <input
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              maxLength={140}
+              className="mt-1 min-h-[44px] w-full rounded-xl border border-cherry/20 bg-cream-deep px-3 text-sm font-bold normal-case placeholder:text-cherry/40"
+              placeholder="e.g. no onions"
+            />
+          </label>
+
           <div className="mt-6 border-t-2 border-gold/40 pt-5">
             <div className="flex items-center justify-between gap-4">
               <QtyStepper qty={qty} onChange={(q) => setQty(Math.max(1, q))} />
@@ -184,13 +210,16 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
                   const p = sel[g.id] ?? [];
                   if (p.length) options.push(`${gName[g.id] ?? g.name}: ${p.join(", ")}`);
                 }
+                if (note.trim()) options.push(`Note: ${note.trim()}`);
                 addLine({
                   itemId: item.id,
                   name: item.name,
-                  variantLabel: item.prices[variant].label,
+                  variantLabel: item.prices[variant].label || "—",
                   qty,
                   unitPrice: off ? off.now : unit,
                   options,
+                  note: note.trim() || undefined,
+                  img: settings.itemImages[item.id]?.src,
                 });
                 toast(`${trName(lang, item)} ${t("menu.added")}`);
                 onClose();

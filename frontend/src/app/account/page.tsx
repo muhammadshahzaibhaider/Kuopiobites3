@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import { useState } from "react";
 import AuthForm from "@/components/AuthForm";
+import FavoritesSection from "@/components/FavoritesSection";
 import { cx, eur, fmtDate, fmtTime } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
@@ -106,6 +107,8 @@ export default function AccountPage() {
           </div>
         </section>
       </div>
+
+      <FavoritesSection />
 
       {/* order history */}
       <section className="mt-6 rounded-3xl border border-cherry/10 bg-cream-deep p-6 shadow-card">

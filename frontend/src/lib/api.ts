@@ -38,7 +38,7 @@ export const apiAdminLogout = () => api<{ ok: true }>("/api/auth/logout", { meth
 export const apiUpload = (body: Blob) => apiBinary<{ url: string; mime: string }>("/api/uploads", body, { contentType: body.type || "image/webp", staff: true });
 
 export const apiCurrentAccount = () => api<Omit<User, "pass">>("/api/account");
-export const apiUpdateAccount = (patch: Partial<Pick<User, "name" | "phone" | "addresses" | "marketing">>) =>
+export const apiUpdateAccount = (patch: Partial<Pick<User, "name" | "phone" | "addresses" | "marketing" | "favorites">>) =>
   api<User>("/api/account", { method: "PUT", body: patch });
 export const apiAccountOrders = () => api<Order[]>("/api/account/orders");
 export const apiCustomers = () =>

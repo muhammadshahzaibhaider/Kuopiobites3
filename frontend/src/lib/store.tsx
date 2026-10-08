@@ -23,15 +23,15 @@ export interface Toast { id: string; msg: string; kind: "ok" | "err" }
 
 interface ShopCtx {
   settings: Settings;
-  saveSettings: (s: Settings) => Promise<void>;
+  saveSettings: (s: Settings) => Promise<boolean>;
   overrides: Overrides; // compat shim — backend data is already effective
-  patchItem: (id: string, patch: { soldOut?: boolean; name?: string; prices?: number[] }) => Promise<void>;
-  moveItem: (cat: string, id: string, dir: -1 | 1) => Promise<void>;
-  moveItemTo: (cat: string, dragId: string, overId: string) => Promise<void>;
-  addItem: (cat: string, name: string, price: number) => Promise<void>;
-  removeAdded: (id: string) => Promise<void>;
-  addCat: (title: string, en: string) => Promise<void>;
-  setItemText: (lang: Lang, id: string, text: { name?: string; desc?: string }) => Promise<void>;
+  patchItem: (id: string, patch: { soldOut?: boolean; name?: string; prices?: number[] }) => Promise<boolean>;
+  moveItem: (cat: string, id: string, dir: -1 | 1) => Promise<boolean>;
+  moveItemTo: (cat: string, dragId: string, overId: string) => Promise<boolean>;
+  addItem: (cat: string, name: string, price: number, desc?: string, image?: import("./types").UploadedImg) => Promise<boolean>;
+  removeAdded: (id: string) => Promise<boolean>;
+  addCat: (title: string, en: string) => Promise<boolean>;
+  setItemText: (lang: Lang, id: string, text: { name?: string; desc?: string }) => Promise<boolean>;
   effectiveMenu: (items: MenuItem[], lang?: Lang) => MenuItem[];
   categories: () => Category[];
 
@@ -41,6 +41,9 @@ interface ShopCtx {
   login: (email: string, pass: string) => Promise<string | null>;
   logout: () => void;
   updateUser: (patch: Partial<User>) => Promise<void>;
+  favorites: string[];
+  isFavorite: (itemId: string) => boolean;
+  toggleFavorite: (itemId: string) => Promise<void>;
   adminLogin: (u: string, p: string) => Promise<string | null>;
   adminLogout: () => void;
   staffRole: string | null;
@@ -61,14 +64,14 @@ interface ShopCtx {
   orders: Order[];
   startCheckout: (o: Omit<Order, "id" | "createdAt" | "paymentId" | "paymentStatus"> & { lang?: Lang; code?: string }) => Promise<{ mode: "stripe" | "demo"; url?: string; sessionId?: string; orderId?: string; order?: Order }>;
   placeOrder: (o: Omit<Order, "id" | "createdAt" | "paymentId" | "paymentStatus">) => Promise<Order>;
-  setOrderStatus: (id: string, s: OrderStatus) => Promise<void>;
-  refundOrder: (id: string) => Promise<void>;
+  setOrderStatus: (id: string, s: OrderStatus) => Promise<boolean>;
+  refundOrder: (id: string) => Promise<boolean>;
   orderStatus: (o: Order) => OrderStatus;
 
   reservations: Reservation[];
   addReservation: (r: Omit<Reservation, "id" | "createdAt">) => Promise<Reservation>;
-  cancelReservation: (id: string) => Promise<void>;
-  setReservationStatus: (id: string, s: "accepted" | "declined") => Promise<void>;
+  cancelReservation: (id: string) => Promise<boolean>;
+  setReservationStatus: (id: string, s: "accepted" | "declined") => Promise<boolean>;
 
   toasts: Toast[];
   toast: (msg: string, kind?: "ok" | "err") => void;
@@ -83,6 +86,7 @@ export function useShop(): ShopCtx {
   return c;
 }
 
+const GUEST_FAVORITES_KEY = "kb_guest_favorites";
 const readLS = <T,>(k: string, f: T): T => {
   if (typeof window === "undefined") return f;
   try { const r = localStorage.getItem(k); return r ? (JSON.parse(r) as T) : f; } catch { return f; }
@@ -102,13 +106,18 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [cartOpen, setCartOpen] = useState(false);
   const [pulse, setPulse] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [favorites, setFavorites] = useState<string[]>([]);
   const [serverPricing, setServerPricing] = useState<ShopCtx["serverPricing"]>(null);
   const allItems = BASE_ITEMS; // live array, hydrated in place from the backend
   const allCats = BASE_CATS;
 
   // Load the saved cart AFTER hydration: reading localStorage during the first render made the
   // client HTML differ from the server HTML (React #418/#423 on every page with a non-empty cart).
-  useEffect(() => { setCart(readLS<CartLine[]>("kb_cart", [])); setCartReady(true); }, []);
+  useEffect(() => {
+    setCart(readLS<CartLine[]>("kb_cart", []));
+    setFavorites(readLS<string[]>(GUEST_FAVORITES_KEY, []));
+    setCartReady(true);
+  }, []);
   useEffect(() => { if (cartReady) localStorage.setItem("kb_cart", JSON.stringify(cart)); }, [cart, cartReady]);
 
   const toast = useCallback((msg: string, kind: "ok" | "err" = "ok") => {
@@ -127,7 +136,19 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       setSettings(s);
       hydrateMenu(items, cats);
       hydrateTranslations(tr);
-      setUser((session.user ?? null) as User | null);
+      const sessionUser = (session.user ?? null) as User | null;
+      const guest = readLS<string[]>(GUEST_FAVORITES_KEY, []);
+      if (sessionUser) {
+        const merged = Array.from(new Set([...(sessionUser.favorites ?? []), ...guest]));
+        setUser({ ...sessionUser, favorites: merged });
+        setFavorites(merged);
+        if (guest.length || merged.length !== (sessionUser.favorites ?? []).length) {
+          try { await api.apiUpdateAccount({ favorites: merged }); localStorage.removeItem(GUEST_FAVORITES_KEY); } catch { /* keep optimistic favorites; retry on next account action */ }
+        }
+      } else {
+        setUser(null);
+        setFavorites(Array.from(new Set(guest)));
+      }
       setStaffRole(staffSession.role);
       if (staffSession.role) {
         const [o, r] = await Promise.all([api.apiListOrders(), api.apiListReservations()]);
@@ -167,15 +188,40 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const login: ShopCtx["login"] = async (email, pass) => {
     try {
       const u = await api.apiLogin(email, pass);
-      setUser(u as User);
+      const guest = readLS<string[]>(GUEST_FAVORITES_KEY, []);
+      const merged = Array.from(new Set([...(u.favorites ?? []), ...guest]));
+      setUser({ ...(u as User), favorites: merged });
+      setFavorites(merged);
+      if (guest.length) { await api.apiUpdateAccount({ favorites: merged }); localStorage.removeItem(GUEST_FAVORITES_KEY); }
       void refresh();
       return null;
     } catch (e) { return (e as Error).message; }
   };
-  const logout = () => { void api.apiLogout(); setUser(null); setOrders([]); };
+  const logout = () => {
+    localStorage.setItem(GUEST_FAVORITES_KEY, JSON.stringify(favorites));
+    void api.apiLogout(); setUser(null); setFavorites(favorites); setOrders([]);
+  };
   const updateUser: ShopCtx["updateUser"] = async (patch) => {
     const u = await api.apiUpdateAccount(patch);
     setUser({ ...user, ...u } as User);
+    if (patch.favorites) setFavorites(Array.from(new Set(patch.favorites)));
+  };
+  const isFavorite = useCallback((itemId: string) => favorites.includes(itemId), [favorites]);
+  const toggleFavorite: ShopCtx["toggleFavorite"] = async (itemId) => {
+    const previous = favorites;
+    const next = previous.includes(itemId) ? previous.filter((id) => id !== itemId) : [...previous, itemId];
+    setFavorites(next);
+    if (!user) { localStorage.setItem(GUEST_FAVORITES_KEY, JSON.stringify(next)); toast(previous.includes(itemId) ? "Removed from favorites" : "Added to favorites"); return; }
+    setUser({ ...user, favorites: next });
+    try {
+      const updated = await api.apiUpdateAccount({ favorites: next });
+      setUser({ ...user, ...updated, favorites: next } as User);
+      toast(previous.includes(itemId) ? "Removed from favorites" : "Added to favorites");
+    } catch (e) {
+      setFavorites(previous); setUser({ ...user, favorites: previous });
+      toast((e as Error).message || "Could not update favorites", "err");
+      throw e;
+    }
   };
   const adminLogin: ShopCtx["adminLogin"] = async (u, p) => {
     try {
@@ -227,52 +273,109 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
 
   /* ── menu admin (backend CRUD) ── */
   const patchItem: ShopCtx["patchItem"] = async (id, patch) => {
-    if (patch.soldOut !== undefined) {
-      const next = { ...settings, offItems: { ...settings.offItems, [id]: { off: patch.soldOut } } };
-      await api.apiSaveSettings(next); setSettings(next); return;
+    try {
+      if (patch.soldOut !== undefined) {
+        const next = { ...settings, offItems: { ...settings.offItems, [id]: { off: patch.soldOut } } };
+        await api.apiSaveSettings(next); setSettings(next); return true;
+      }
+      const m = allItems.find((x) => x.id === id);
+      if (!m) return false;
+      const upd: MenuItem = {
+        ...m,
+        name: patch.name ?? m.name,
+        prices: patch.prices ? m.prices.map((p, i) => ({ ...p, value: patch.prices![i] ?? p.value })) : m.prices,
+      };
+      await api.apiPutItem(upd); await refresh();
+      return true;
+    } catch {
+      toast("Item could not be saved", "err");
+      return false;
     }
-    const m = allItems.find((x) => x.id === id);
-    if (!m) return;
-    const upd: MenuItem = {
-      ...m,
-      name: patch.name ?? m.name,
-      prices: patch.prices ? m.prices.map((p, i) => ({ ...p, value: patch.prices![i] ?? p.value })) : m.prices,
-    };
-    await api.apiPutItem(upd); await refresh();
   };
 
   const orderListOf = (cat: string) => allItems.filter((m) => m.cat === cat).map((m) => m.id);
   const moveItem: ShopCtx["moveItem"] = async (cat, id, dir) => {
-    const list = orderListOf(cat);
-    const from = list.indexOf(id); const to = from + dir;
-    if (from < 0 || to < 0 || to >= list.length) return;
-    [list[from], list[to]] = [list[to], list[from]];
-    await api.apiReorderItems(cat, list); await refresh();
+    try {
+      const list = orderListOf(cat);
+      const from = list.indexOf(id); const to = from + dir;
+      if (from < 0 || to < 0 || to >= list.length) return false;
+      [list[from], list[to]] = [list[to], list[from]];
+      await api.apiReorderItems(cat, list); await refresh();
+      return true;
+    } catch {
+      toast("Item order could not be saved", "err");
+      return false;
+    }
   };
   const moveItemTo: ShopCtx["moveItemTo"] = async (cat, dragId, overId) => {
-    const list = orderListOf(cat);
-    const from = list.indexOf(dragId); const to = list.indexOf(overId);
-    if (from < 0 || to < 0 || from === to) return;
-    list.splice(from, 1); list.splice(to, 0, dragId);
-    await api.apiReorderItems(cat, list); await refresh();
+    try {
+      const list = orderListOf(cat);
+      const from = list.indexOf(dragId); const to = list.indexOf(overId);
+      if (from < 0 || to < 0 || from === to) return false;
+      list.splice(from, 1); list.splice(to, 0, dragId);
+      await api.apiReorderItems(cat, list); await refresh();
+      return true;
+    } catch {
+      toast("Item order could not be saved", "err");
+      return false;
+    }
   };
-  const addItem: ShopCtx["addItem"] = async (cat, name, price) => {
-    await api.apiPostItem({
-      id: "custom-" + uid().slice(0, 6), cat, name, prices: [{ label: "", value: price }],
-    } as MenuItem);
-    await refresh();
+  const addItem: ShopCtx["addItem"] = async (cat, name, price, desc, image) => {
+    try {
+      const item = {
+        id: "custom-" + uid().slice(0, 6),
+        cat,
+        name,
+        desc: desc?.trim() || undefined,
+        imageUrl: image?.src,
+        prices: [{ label: "", value: price }],
+      } as MenuItem;
+      await api.apiPostItem(item);
+      await refresh();
+      if (image) {
+        const saved = await saveSettings({ ...settings, itemImages: { ...settings.itemImages, [item.id]: image } });
+        if (!saved) return false;
+      }
+      await refresh();
+      return true;
+    } catch {
+      toast("Item could not be added", "err");
+      return false;
+    }
   };
-  const removeAdded: ShopCtx["removeAdded"] = async (id) => { await api.apiDeleteItem(id); await refresh(); };
-  const addCat: ShopCtx["addCat"] = async (title, en) => { await api.apiPostCategory(title, en || title); await refresh(); };
+  const removeAdded: ShopCtx["removeAdded"] = async (id) => {
+    try {
+      await api.apiDeleteItem(id); await refresh();
+      return true;
+    } catch {
+      toast("Item could not be deleted", "err");
+      return false;
+    }
+  };
+  const addCat: ShopCtx["addCat"] = async (title, en) => {
+    try {
+      await api.apiPostCategory(title, en || title); await refresh();
+      return true;
+    } catch {
+      toast("Category could not be added", "err");
+      return false;
+    }
+  };
   const setItemText: ShopCtx["setItemText"] = async (lang, id, text) => {
-    const m = allItems.find((x) => x.id === id);
-    if (!m) return;
-    const upd: MenuItem = {
-      ...m,
-      ...(lang === "fi" ? { nameFi: text.name ?? m.nameFi, descFi: text.desc ?? m.descFi }
-        : { name: text.name ?? m.name, desc: text.desc ?? m.desc }),
-    };
-    await api.apiPutItem(upd); await refresh();
+    try {
+      const m = allItems.find((x) => x.id === id);
+      if (!m) return false;
+      const upd: MenuItem = {
+        ...m,
+        ...(lang === "fi" ? { nameFi: text.name ?? m.nameFi, descFi: text.desc ?? m.descFi }
+          : { name: text.name ?? m.name, desc: text.desc ?? m.desc }),
+      };
+      await api.apiPutItem(upd); await refresh();
+      return true;
+    } catch {
+      toast("Item text could not be saved", "err");
+      return false;
+    }
   };
 
   const categories = (): Category[] => {
@@ -299,8 +402,19 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     }));
 
   const saveSettings: ShopCtx["saveSettings"] = async (s) => {
-    const next = await api.apiSaveSettings(s);
-    setSettings(next); await refresh();
+    // Optimistic local update keeps switches, drafts, and specials responsive while
+    // the backend persists the same complete settings snapshot.
+    setSettings(s);
+    try {
+      const next = await api.apiSaveSettings(s);
+      setSettings(next);
+      await refresh();
+      return true;
+    } catch {
+      await refresh();
+      toast("Settings could not be saved", "err");
+      return false;
+    }
   };
   const logAudit: ShopCtx["logAudit"] = () => { /* backend audit trail now; client no-op */ };
 
@@ -320,12 +434,24 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     return created;
   };
   const setOrderStatus: ShopCtx["setOrderStatus"] = async (id, s) => {
-    const upd = await api.apiPatchOrderStatus(id, s);
-    setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
+    try {
+      const upd = await api.apiPatchOrderStatus(id, s);
+      setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
+      return true;
+    } catch {
+      toast("Order status could not be updated", "err");
+      return false;
+    }
   };
   const refundOrder: ShopCtx["refundOrder"] = async (id) => {
-    const upd = await api.apiRefundOrder(id);
-    setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
+    try {
+      const upd = await api.apiRefundOrder(id);
+      setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
+      return true;
+    } catch {
+      toast("Refund could not be completed", "err");
+      return false;
+    }
   };
   const orderStatus = (o: Order): OrderStatus => {
     if (o.statusOverride) return o.statusOverride;
@@ -344,12 +470,24 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     return created;
   };
   const cancelReservation: ShopCtx["cancelReservation"] = async (id) => {
-    await api.apiDeleteReservation(id);
-    setReservations((p) => p.filter((x) => x.id !== id));
+    try {
+      await api.apiDeleteReservation(id);
+      setReservations((p) => p.filter((x) => x.id !== id));
+      return true;
+    } catch {
+      toast("Reservation could not be cancelled", "err");
+      return false;
+    }
   };
   const setReservationStatus: ShopCtx["setReservationStatus"] = async (id, s) => {
-    const upd = await api.apiPatchReservation(id, s);
-    setReservations((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
+    try {
+      const upd = await api.apiPatchReservation(id, s);
+      setReservations((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
+      return true;
+    } catch {
+      toast("Reservation status could not be updated", "err");
+      return false;
+    }
   };
 
   const value: ShopCtx = {
@@ -357,7 +495,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     overrides: { items: {}, order: {} },
     patchItem, moveItem, moveItemTo, addItem, removeAdded, addCat, setItemText,
     effectiveMenu, categories,
-    user, users, register, login, logout, updateUser, adminLogin, adminLogout, staffRole,
+    user, users, register, login, logout, updateUser, favorites, isFavorite, toggleFavorite, adminLogin, adminLogout, staffRole,
     cart, addLine, setQty, removeLine, clearCart, cartOpen, setCartOpen, cartCount, cartSubtotal,
     pulse, priceCart, serverPricing,
     orders, startCheckout, placeOrder, setOrderStatus, refundOrder, orderStatus,

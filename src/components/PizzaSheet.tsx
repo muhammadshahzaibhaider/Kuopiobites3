@@ -1,7 +1,7 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { cx, eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
@@ -11,6 +11,8 @@ import {
 } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
 import { PizzaImage, QtyStepper } from "./ui";
+import { useModalA11y } from "./useModalA11y";
+import FavoriteButton from "./FavoriteButton";
 
 /**
  * Wolt-style pizza sheet: size + extra toppings with live total.
@@ -25,6 +27,8 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
   const [qty, setQty] = useState(1);
   const [extras, setExtras] = useState<Record<string, number>>({});
   const [note, setNote] = useState("");
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useModalA11y(!!item, onClose, dialogRef);
 
   useEffect(() => {
     setVariant(0);
@@ -96,6 +100,8 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
         onClick={onClose}
       >
         <motion.div
+          ref={dialogRef}
+          tabIndex={-1}
           className="absolute inset-x-0 bottom-0 flex max-h-[92vh] flex-col rounded-t-3xl bg-cream shadow-lift sm:static sm:max-h-[88vh] sm:w-full sm:max-w-lg sm:rounded-3xl"
           initial={{ y: 120, opacity: 0.5 }}
           animate={{ y: 0, opacity: 1 }}
@@ -108,7 +114,10 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
         >
           {/* header */}
           <div className="relative shrink-0 border-b-2 border-gold/40 p-5 pb-4">
-            <button onClick={onClose} aria-label="Close" className="absolute right-4 top-4 z-10 grid h-10 w-10 place-items-center rounded-full border border-cherry/20 bg-cream text-cherry hover:bg-cherry hover:text-cream">✕</button>
+            <div className="absolute right-4 top-4 z-10 flex gap-2">
+              <FavoriteButton itemId={item.id} />
+              <button onClick={onClose} aria-label="Close" className="grid h-10 w-10 place-items-center rounded-full border border-cherry/20 bg-cream text-cherry hover:bg-cherry hover:text-cream">✕</button>
+            </div>
             <div className="flex items-start gap-4">
               <div className="w-24 shrink-0 sm:w-28">
                 <PizzaImage item={item} className="rounded-2xl" />

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { eur, fmtDate, vatPct } from "@/lib/format";
 import { isItemOff } from "@/lib/v3";
+import { whatsappUrl } from "@/lib/menu";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
 import { LineThumb, QtyStepper } from "./ui";
@@ -14,6 +15,11 @@ export default function CartDrawer() {
   const router = useRouter();
   const scheduled = cart.find((l) => l.preorder)?.preorder;
   const unavailable = cart.filter((l) => isItemOff(settings, l.itemId));
+  const whatsappMessage = [
+    "Hello Kuopio Bites! I'd like to order:",
+    ...cart.map((l) => `- ${l.name} | ${l.variantLabel || "standard"} | ${l.options.length ? l.options.join(", ") : "no options"} | qty ${l.qty} | ${eur(l.unitPrice * l.qty)}`),
+    `Total: ${eur(cartSubtotal)}`,
+  ].join("\n");
 
   return (
     <AnimatePresence>
@@ -136,6 +142,9 @@ export default function CartDrawer() {
                     {t("cart.unavailBlock")} {unavailable.map((l) => l.name).join(", ")}
                   </p>
                 )}
+                <a href={whatsappUrl(whatsappMessage)} target="_blank" rel="noopener noreferrer" className="mt-4 flex min-h-[48px] w-full items-center justify-center rounded-full border-2 border-[#168c4a] font-black text-[#168c4a] transition hover:bg-[#168c4a] hover:text-cream">
+                  Chat on WhatsApp
+                </a>
                 <button
                   disabled={unavailable.length > 0}
                   onClick={() => {

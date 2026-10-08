@@ -128,6 +128,7 @@ const publicUser = (row: any): Omit<User, "pass"> => ({
   phone: row.phone || "",
   addresses: JSON.parse(row.addresses || "[]"),
   marketing: Boolean(row.marketing),
+  favorites: Array.from(new Set(row.favorites ?? [])),
   createdAt: row.created_at,
 } as Omit<User, "pass">);
 const authUser = (req: Request) => (req as any).customer as any;
@@ -694,15 +695,22 @@ app.put("/api/account", requireCustomer, wrap(async (req, res) => {
   const body = accountPatchSchema.parse(req.body);
   const row = authUser(req);
   const addresses = body.addresses ?? JSON.parse(row.addresses || "[]");
-  const next = { name: body.name ?? row.name, phone: body.phone ?? row.phone, addresses, marketing: body.marketing ?? Boolean(row.marketing) };
+  const next = {
+    name: body.name ?? row.name,
+    phone: body.phone ?? row.phone,
+    addresses,
+    marketing: body.marketing ?? Boolean(row.marketing),
+    favorites: Array.from(new Set(body.favorites ?? row.favorites ?? [])),
+  };
   const { data, error } = await supabaseDb.from("customers").update({
     name: next.name,
     phone: next.phone,
     addresses: next.addresses,
     marketing_consent: next.marketing,
-  }).eq("id", auth.sub).select("id, name, email, phone, addresses, marketing_consent, created_at").single();
+    favorites: next.favorites,
+  }).eq("id", auth.sub).select("id, name, email, phone, addresses, marketing_consent, favorites, created_at").single();
   if (error) throw error;
-  ok(res, publicUser({ ...data, addresses: JSON.stringify(data.addresses ?? []), marketing: data.marketing_consent ? 1 : 0, created_at: Date.parse(data.created_at) }));
+  ok(res, publicUser({ ...data, addresses: JSON.stringify(data.addresses ?? []), marketing: data.marketing_consent ? 1 : 0, favorites: data.favorites ?? [], created_at: Date.parse(data.created_at) }));
 }));
 
 app.get("/api/account/orders", requireCustomer, wrap(async (req, res) => {

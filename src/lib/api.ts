@@ -19,6 +19,7 @@ const K = {
   settings: "kb_settings",
   overrides: "kb_overrides",
   cart: "kb_cart",
+  favorites: "kb_guest_favorites",
 };
 
 function read<T>(key: string, fallback: T): T {
