@@ -17,6 +17,14 @@ export const metadata: Metadata = {
   },
   description:
     "Kuopio Bites at Jalkasenkatu 7, 70820 Kuopio — wood-fired pizzas, kebabs, wings, Karachi biryani and halwa puri. Order online or book a table. ☎ 044 981 6223",
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/favicon-32x32.png", type: "image/png", sizes: "32x32" },
+      { url: "/logo.png", type: "image/png" },
+    ],
+    apple: "/apple-touch-icon.png",
+  },
 };
 
 export const viewport: Viewport = {
@@ -33,8 +41,10 @@ export default function RootLayout({
   return (
     <html lang="en">
       <head>
+        <link rel="icon" href="/favicon.ico" sizes="any" />
+        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
         <link rel="icon" type="image/png" href="/logo.png" />
-        <link rel="apple-touch-icon" href="/logo.png" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
       </head>
       <body className="pb-16 lg:pb-0">
         <FixedBackgroundGate />
