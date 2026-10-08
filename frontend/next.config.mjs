@@ -14,11 +14,12 @@ const nextConfig = {
   async headers() {
     const apiConnect = process.env.NEXT_PUBLIC_API_BASE_URL || "'self'";
     const productionOnly = process.env.NODE_ENV === "production";
+    const scriptSrc = productionOnly ? "'self' 'unsafe-inline'" : "'self' 'unsafe-inline' 'unsafe-eval'";
     return [
       {
         source: "/(.*)",
         headers: [
-          { key: "Content-Security-Policy", value: `default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' ${apiConnect}; frame-src 'self' https://www.google.com https://maps.google.com; worker-src 'self' blob:${productionOnly ? "; upgrade-insecure-requests" : ""}` },
+          { key: "Content-Security-Policy", value: `default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' ${apiConnect}; frame-src 'self' https://www.google.com https://maps.google.com; worker-src 'self' blob:${productionOnly ? "; upgrade-insecure-requests" : ""}` },
           { key: "Strict-Transport-Security", value: productionOnly ? "max-age=63072000; includeSubDomains; preload" : "max-age=0" },
 
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },

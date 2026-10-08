@@ -48,14 +48,30 @@ function Gate({ onOk }: { onOk: () => void }) {
         <p className="mt-1 text-xs text-cherry/60">Admin area — function over fashion.</p>
         <form
           className="mt-6 space-y-3 rounded-2xl border border-cherry/15 bg-cream-deep p-5 shadow-card"
+          autoComplete="off"
           onSubmit={(e) => {
             e.preventDefault();
             if (u === ADMIN_USER && p === ADMIN_PASS) onOk();
             else setErr(true);
           }}
         >
-          <input className="min-h-[44px] w-full rounded-lg border border-cherry/20 bg-cream px-3 text-sm font-bold" placeholder="Username" value={u} onChange={(e) => setU(e.target.value)} />
-          <input type="password" className="min-h-[44px] w-full rounded-lg border border-cherry/20 bg-cream px-3 text-sm font-bold" placeholder="Password" value={p} onChange={(e) => setP(e.target.value)} />
+          <input
+            name="admin_username"
+            autoComplete="off"
+            className="min-h-[44px] w-full rounded-lg border border-cherry/20 bg-cream px-3 text-sm font-bold"
+            placeholder="Username"
+            value={u}
+            onChange={(e) => setU(e.target.value)}
+          />
+          <input
+            type="password"
+            name="admin_password"
+            autoComplete="new-password"
+            className="min-h-[44px] w-full rounded-lg border border-cherry/20 bg-cream px-3 text-sm font-bold"
+            placeholder="Password"
+            value={p}
+            onChange={(e) => setP(e.target.value)}
+          />
           {err && <p className="text-xs font-bold text-brick">Wrong credentials</p>}
           <button className="min-h-[44px] w-full rounded-lg bg-cherry font-black text-cream hover:bg-cherry-bright">Sign in</button>
           <p className="text-center text-[11px] text-cherry/50">demo: admin / kuopio2026</p>

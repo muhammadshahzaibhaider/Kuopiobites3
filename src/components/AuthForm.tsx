@@ -49,15 +49,15 @@ export default function AuthForm({ onDone }: { onDone?: () => void }) {
           </button>
         ))}
       </div>
-      <form onSubmit={submit} className="mt-5 space-y-3">
+      <form onSubmit={submit} className="mt-5 space-y-3" autoComplete="off">
         {mode === "register" && (
           <>
             <input required className={field} placeholder="Full name" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
             <input className={field} placeholder="Phone (optional)" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} />
           </>
         )}
-        <input required type="email" className={field} placeholder="Email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
-        <input required type="password" minLength={4} className={field} placeholder="Password" value={f.pass} onChange={(e) => setF({ ...f, pass: e.target.value })} />
+        <input required type="email" autoComplete="off" className={field} placeholder="Email" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
+        <input required type="password" minLength={4} autoComplete="new-password" className={field} placeholder="Password" value={f.pass} onChange={(e) => setF({ ...f, pass: e.target.value })} />
         {err && <p className="text-sm font-bold text-cherry-bright">{err}</p>}
         <button
           disabled={busy}

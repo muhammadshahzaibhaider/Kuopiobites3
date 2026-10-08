@@ -7,7 +7,8 @@ if (!username || !["owner", "manager", "kitchen"].includes(role ?? "") || !name 
   process.exit(1);
 }
 
-const password = randomBytes(18).toString("base64url");
+const providedPassword = process.env.KB_STAFF_PASSWORD;
+const password = providedPassword || randomBytes(18).toString("base64url");
 const { data, error } = await db.auth.admin.createUser({
   email,
   password,
@@ -27,5 +28,7 @@ if (staffError) {
   throw new Error(staffError.message);
 }
 
-console.log(`Created ${role} account "${username}" for ${email}. Temporary password: ${password}`);
+console.log(`Created ${role} account "${username}" for ${email}.`);
+if (providedPassword) console.log("Password was set from hidden terminal input.");
+else console.log(`Temporary password: ${password}`);
 console.log("Sign in at /admin and change this password after first use.");
