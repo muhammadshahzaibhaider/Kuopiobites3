@@ -1,5 +1,6 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { resolveImageSrc } from "@/lib/images";
 import { cx } from "@/lib/format";
 import { fileToWebp, MAX_BYTES } from "@/lib/imgtool";
 import { apiUpload } from "@/lib/api";
@@ -27,6 +28,11 @@ export default function ImageUploader({
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!value) return;
+    setAltEn(value.altEn ?? "");
+    setAltFi(value.altFi ?? "");
+  }, [value?.src, value?.altEn, value?.altFi]);
 
   const handle = async (file: File | undefined | null) => {
     setErr("");
@@ -73,7 +79,7 @@ export default function ImageUploader({
       >
         {value ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={value.src} alt={value.altEn} className={cx("h-full w-full object-cover", preset === "1:1" ? "rounded-full" : "rounded-lg")} />
+          <img src={resolveImageSrc(value.src) ?? value.src} alt={value.altEn} className={cx("h-full w-full object-cover", preset === "1:1" ? "rounded-full" : "rounded-lg")} />
         ) : busy ? (
           "…"
         ) : (

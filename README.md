@@ -62,5 +62,5 @@ fall back to the pizza photo via `onError` until those files exist, then pick th
 ## v3.1.1 images-for-every-item
 - `src/lib/images.ts` manifest: item → imageKey → /public/menu/<cat>/<key>.webp (shared keys for size/meal variants; branded placeholder + caption)
 - `scripts/list-images.mjs` → /menu/index.json (build-gated coverage report)
-- Admin → Item images: ZIP bulk import with review, per-item upload/replace, coverage counters
+- Admin → Menu → Items: per-item image upload/replace with normalized persisted paths
 - 20/142 unique photos generated so far (pizzas 1–2 + South Asian Specials)

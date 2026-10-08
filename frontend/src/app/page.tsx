@@ -9,6 +9,7 @@ import { BtnGhost, BtnPrimary, MenuImage, OpenBadge, Reveal, SectionHead, Stagge
 import { eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { CATEGORY_IMG, FEATURED, MENU as MENU_ALL, RESTAURANT } from "@/lib/menu";
+import { resolveImageSrc } from "@/lib/images";
 import { useShop } from "@/lib/store";
 import type { Category } from "@/lib/types";
 
@@ -22,7 +23,7 @@ function CategoryCircle({ cat }: { cat: Category }) {
   const { lang } = useLang();
   const { settings } = useShop();
   const meta = settings.catMeta[id];
-  const src = meta?.img ?? CATEGORY_IMG[id];
+  const src = resolveImageSrc(meta?.img) ?? CATEGORY_IMG[id];
   const title = lang === "fi" ? cat.title : cat.en ?? cat.title;
   const alt = (meta && (lang === "fi" ? meta.altFi || meta.altEn : meta.altEn || meta.altFi)) || title;
   return (

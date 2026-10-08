@@ -106,7 +106,7 @@ Rules:
 2. Every destructive action gets a confirm dialog; every state change gets a toast + audit-log entry.
 3. Availability is a first-class column: one tap toggles sold-out; “today only” auto-resets at midnight Helsinki.
 4. Filters show an active-count badge; clearing is one click.
-5. CSV export on every meaningful table (orders, menu, prices, subscribers, analytics).
+5. CSV export on every meaningful table (orders, menu, analytics).
 6. Empty/loading/error states are always designed — skeleton rows, empty illustrations, retryable errors.
 7. Roles (Owner / Manager / Kitchen) gate scope: Kitchen sees Orders + availability only (demo storage `kb_staff`; wire to real auth in production).
 

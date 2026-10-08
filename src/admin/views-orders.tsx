@@ -6,7 +6,7 @@ import { useLang } from "@/lib/i18n";
 import { useShop, useTick } from "@/lib/store";
 import type { Order, OrderStatus, Reservation } from "@/lib/types";
 import { Ic } from "./icons";
-import { Bars, Confirm, DataTable, Drawer, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, SubTabs, Toolbar, downloadCSV, fmtDT, inputCls, statusTone, useDelayedReady, SkeletonRows, type Col, type FilterDef } from "./ui";
+import { Bars, Confirm, DataTable, Drawer, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, Toolbar, downloadCSV, fmtDT, inputCls, statusTone, useDelayedReady, SkeletonRows, type Col, type FilterDef } from "./ui";
 
 const NEXT: Record<OrderStatus, OrderStatus> = { placed: "accepted", accepted: "preparing", preparing: "ready", ready: "completed", completed: "completed" };
 
@@ -53,7 +53,7 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
         <StatCard label="Pending orders" value={pending} icon="clock" tone="orange" onClick={() => go("orders.queue")} />
         <StatCard label="Reservations" value={upcoming} icon="calendar" onClick={() => go("dining.list")} />
         <StatCard label="Off-menu items" value={offCount} icon="warn" tone={offCount ? "red" : "gray"} onClick={() => go("menu.items")} />
-        <StatCard label="New sign-ups" value={newUsers} icon="users" tone="gold" onClick={() => go("customers.list")} />
+        <StatCard label="New sign-ups" value={newUsers} icon="users" tone="gold" onClick={() => go("customers")} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -103,7 +103,6 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
           <p className="text-[11px] font-black uppercase tracking-wide text-cherry/50">Quick actions</p>
           <PrimaryBtn onClick={() => go("menu.items")}>Add menu item</PrimaryBtn>
           <GhostBtn className="w-full justify-center" onClick={() => go("menu.special")}>★ Set Today's Special</GhostBtn>
-          <GhostBtn className="w-full justify-center" onClick={() => go("marketing.promos")}>+ Promo code</GhostBtn>
           <button
             onClick={() => setConfirmPause(true)}
             className={settings.paused ? "min-h-[40px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream" : "min-h-[40px] w-full rounded-xl border-2 border-brick px-4 text-sm font-black text-brick hover:bg-brick hover:text-cream"}

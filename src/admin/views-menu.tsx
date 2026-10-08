@@ -1,5 +1,5 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { fileToWebp } from "@/lib/imgtool";
 import { MenuImage } from "@/components/ui";
 import { CATEGORY_SLUG } from "@/lib/images";
@@ -24,16 +24,18 @@ export function MenuCategoriesView() {
 
 /* ══ ITEMS ══ */
 export function MenuItemsView() {
-  const { settings, saveSettings, overrides, toast, logAudit } = useShop();
+  const { settings, saveSettings, overrides, addItem, removeAdded, categories, toast, logAudit } = useShop();
   const [fCat, setFCat] = useState("all");
   const [fAvail, setFAvail] = useState("all");
   const [edit, setEdit] = useState<MenuItem | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   const ready = useDelayedReady("items");
+  const categoryOptions = categories();
 
   const rows = useMemo(() => {
     const added = Object.values(overrides.added ?? {}).flat();
     return [...MENU, ...added];
-  }, [overrides.added]);
+  }, [overrides.added, settings]);
 
   const isOff = (id: string) => {
     const st = settings.offItems[id];
@@ -49,6 +51,7 @@ export function MenuItemsView() {
   }, [rows, fCat, fAvail, settings.offItems]);
 
   const cats = useMemo(() => Array.from(new Set(rows.map((r) => r.cat))), [rows]);
+  const isAdded = (id: string) => id.startsWith("custom-") || Object.values(overrides.added ?? {}).some((list) => list.some((item) => item.id === id));
 
   const filters: FilterDef[] = [
     { id: "cat", label: "Category", value: fCat, set: setFCat, options: [{ value: "all", label: "All categories" }, ...cats.map((c) => ({ value: c, label: c }))] },
@@ -108,7 +111,7 @@ export function MenuItemsView() {
     <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
       <Toolbar
         filters={filters}
-        action={<PrimaryBtn onClick={() => setEdit(null)}>Add item</PrimaryBtn>}
+        action={<PrimaryBtn onClick={() => setAddOpen(true)}>Add item</PrimaryBtn>}
       >
         <GhostBtn onClick={() => downloadCSV("menu.csv", [["category", "name", "prices"], ...filtered.map((r) => [r.cat, r.name, r.prices.map((p) => p.value).join("|")])])}><Ic n="csv" size={13} /> Export CSV</GhostBtn>
       </Toolbar>
@@ -130,11 +133,72 @@ export function MenuItemsView() {
         rowMenu={(r) => [
           { label: "Edit item", icon: "edit", onClick: () => setEdit(r) },
           { label: isOff(r.id) ? "Make available" : "Mark sold out", icon: "toggle", danger: !isOff(r.id), onClick: () => setOff([r.id], !isOff(r.id)) },
+          ...(isAdded(r.id) ? [{ label: "Delete item", icon: "trash", danger: true, onClick: async () => { if (!window.confirm(`Delete ${r.name}?`)) return; await removeAdded(r.id); toast("Item deleted", "err"); } }] : []),
         ]}
         pageSizeDefault={25}
       />
       {edit && <ItemEditor item={edit} onClose={() => setEdit(null)} />}
+      {addOpen && <NewItemEditor categories={categoryOptions} defaultCategory={fCat !== "all" ? fCat : undefined} addItem={addItem} toast={toast} onClose={() => setAddOpen(false)} />}
     </div>
+  );
+}
+
+function NewItemEditor({
+  categories,
+  defaultCategory,
+  addItem,
+  onClose,
+  toast,
+}: {
+  categories: { id: string; title: string; en?: string }[];
+  defaultCategory?: string;
+  addItem: (cat: string, name: string, price: number) => void | Promise<void>;
+  onClose: () => void;
+  toast: (msg: string, kind?: "ok" | "err") => void;
+}) {
+  const [cat, setCat] = useState(defaultCategory ?? categories[0]?.id ?? "specials");
+  const [name, setName] = useState("");
+  const [price, setPrice] = useState("");
+  const [error, setError] = useState("");
+
+  return (
+    <Drawer open onClose={onClose} title="Add menu item">
+      <form
+        className="space-y-4"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const amount = Number(price);
+          if (!cat || !name.trim() || !Number.isFinite(amount) || amount < 0) {
+            setError("Choose a category, enter a name, and enter a valid price.");
+            return;
+          }
+          try {
+            await addItem(cat, name.trim(), amount);
+            toast("Item added");
+            onClose();
+          } catch {
+            setError("The item could not be saved. Please try again.");
+          }
+        }}
+      >
+        <Field label="Category">
+          <select value={cat} onChange={(e) => setCat(e.target.value)} className={inputCls}>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.title}{c.en ? ` · ${c.en}` : ""}</option>)}
+          </select>
+        </Field>
+        <Field label="Name">
+          <input autoFocus value={name} onChange={(e) => { setName(e.target.value); setError(""); }} className={inputCls} placeholder="e.g. Chicken biryani" />
+        </Field>
+        <Field label="Price (€)">
+          <input type="number" min="0" step="0.1" value={price} onChange={(e) => { setPrice(e.target.value); setError(""); }} className={inputCls} placeholder="0.00" />
+        </Field>
+        {error && <p className="text-xs font-bold text-brick">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="min-h-[36px] rounded-lg border border-cherry/20 px-3 text-xs font-black text-cherry">Cancel</button>
+          <PrimaryBtn icon="save">Save item</PrimaryBtn>
+        </div>
+      </form>
+    </Drawer>
   );
 }
 
@@ -272,18 +336,30 @@ function ItemEditor({ item, onClose }: { item: MenuItem; onClose: () => void }) 
 /* ══ TOPPINGS MASTER ══ */
 export function ToppingsMasterView() {
   const { settings, saveSettings, toast } = useShop();
+  const [draft, setDraft] = useState(settings.toppings);
+  useEffect(() => setDraft(settings.toppings), [settings.toppings]);
+
+  const save = async () => {
+    try {
+      await saveSettings({ ...settings, toppings: draft });
+      toast("Topping list saved");
+    } catch {
+      toast("Topping list could not be saved", "err");
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
         <p className="mb-2 text-xs font-black uppercase tracking-wide text-cherry/50">Topping list (build-your-own pizzas)</p>
         <textarea
           rows={8}
-          value={settings.toppings.join("\n")}
-          onChange={(e) => saveSettings({ ...settings, toppings: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })}
+          value={draft.join("\n")}
+          onChange={(e) => setDraft(e.target.value.split("\n").map((s) => s.trim()).filter(Boolean))}
           className={inputCls}
         />
         <p className="mt-1 text-[11px] text-cherry/40">One topping per line. Removing a topping also removes it from every pizza builder.</p>
-        <div className="mt-3 flex justify-end"><PrimaryBtn icon="save" onClick={() => toast("Topping list saved")}>Save list</PrimaryBtn></div>
+        <div className="mt-3 flex justify-end"><PrimaryBtn icon="save" onClick={() => { void save(); }}>Save list</PrimaryBtn></div>
       </div>
       <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
         <ToppingsMetaPanel />
@@ -302,51 +378,6 @@ export function SpecialsView() {
       </div>
       <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
         <SpecialsPanel />
-      </div>
-    </div>
-  );
-}
-
-/* ══ BULK PRICING ══ */
-export function BulkPricingView() {
-  const { settings, overrides, patchItem, toast } = useShop();
-  const [cat, setCat] = useState("pizza1");
-  const cats = useMemo(() => Array.from(new Set(MENU.map((m) => m.cat))), []);
-  const items = MENU.filter((m) => m.cat === cat);
-  const priceOf = (m: MenuItem, i: number) => overrides.items[m.id]?.prices?.[i] ?? m.prices[i]?.value ?? 0;
-  return (
-    <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
-      <Toolbar action={<GhostBtn onClick={() => downloadCSV("prices.csv", [["category", "item", "variant", "price"], ...MENU.flatMap((m) => m.prices.map((p, i) => [m.cat, m.name, p.label, priceOf(m, i)]))])}><Ic n="csv" size={13} /> Export all prices</GhostBtn>}>
-        <label className="inline-flex items-center gap-2 text-xs font-black text-cherry">
-          Category
-          <select value={cat} onChange={(e) => setCat(e.target.value)} className={inputCls + " w-48"}>
-            {cats.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </label>
-      </Toolbar>
-      <div className="grid gap-px bg-cherry/10 sm:grid-cols-2 lg:grid-cols-3">
-        {items.map((item) => (
-          <div key={item.id} className="bg-cream p-3">
-            <p className="mb-1 text-sm font-black text-cherry">{item.name}</p>
-            {item.prices.map((p, pi) => (
-              <label key={pi} className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-cherry/70">
-                {p.label}
-                <span className="flex items-center gap-1">
-                  <input
-                    type="number" step="0.5" value={priceOf(item, pi)}
-                    onChange={(e) => patchItem(item.id, { prices: item.prices.map((z, zi) => (zi === pi ? parseFloat(e.target.value) || 0 : priceOf(item, zi))) })}
-                    className="w-20 rounded-lg border border-cherry/20 px-2 py-1 text-right tabular-nums"
-                  />
-                  €
-                </span>
-              </label>
-            ))}
-          </div>
-        ))}
-      </div>
-      <div className="flex items-center justify-between p-4">
-        <p className="text-[11px] text-cherry/40">Edits apply instantly (stored as overrides; base menu untouched).</p>
-        <PrimaryBtn icon="save" onClick={() => toast(`Prices saved for ${cat} · ${settings.vatRate ? "incl. VAT" : ""}`)}>Save changes</PrimaryBtn>
       </div>
     </div>
   );

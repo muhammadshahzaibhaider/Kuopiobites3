@@ -1,17 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
 import ImageUploader from "@/components/ImageUploader";
-import { MenuImage } from "@/components/ui";
-import { IMAGE_MANIFEST, itemImageKey, itemImagePath } from "@/lib/images";
-import { fileToWebp, MAX_BYTES, slugFromFilename } from "@/lib/imgtool";
 import { cx, eur, fmtDate } from "@/lib/format";
+import { resolveImageSrc } from "@/lib/images";
 import { todayStrHelsinki } from "@/lib/hours";
-import { DICTS, useLang } from "@/lib/i18n";
+import { useLang } from "@/lib/i18n"
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
-import { apiActivity, apiUpload } from "@/lib/api";
-import { isPizzaItem, isPreorderItem, nextPreorderSundays, pizzaSlug } from "@/lib/v3";
-import type { MenuItem, Offer, SpecialItem, ToppingMeta, UploadedImg } from "@/lib/types";
+import { apiActivity } from "@/lib/api";
+import { nextPreorderSundays } from "@/lib/v3";
+import type { MenuItem, SpecialItem, ToppingMeta } from "@/lib/types";
 
 /* ── shared ─────────────────────────────────────────── */
 
@@ -242,7 +240,15 @@ export function SpecialsPanel() {
   const menu = effectiveMenu(MENU, lang);
   const list = [...(settings.todaysSpecials ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
 
-  const save = (next: SpecialItem[]) => saveSettings({ ...settings, todaysSpecials: next });
+  const save = (next: SpecialItem[]) => {
+    void (async () => {
+      try {
+        await saveSettings({ ...settings, todaysSpecials: next });
+      } catch {
+        toast("Special could not be saved", "err");
+      }
+    })();
+  };
   const patch = (id: string, p: Partial<SpecialItem>) => {
     save(list.map((sp) => (sp.id === id ? { ...sp, ...p } : sp)));
   };
@@ -261,7 +267,11 @@ export function SpecialsPanel() {
         <p className="text-xs text-cherry/60">Today's Special is a scrollable carousel on Home. Each card links to /menu?item=&lt;id&gt; (scroll + pulse + sheet).</p>
         <button
           onClick={() => {
-            const sp: SpecialItem = { id: `ts-${Date.now()}`, itemId: menu[0]?.id ?? "", sortOrder: list.length, active: true, textEn: "Today's Special", textFi: "Päivän annos" };
+            if (!menu.length) {
+              toast("Add a menu item before creating a special", "err");
+              return;
+            }
+            const sp: SpecialItem = { id: `ts-${Date.now()}`, itemId: menu[0].id, sortOrder: list.length, active: true, textEn: "Today's Special", textFi: "Päivän annos" };
             save([...list, sp]);
             logAudit(`special created ${sp.id}`);
           }}
@@ -344,10 +354,17 @@ export function SpecialsPanel() {
 /* ── topping names & extra prices ────────────────────── */
 
 export function ToppingsMetaPanel() {
-  const { settings, saveSettings } = useShop();
-  const meta = (label: string) => settings.toppingMeta?.[label] ?? {};
-  const setMeta = (label: string, p: Partial<ToppingMeta>) =>
-    saveSettings({ ...settings, toppingMeta: { ...settings.toppingMeta, [label]: { ...meta(label), ...p } } });
+  const { settings, saveSettings, toast } = useShop();
+  const [draft, setDraft] = useState(settings.toppingMeta ?? {});
+  useEffect(() => setDraft(settings.toppingMeta ?? {}), [settings.toppingMeta]);
+
+  const update = (label: string, patch: Partial<ToppingMeta>) => {
+    setDraft((current) => ({ ...current, [label]: { ...(current[label] ?? {}), ...patch } }));
+  };
+  const save = async () => {
+    if (await saveSettings({ ...settings, toppingMeta: draft })) toast("Topping settings saved");
+  };
+
   return (
     <details className="rounded-xl border border-cherry/15 bg-cream-deep p-3">
       <summary className="cursor-pointer text-xs font-black uppercase text-cherry/50">Topping names (EN/FI) & extra prices — defaults €1.00 Med / €2.00 Perhe</summary>
@@ -360,406 +377,23 @@ export function ToppingsMetaPanel() {
         </thead>
         <tbody>
           {settings.toppings.map((tp) => {
-            const m = meta(tp);
+            const m = draft[tp] ?? {};
             return (
               <tr key={tp} className="border-b border-cherry/5">
                 <td className="py-1.5 pr-2 font-bold text-cherry capitalize">{tp}</td>
-                <td className="py-1.5 pr-2"><input defaultValue={m.en ?? ""} placeholder="EN" onBlur={(e) => setMeta(tp, { en: e.target.value || undefined })} className="min-h-[32px] w-32 rounded border border-cherry/20 bg-cream px-2 font-bold" /></td>
-                <td className="py-1.5 pr-2"><input defaultValue={m.fi ?? ""} placeholder="FI" onBlur={(e) => setMeta(tp, { fi: e.target.value || undefined })} className="min-h-[32px] w-32 rounded border border-cherry/20 bg-cream px-2 font-bold" /></td>
-                <td className="py-1.5 pr-2"><input type="number" step="0.1" defaultValue={m.priceMed ?? 1} onBlur={(e) => setMeta(tp, { priceMed: parseFloat(e.target.value) || 1 })} className="min-h-[32px] w-20 rounded border border-cherry/20 bg-cream px-2 font-bold tabular-nums" /></td>
-                <td className="py-1.5"><input type="number" step="0.1" defaultValue={m.pricePerhe ?? 2} onBlur={(e) => setMeta(tp, { pricePerhe: parseFloat(e.target.value) || 2 })} className="min-h-[32px] w-20 rounded border border-cherry/20 bg-cream px-2 font-bold tabular-nums" /></td>
+                <td className="py-1.5 pr-2"><input value={m.en ?? ""} placeholder="EN" onChange={(e) => update(tp, { en: e.target.value || undefined })} className="min-h-[32px] w-32 rounded border border-cherry/20 bg-cream px-2 font-bold" /></td>
+                <td className="py-1.5 pr-2"><input value={m.fi ?? ""} placeholder="FI" onChange={(e) => update(tp, { fi: e.target.value || undefined })} className="min-h-[32px] w-32 rounded border border-cherry/20 bg-cream px-2 font-bold" /></td>
+                <td className="py-1.5 pr-2"><input type="number" min="0" step="0.1" value={m.priceMed ?? 1} onChange={(e) => update(tp, { priceMed: parseFloat(e.target.value) || 0 })} className="min-h-[32px] w-20 rounded border border-cherry/20 bg-cream px-2 font-bold tabular-nums" /></td>
+                <td className="py-1.5"><input type="number" min="0" step="0.1" value={m.pricePerhe ?? 2} onChange={(e) => update(tp, { pricePerhe: parseFloat(e.target.value) || 0 })} className="min-h-[32px] w-20 rounded border border-cherry/20 bg-cream px-2 font-bold tabular-nums" /></td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      <div className="mt-3 flex justify-end">
+        <button type="button" onClick={() => { void save(); }} className="min-h-[36px] rounded-lg bg-cherry px-3 text-xs font-black text-cream">Save topping settings</button>
+      </div>
     </details>
-  );
-}
-
-/* ── image coverage + bulk import (v3.1 §32) ─────────── */
-
-type Row = { item: MenuItem; key: string; path: string };
-
-function useImageIndex(): Set<string> {
-  const [have, setHave] = useState<Set<string>>(new Set());
-  useEffect(() => {
-    fetch("/menu/index.json")
-      .then((r) => (r.ok ? r.json() : []))
-      .then((a: string[]) => setHave(new Set(a)))
-      .catch(() => setHave(new Set()));
-  }, []);
-  return have;
-}
-
-export function BulkImageImport() {
-  const { settings, saveSettings, toast, logAudit, effectiveMenu } = useShop();
-  const [q, setQ] = useState("");
-  const [busy, setBusy] = useState(false);
-  const lang = "en" as const;
-  const items = effectiveMenu(MENU, lang);
-
-  // slug → items sharing that image key
-  const bySlug = new Map<string, MenuItem[]>();
-  for (const m of items) {
-    const k = itemImageKey(m);
-    if (!bySlug.has(k)) bySlug.set(k, []);
-    bySlug.get(k)!.push(m);
-  }
-
-  const [review, setReview] = useState<{ matched: { file: string; items: MenuItem[]; key: string; data: string }[]; unmatched: string[] } | null>(null);
-
-  const readFiles = async (files: File[]) => {
-    setBusy(true);
-    const matched: { file: string; items: MenuItem[]; key: string; data: string }[] = [];
-    const unmatched: string[] = [];
-    for (const f of files) {
-      if (!["image/png", "image/jpeg", "image/webp"].includes(f.type)) {
-        unmatched.push(`${f.name} (PNG, JPEG or WebP only)`);
-        continue;
-      }
-      if (f.size > MAX_BYTES) {
-        unmatched.push(`${f.name} (>5 MB)`);
-        continue;
-      }
-      const slug = slugFromFilename(f.name);
-      const hit = bySlug.get(slug);
-      if (!hit) {
-        unmatched.push(f.name);
-        continue;
-      }
-      try {
-        matched.push({ file: f.name, items: hit, key: slug, data: await fileToWebp(f, "1:1") });
-      } catch {
-        unmatched.push(`${f.name} (decode failed)`);
-      }
-    }
-    setReview({ matched, unmatched });
-    setBusy(false);
-  };
-
-  const onFiles = async (list: FileList | null) => {
-    if (!list?.length) return;
-    const files = Array.from(list);
-    const zip = files.find((f) => /\.zip$/i.test(f.name));
-    if (!zip) return readFiles(files.filter((f) => !/\.zip$/i.test(f.name)));
-    setBusy(true);
-    try {
-      const JSZip = (await import("jszip")).default;
-      const archive = await JSZip.loadAsync(zip);
-      const imgs: File[] = [];
-      for (const name of Object.keys(archive.files)) {
-        const entry = archive.files[name];
-        if (entry.dir || !/\.(webp|jpe?g|png)$/i.test(name)) continue;
-        const blob = await entry.async("blob");
-        const lower = name.toLowerCase();
-        const type = lower.endsWith(".webp") ? "image/webp" : lower.endsWith(".png") ? "image/png" : "image/jpeg";
-        imgs.push(new File([blob], name.split("/").pop()!, { type }));
-      }
-      setBusy(false);
-      return readFiles(imgs);
-    } catch (e) {
-      setBusy(false);
-      toast(`ZIP failed: ${(e as Error).message}`, "err");
-    }
-  };
-
-  const apply = async () => {
-    if (!review) return;
-    setBusy(true);
-    try {
-      const map = { ...settings.itemImages };
-      let n = 0;
-      for (const m of review.matched) {
-        const blob = await (await fetch(m.data)).blob();
-        const uploaded = await apiUpload(blob);
-        for (const it of m.items) {
-          map[it.id] = { src: uploaded.url, altEn: it.name, altFi: it.name };
-          n++;
-        }
-      }
-      await saveSettings({ ...settings, itemImages: map });
-      logAudit(`bulk image import — ${review.matched.length} files → ${n} items`);
-      toast(`${n} item images applied`);
-      setReview(null);
-      setQ("");
-    } catch (e) {
-      toast(`Upload failed: ${(e as Error).message}`, "err");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const replaced = review
-    ? review.matched.filter((m) => m.items.some((it) => settings.itemImages[it.id])).length
-    : 0;
-
-  return (
-    <div className="space-y-3 rounded-xl border border-cherry/15 bg-cream-deep p-4">
-      <p className="text-xs font-black uppercase text-cherry/50">Bulk import — ZIP or images named by item slug</p>
-      <p className="text-xs text-cherry/60">
-        Name files by image key (e.g. <code>tropicana.webp</code>, <code>wings-small</code>). One file covers every variant sharing that key. Max 5 MB each.
-      </p>
-      <input
-        type="file"
-        accept=".zip,image/*"
-        multiple
-        onChange={(e) => onFiles(e.target.files)}
-        className="block w-full text-xs font-bold text-cherry file:mr-3 file:min-h-[36px] file:rounded-lg file:border-0 file:bg-cherry file:px-4 file:text-xs file:font-black file:text-cream"
-      />
-      {busy && <p className="text-xs font-black text-cherry/60">Reading…</p>}
-
-      {review && (
-        <div className="space-y-2 rounded-lg border border-cherry/15 bg-cream p-3">
-          <p className="text-xs font-black text-cherry">
-            Review — <span className="text-[#2e7d32]">{review.matched.length} matched</span>
-            {replaced > 0 && <span className="text-gold-deep"> · {replaced} replacing existing</span>}
-            {review.unmatched.length > 0 && <span className="text-brick"> · {review.unmatched.length} unmatched</span>}
-          </p>
-          {review.matched.slice(0, 40).map((m) => (
-            <div key={m.file} className="flex items-center gap-3 border-b border-cherry/5 pb-1 text-xs">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={m.data} alt="" className="h-10 w-10 rounded object-cover" />
-              <span className="font-bold text-cherry">{m.file}</span>
-              <span className="text-cherry/50">→ {m.items.map((i) => i.name).join(", ")}</span>
-              {m.items.some((it) => settings.itemImages[it.id]) && (
-                <span className="rounded bg-gold/25 px-1.5 py-0.5 text-[10px] font-black text-gold-deep">REPLACES</span>
-              )}
-            </div>
-          ))}
-          {review.unmatched.length > 0 && (
-            <p className="text-[11px] font-bold text-brick">Unmatched: {review.unmatched.slice(0, 20).join(", ")}</p>
-          )}
-          <div className="flex gap-2">
-            <button onClick={apply} className="min-h-[36px] rounded-lg bg-cherry px-4 text-xs font-black text-cream">
-              Apply {review.matched.length} images
-            </button>
-            <button onClick={() => setReview(null)} className="min-h-[36px] rounded-lg border border-cherry/30 px-4 text-xs font-black text-cherry">
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-export function ImageCoveragePanel() {
-  const { settings, saveSettings, logAudit } = useShop();
-  const have = useImageIndex();
-  const [onlyMissing, setOnlyMissing] = useState(false);
-  const [q, setQ] = useState("");
-  const [open, setOpen] = useState<string | null>(null);
-  const items = MENU.filter((m) => !onlyMissing || !have.has(itemImagePath(m)) || !!settings.itemImages[m.id]);
-
-  const all = MENU;
-  const covered = all.filter((m) => settings.itemImages[m.id] || have.has(itemImagePath(m))).length;
-  const uniqueKeys = new Set(all.map((m) => itemImageKey(m))).size;
-  const list = items.filter(
-    (m) => !q.trim() || m.name.toLowerCase().includes(q.toLowerCase()) || m.cat.includes(q.toLowerCase())
-  );
-
-  return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-3 rounded-xl border border-cherry/15 bg-cream-deep px-4 py-3">
-        <p className="text-sm font-black text-cherry">
-          Image coverage — {covered}/{all.length} items · {uniqueKeys} unique photos
-        </p>
-        <label className="flex items-center gap-2 text-xs font-black text-cherry/60">
-          <input type="checkbox" checked={onlyMissing} onChange={(e) => setOnlyMissing(e.target.checked)} /> only missing
-        </label>
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Filter by item or category…"
-          className="min-h-[36px] w-52 rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold"
-        />
-      </div>
-      <div className="space-y-1">
-        {list.map((m) => {
-          const uploaded = !!settings.itemImages[m.id];
-          const file = have.has(itemImagePath(m));
-          const ok = uploaded || file;
-          return (
-            <div key={m.id} className={cx("rounded-lg border px-3 py-2", ok ? "border-cherry/10 bg-cream-deep" : "border-brick/40 bg-brick/5")}>
-              <div className="flex flex-wrap items-center gap-3">
-                <MenuImage item={m} sizes="64px" className="h-10 w-10 rounded-lg" />
-                <span className="text-xs font-black text-cherry">{m.name}</span>
-                <code className="text-[10px] text-cherry/50">{itemImagePath(m)}</code>
-                <span
-                  className={cx(
-                    "rounded px-1.5 py-0.5 text-[10px] font-black",
-                    uploaded ? "bg-[#2e7d32]/15 text-[#2e7d32]" : file ? "bg-gold/25 text-gold-deep" : "bg-brick/15 text-brick"
-                  )}
-                >
-                  {uploaded ? "UPLOADED" : file ? "FILE" : "MISSING"}
-                </span>
-                <button
-                  onClick={() => setOpen(open === m.id ? null : m.id)}
-                  className="ml-auto min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry"
-                >
-                  {open === m.id ? "close" : uploaded ? "replace" : "upload"}
-                </button>
-              </div>
-              {open === m.id && (
-                <div className="mt-3">
-                  <ImageUploader
-                    preset="1:1"
-                    value={settings.itemImages[m.id]}
-                    onChange={(v) => {
-                      const map = { ...settings.itemImages };
-                      if (v) map[m.id] = v;
-                      else delete map[m.id];
-                      saveSettings({ ...settings, itemImages: map });
-                      logAudit(`item image ${v ? "uploaded" : "cleared"} ${m.name}`);
-                    }}
-                  />
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-/* ── offers ──────────────────────────────────────────── */
-
-const EMPTY: Offer = {
-  id: "", type: "percent", value: 10, scope: { whole: true }, active: true, priority: 0,
-  titleEn: "", titleFi: "",
-};
-
-export function OffersTab() {
-  const { settings, saveSettings, categories, logAudit, toast } = useShop();
-  const allCats = categories();
-  const [editing, setEditing] = useState<string | null>(null);
-
-  const patch = (o: Offer, p: Partial<Offer>) => {
-    const offers = settings.offers.map((x) => (x.id === o.id ? { ...x, ...p } : x));
-    saveSettings({ ...settings, offers });
-  };
-  const add = () => {
-    const o = { ...EMPTY, id: `off-${Date.now()}` };
-    saveSettings({ ...settings, offers: [...settings.offers, o] });
-    logAudit(`offer created ${o.id}`);
-    setEditing(o.id);
-  };
-  const remove = (id: string) => {
-    saveSettings({ ...settings, offers: settings.offers.filter((o) => o.id !== id) });
-    logAudit(`offer deleted ${id}`);
-  };
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-cherry/60">Best single discount wins by default. Server computes — clients only display.</p>
-        <button onClick={add} className="min-h-[40px] rounded-lg bg-cherry px-4 text-xs font-black text-cream">+ New offer</button>
-      </div>
-      {settings.offers.length === 0 && <p className="rounded-xl bg-cream-deep p-8 text-center text-sm font-bold text-cherry/60">No offers yet.</p>}
-      {settings.offers.map((o) => (
-        <div key={o.id} className={cx("rounded-xl border bg-cream-deep", editing === o.id ? "border-gold" : "border-cherry/15")}>
-          <div className="flex flex-wrap items-center gap-3 px-4 py-3 text-sm">
-            <span className="rounded-full bg-gold px-2 py-0.5 text-xs font-black text-cherry-dark">{o.badgeEn ?? o.titleEn}</span>
-            <span className="font-black text-cherry">{o.titleEn} / {o.titleFi || "⚠ FI missing"}</span>
-            <span className="text-xs text-cherry/60">
-              {o.type} {o.type === "percent" ? `${o.value}%` : eur(o.value)} · {o.scope.whole ? "whole order" : o.scope.category ?? o.scope.itemIds?.join(",")}
-              {o.code ? ` · code ${o.code}` : ""}
-              {o.maxUses ? ` · ${o.uses ?? 0}/${o.maxUses}` : ""}
-            </span>
-            <span className="ml-auto flex items-center gap-2">
-              <Switch on={o.active} ariaLabel={`${o.titleEn} active`} onChange={() => { patch(o, { active: !o.active }); logAudit(`offer ${o.active ? "paused" : "resumed"} ${o.id}`); }} />
-              <button onClick={() => setEditing(editing === o.id ? null : o.id)} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry">{editing === o.id ? "close" : "edit"}</button>
-              <button
-                onClick={() => {
-                  const c = { ...o, id: `off-${Date.now()}`, active: false };
-                  saveSettings({ ...settings, offers: [...settings.offers, c] });
-                  toast("Offer duplicated");
-                }}
-                className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry"
-              >
-                dup
-              </button>
-              <button onClick={() => remove(o.id)} className="min-h-[32px] rounded-lg border border-brick/50 px-2 text-xs font-black text-brick">del</button>
-            </span>
-          </div>
-          {editing === o.id && (
-            <div className="grid gap-2 border-t border-cherry/10 p-4 sm:grid-cols-3">
-              <label className="text-xs font-black text-cherry/60">Type
-                <select value={o.type} onChange={(e) => patch(o, { type: e.target.value as Offer["type"] })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold">
-                  {["percent", "fixed", "override", "bundle", "freeItem", "freeDelivery"].map((tp) => <option key={tp} value={tp}>{tp}</option>)}
-                </select>
-              </label>
-              <label className="text-xs font-black text-cherry/60">Value ({o.type === "percent" ? "%" : "€"})
-                <input type="number" step="0.5" value={o.value} onChange={(e) => patch(o, { value: parseFloat(e.target.value) || 0 })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold tabular-nums" />
-              </label>
-              <label className="text-xs font-black text-cherry/60">Scope
-                <select
-                  value={o.scope.whole ? "whole" : o.scope.category ? `cat:${o.scope.category}` : "items"}
-                  onChange={(e) => {
-                    const v = e.target.value;
-                    if (v === "whole") patch(o, { scope: { whole: true } });
-                    else if (v === "items") patch(o, { scope: { itemIds: [] } });
-                    else patch(o, { scope: { category: v.slice(4) } });
-                  }}
-                  className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold"
-                >
-                  <option value="whole">Whole order</option>
-                  {allCats.map((c) => <option key={c.id} value={`cat:${c.id}`}>Category: {c.title}</option>)}
-                  <option value="items">Specific items…</option>
-                </select>
-              </label>
-              {o.scope.itemIds && (
-                <label className="text-xs font-black text-cherry/60 sm:col-span-3">Item ids (comma-separated)
-                  <input value={o.scope.itemIds.join(",")} onChange={(e) => patch(o, { scope: { itemIds: e.target.value.split(",").map((x) => x.trim()).filter(Boolean) } })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
-                </label>
-              )}
-              <label className="text-xs font-black text-cherry/60">Min order (€)
-                <input type="number" value={o.minOrder ?? ""} onChange={(e) => patch(o, { minOrder: parseFloat(e.target.value) || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold tabular-nums" />
-              </label>
-              <label className="text-xs font-black text-cherry/60">Promo code (optional)
-                <input value={o.code ?? ""} onChange={(e) => patch(o, { code: e.target.value.toUpperCase() || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold uppercase" />
-              </label>
-              <label className="text-xs font-black text-cherry/60">Max redemptions
-                <input type="number" value={o.maxUses ?? ""} onChange={(e) => patch(o, { maxUses: parseInt(e.target.value) || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold tabular-nums" />
-              </label>
-              <label className="text-xs font-black text-cherry/60">Valid from
-                <input type="date" value={o.start ?? ""} onChange={(e) => patch(o, { start: e.target.value || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
-              </label>
-              <label className="text-xs font-black text-cherry/60">Valid to
-                <input type="date" value={o.end ?? ""} onChange={(e) => patch(o, { end: e.target.value || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
-              </label>
-              <label className="text-xs font-black text-cherry/60">Priority
-                <input type="number" value={o.priority} onChange={(e) => patch(o, { priority: parseInt(e.target.value) || 0 })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold tabular-nums" />
-              </label>
-              <div className="text-xs font-black text-cherry/60 sm:col-span-3">
-                Days active:{" "}
-                {[1, 2, 3, 4, 5, 6, 0].map((d) => (
-                  <button
-                    key={d}
-                    onClick={() => {
-                      const cur = o.days ?? [];
-                      patch(o, { days: cur.includes(d) ? cur.filter((x) => x !== d) : [...cur, d].length === 7 ? undefined : [...cur, d] });
-                    }}
-                    className={cx("mx-0.5 min-h-[30px] rounded-full border px-2", (o.days ?? []).includes(d) ? "border-cherry bg-cherry text-cream" : "border-cherry/20 text-cherry/60")}
-                  >
-                    {d === 0 ? "Su" : d === 1 ? "Mo" : d === 2 ? "Tu" : d === 3 ? "We" : d === 4 ? "Th" : d === 5 ? "Fr" : "Sa"}
-                  </button>
-                ))}
-              </div>
-              <input value={o.titleEn} onChange={(e) => patch(o, { titleEn: e.target.value })} placeholder="Title EN *" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-              <input value={o.titleFi} onChange={(e) => patch(o, { titleFi: e.target.value })} placeholder="Otsikko FI *" className={cx("min-h-[36px] rounded-lg border bg-cream px-2 text-xs font-bold", o.titleFi ? "border-cherry/20" : "border-brick")} />
-              <span className="self-center text-[10px] font-black text-brick">{!o.titleFi && "Missing Finnish translation"}</span>
-              <input value={o.descEn ?? ""} onChange={(e) => patch(o, { descEn: e.target.value })} placeholder="Description EN" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-              <input value={o.descFi ?? ""} onChange={(e) => patch(o, { descFi: e.target.value })} placeholder="Kuvaus FI" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-              <input value={o.badgeEn ?? ""} onChange={(e) => patch(o, { badgeEn: e.target.value })} placeholder="Badge EN (−10%)" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-              <input value={o.badgeFi ?? ""} onChange={(e) => patch(o, { badgeFi: e.target.value })} placeholder="Kyltti FI" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
   );
 }
 
@@ -792,7 +426,7 @@ export function CatsTab() {
           <div key={c.id} className="flex flex-wrap items-start gap-4 rounded-xl border border-cherry/15 bg-cream-deep p-4">
             <ImageUploader
               preset="1:1"
-              value={m.img ? { src: m.img, altEn: m.altEn ?? "", altFi: m.altFi ?? "" } : undefined}
+              value={m.img ? { src: resolveImageSrc(m.img) ?? m.img, altEn: m.altEn ?? "", altFi: m.altFi ?? "" } : undefined}
               onChange={(v) => { setMeta(c.id, { img: v?.src, altEn: v?.altEn, altFi: v?.altFi }); logAudit(`category ${c.id} image ${v ? "uploaded" : "removed"}`); }}
             />
             <div className="min-w-[220px] flex-1 space-y-2">
@@ -817,64 +451,6 @@ export function CatsTab() {
         );
       })}
       <button onClick={() => toast("Category order saved")} className="min-h-[40px] rounded-lg bg-cherry px-4 text-xs font-black text-cream">Done</button>
-    </div>
-  );
-}
-
-/* ── translations audit ──────────────────────────────── */
-
-export function TranslationsTab() {
-  const { overrides, setItemText, toast } = useShop();
-  const [onlyGaps, setOnlyGaps] = useState(true);
-  const missingName = MENU.filter((m) => !m.nameFi && !overrides.texts?.fi?.[m.id]?.name);
-  const missingDesc = MENU.filter((m) => (m.desc && !m.descFi && !overrides.texts?.fi?.[m.id]?.desc) ?? false);
-  const dictGapsEn = Object.keys(DICTS.en).filter((k) => !(k in DICTS.fi));
-  const dictGapsFi = Object.keys(DICTS.fi).filter((k) => !(k in DICTS.en));
-  const rows = onlyGaps ? Array.from(new Set([...missingName, ...missingDesc])) : MENU;
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <p className="text-sm font-black text-cherry">
-          {missingName.length + missingDesc.length === 0 ? "✅ No gaps" : `⚠ ${missingName.length} names, ${missingDesc.length} descriptions missing Finnish`}
-        </p>
-        <label className="flex items-center gap-2 text-xs font-black text-cherry/60">
-          <input type="checkbox" checked={onlyGaps} onChange={(e) => setOnlyGaps(e.target.checked)} /> only show gaps
-        </label>
-      </div>
-      {dictGapsEn.length + dictGapsFi.length > 0 && (
-        <p className="rounded-lg bg-brick/10 p-3 text-xs font-black text-brick">
-          Dictionary key mismatch — en-only: {dictGapsEn.join(", ") || "—"} · fi-only: {dictGapsFi.join(", ") || "—"}
-        </p>
-      )}
-      <div className="space-y-2">
-        {rows.map((m) => {
-          const tx = overrides.texts?.fi?.[m.id];
-          const nameGap = !m.nameFi && !tx?.name;
-          const descGap = m.desc && !m.descFi && !tx?.desc;
-          return (
-            <div key={m.id} className={cx("rounded-xl border p-3", nameGap || descGap ? "border-brick/40 bg-brick/5" : "border-cherry/15 bg-cream-deep")}>
-              <p className="text-xs font-black text-cherry">
-                {m.name} {nameGap && <span className="ml-2 rounded bg-brick px-1.5 py-0.5 text-[10px] text-cream">Missing Finnish translation</span>}
-              </p>
-              <div className="mt-2 grid gap-2 sm:grid-cols-2">
-                <input
-                  defaultValue={m.nameFi ?? ""}
-                  placeholder="Nimi (FI)"
-                  onBlur={(e) => { setItemText("fi", m.id, { name: e.target.value || undefined }); toast("FI copy saved"); }}
-                  className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold"
-                />
-                <input
-                  defaultValue={m.descFi ?? ""}
-                  placeholder="Kuvaus (FI)"
-                  onBlur={(e) => { setItemText("fi", m.id, { desc: e.target.value || undefined }); toast("FI copy saved"); }}
-                  className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold"
-                />
-              </div>
-              {descGap && <p className="mt-1 text-[10px] font-black text-brick">FI description missing</p>}
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }
@@ -905,5 +481,3 @@ export function AuditTab() {
     </table>
   );
 }
-
-export { isPreorderItem };

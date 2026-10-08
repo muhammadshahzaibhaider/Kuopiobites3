@@ -86,7 +86,7 @@ Living document for the frontend/backend split. Audit first, then what changed a
 ## 5. FINAL ADMIN WIRING (post-sweep)
 - `AuditTab` (inside Admin view) now reads `GET /api/admin/activity` — verified live: 14 rows
   ("staff login", "settings updated", …). Client can no longer fabricate or bypass the log.
-- `TranslationsTab` inputs prefill from item `nameFi/descFi` (backend-owned); saves go through
+- Menu item translation inputs prefill from item `nameFi/descFi` (backend-owned); saves go through
   `PUT /api/items/:id`.
 - Customers view hydrates from `GET /api/customers` (verified: registered test customer shown).
 - Customer order history/tracking via new `GET /api/account/orders` (owner-scoped).

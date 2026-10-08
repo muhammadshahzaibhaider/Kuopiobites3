@@ -113,7 +113,7 @@ export default function Footer() {
                   toast("Please enter a valid email", "err");
                   return;
                 }
-                // STUB → POST /api/newsletter (persist locally so Admin ▸ Marketing shows sign-ups)
+                // STUB → POST /api/newsletter (persist locally until newsletter administration is wired)
                 try {
                   const raw = localStorage.getItem("kb_newsletter");
                   const list: { email: string; at: number }[] = raw ? JSON.parse(raw) : [];

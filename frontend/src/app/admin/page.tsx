@@ -7,8 +7,8 @@ import { useShop, useTick } from "@/lib/store";
 import { Ic } from "@/admin/icons";
 import { Pill, useLocal } from "@/admin/ui";
 import { DashboardView, OrdersView, DiningView } from "@/admin/views-orders";
-import { MenuCategoriesView, MenuItemsView, ToppingsMasterView, SpecialsView, BulkPricingView } from "@/admin/views-menu";
-import { MarketingView, CustomersView, LocalizationView, MediaView, AnalyticsView, AdminStaffView, SettingsView } from "@/admin/views-misc";
+import { MenuCategoriesView, MenuItemsView, ToppingsMasterView, SpecialsView } from "@/admin/views-menu";
+import { CustomersView, AnalyticsView, AdminStaffView, SettingsView } from "@/admin/views-misc";
 
 /* credentials live ONLY in the backend (bcrypt + scoped staff JWTs) */
 
@@ -89,22 +89,8 @@ const NAV: Group[] = [
     { id: "menu.categories", label: "Categories", icon: "group" },
     { id: "menu.toppings", label: "Toppings", icon: "pizza" },
     { id: "menu.special", label: "Today's Special", icon: "star" },
-    { id: "menu.pricing", label: "Bulk Pricing", icon: "cash" },
-  ] },
-  { id: "marketing", label: "Marketing", icon: "megaphone", leaves: [
-    { id: "marketing.promos", label: "Promos & Offers", icon: "tag" },
-    { id: "marketing.subscribers", label: "Subscribers", icon: "bell" },
   ] },
   { id: "customers", label: "Customers", icon: "users", leaf: "customers" },
-  { id: "localization", label: "Localization", icon: "lang", leaves: [
-    { id: "localization.translations", label: "Translation Manager", icon: "lang" },
-    { id: "localization.missing", label: "Coverage Report", icon: "warn" },
-  ] },
-  { id: "media", label: "Media", icon: "image", leaves: [
-    { id: "media.library", label: "Library", icon: "image" },
-    { id: "media.import", label: "Bulk Import", icon: "upload" },
-    { id: "media.coverage", label: "Coverage", icon: "check" },
-  ] },
   { id: "analytics", label: "Analytics", icon: "analytics", leaves: [
     { id: "analytics.sales", label: "Sales", icon: "analytics" },
     { id: "analytics.items", label: "Item Performance", icon: "list" },
@@ -122,6 +108,8 @@ const ALL_LEAVES: Leaf[] = NAV.flatMap((g) => (g.leaves ?? (g.leaf ? [{ id: g.le
 function AdminShell({ onLogout }: { onLogout: () => void }) {
   const [tabs, setTabs] = useLocal<string[]>("kb_admin_tabs", ["dashboard"]);
   const [active, setActive] = useLocal<string>("kb_admin_active", "dashboard");
+  const validIds = useMemo(() => new Set(ALL_LEAVES.map((leaf) => leaf.id)), []);
+  const activeId = validIds.has(active) ? active : "dashboard";
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set(["orders", "menu"]));
   const [mobileNav, setMobileNav] = useState(false);
   const [navQuery, setNavQuery] = useState("");
@@ -142,15 +130,15 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   const closeTab = (id: string) => {
     const next = tabs.filter((x) => x !== id);
     setTabs(next.length ? next : ["dashboard"]);
-    if (active === id) setActive(next.length ? next[next.length - 1] : "dashboard");
+    if (activeId === id) setActive(next.length ? next[next.length - 1] : "dashboard");
   };
 
   useEffect(() => {
-    const h = () => openView("media.coverage");
-    window.addEventListener("kb-go-media", h);
-    return () => window.removeEventListener("kb-go-media", h);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    const clean = tabs.filter((id) => validIds.has(id));
+    const next = clean.length ? clean : ["dashboard"];
+    if (next.length !== tabs.length || next.some((id, i) => id !== tabs[i])) setTabs(next);
+    if (active !== activeId) setActive(next.includes(activeId) ? activeId : next[0]);
+  }, [tabs, active, activeId, validIds, setTabs, setActive]);
 
   const labelOf = (id: string) => ALL_LEAVES.find((l) => l.id === id)?.label ?? id;
   const filteredNav = useMemo(() => {
@@ -186,7 +174,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
       <div className="no-scrollbar flex-1 overflow-y-auto px-2 pb-4">
         {filteredNav.map((g) => {
           const isOpen = openGroups.has(g.id) || !!navQuery;
-          const groupActive = g.leaves ? g.leaves.some((l) => l.id === active) : g.leaf === active;
+          const groupActive = g.leaves ? g.leaves.some((l) => l.id === activeId) : g.leaf === activeId;
           return (
             <div key={g.id} className="mb-0.5">
               <button
@@ -208,7 +196,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
                       <li key={l.id}>
                         <button
                           onClick={() => openView(l.id)}
-                          className={cx("ml-4 flex w-[calc(100%-1rem)] items-center gap-2 rounded-lg border-l-2 px-3 py-1.5 text-left text-xs font-bold transition", active === l.id ? "border-gold bg-cream/10 text-gold" : "border-transparent text-cream/60 hover:text-cream")}
+                          className={cx("ml-4 flex w-[calc(100%-1rem)] items-center gap-2 rounded-lg border-l-2 px-3 py-1.5 text-left text-xs font-bold transition", activeId === l.id ? "border-gold bg-cream/10 text-gold" : "border-transparent text-cream/60 hover:text-cream")}
                         >
                           <Ic n={l.icon} size={13} /> {l.label}
                         </button>
@@ -271,7 +259,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
               {quickCreate && (
                 <div className="absolute right-0 top-11 z-40 w-52 overflow-hidden rounded-xl border border-cherry/15 bg-cream shadow-lift">
                   <p className="px-3 pt-2 text-[10px] font-black uppercase text-cherry/40">Quick create</p>
-                  {[["menu.items", "New menu item"], ["menu.special", "Today's Special"], ["marketing.promos", "Promo code"], ["dining.list", "Table reservation"]].map(([to, label]) => (
+                  {[["menu.items", "New menu item"], ["menu.special", "Today's Special"], ["dining.list", "Table reservation"]].map(([to, label]) => (
                     <button key={to} onClick={() => { setQuickCreate(false); openView(to); }} className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs font-black text-cherry hover:bg-cream-deep">
                       <Ic n="plus" size={12} /> {label}
                     </button>
@@ -306,14 +294,14 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
             <button
               key={id}
               onClick={() => setActive(id)}
-              className={cx("group inline-flex min-h-[32px] items-center gap-2 whitespace-nowrap rounded-full border px-3 text-xs font-black transition", active === id ? "border-cherry bg-cherry text-cream" : "border-cherry/20 bg-cream-deep text-cherry/70 hover:border-cherry/50")}
+              className={cx("group inline-flex min-h-[32px] items-center gap-2 whitespace-nowrap rounded-full border px-3 text-xs font-black transition", activeId === id ? "border-cherry bg-cherry text-cream" : "border-cherry/20 bg-cream-deep text-cherry/70 hover:border-cherry/50")}
             >
               {labelOf(id)}
               <span
                 role="button"
                 aria-label={`Close ${labelOf(id)}`}
                 onClick={(e) => { e.stopPropagation(); closeTab(id); }}
-                className={cx("grid h-4 w-4 place-items-center rounded-full text-[10px]", active === id ? "bg-cream/20 hover:bg-cream/40" : "bg-cherry/10 hover:bg-cherry/25")}
+                className={cx("grid h-4 w-4 place-items-center rounded-full text-[10px]", activeId === id ? "bg-cream/20 hover:bg-cream/40" : "bg-cherry/10 hover:bg-cherry/25")}
               >
                 ×
               </span>
@@ -324,12 +312,12 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
         {/* view */}
         <main className="p-3 pt-24 sm:p-5 sm:pt-28">
           <div className="mb-3 flex items-center gap-2">
-            <h1 className="font-display text-xl font-black text-cherry">{labelOf(active)}</h1>
-            {active.startsWith("orders.") && pending > 0 && <Pill tone="orange">{pending} pending</Pill>}
+            <h1 className="font-display text-xl font-black text-cherry">{labelOf(activeId)}</h1>
+            {activeId.startsWith("orders.") && pending > 0 && <Pill tone="orange">{pending} pending</Pill>}
           </div>
           <AnimatePresence mode="wait">
-            <motion.div key={active} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
-              {renderView(active, openView)}
+            <motion.div key={activeId} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
+              {renderView(activeId, openView)}
             </motion.div>
           </AnimatePresence>
         </main>
@@ -353,15 +341,7 @@ function renderView(id: string, go: (v: string) => void) {
     case "menu.categories": return <MenuCategoriesView />;
     case "menu.toppings": return <ToppingsMasterView />;
     case "menu.special": return <SpecialsView />;
-    case "menu.pricing": return <BulkPricingView />;
-    case "marketing.promos": return <MarketingView mode="promos" />;
-    case "marketing.subscribers": return <MarketingView mode="subscribers" />;
     case "customers": return <CustomersView />;
-    case "localization.translations": return <LocalizationView mode="translations" />;
-    case "localization.missing": return <LocalizationView mode="missing" />;
-    case "media.library": return <MediaView mode="library" />;
-    case "media.import": return <MediaView mode="import" />;
-    case "media.coverage": return <MediaView mode="coverage" />;
     case "analytics.sales": return <AnalyticsView mode="sales" />;
     case "analytics.items": return <AnalyticsView mode="items" />;
     case "analytics.peaks": return <AnalyticsView mode="peaks" />;

@@ -14,10 +14,10 @@ const click = async (label) => {
   if (await el.count()) { await el.click(); await page.waitForTimeout(600); return true; }
   return false;
 };
-for (const g of ["Orders", "Dining", "Menu", "Marketing", "Customers", "Localization", "Media", "Analytics", "Admin", "Settings"]) await click(g);
-for (const leaf of ["Live Queue", "History", "Items", "Categories", "Toppings", "Bulk Pricing", "Promotions", "Subscribers", "Translations", "Library", "Coverage", "Audit", "Staff", "General"]) await click(leaf);
-// audit must show backend activity rows
-await click("Admin"); await click("Audit");
+for (const g of ["Orders", "Dining", "Menu", "Customers", "Analytics", "Admin", "Settings"]) await click(g);
+for (const leaf of ["Live Queue", "History", "Refunds", "Calendar", "Reservations", "Slot Settings", "Items", "Categories", "Toppings", "Today's Special", "Sales", "Item Performance", "Peak Hours", "General", "Restaurant Info"]) await click(leaf);
+// the activity log is embedded below Admin → Staff and should remain visible
+await click("Admin"); await click("Staff");
 await page.waitForTimeout(800);
 const auditHasRows = await page.locator("td:has-text('settings updated'), td:has-text('login'), td:has-text('reordered')").count() > 0;
 console.log("audit rows from backend:", auditHasRows);
