@@ -8,6 +8,7 @@ import { whatsappUrl } from "@/lib/menu";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
 import { LineThumb, QtyStepper } from "./ui";
+import WhatsAppIcon from "./WhatsAppIcon";
 
 export default function CartDrawer() {
   const { cart, cartOpen, setCartOpen, setQty, removeLine, cartSubtotal, settings } = useShop();
@@ -148,6 +149,7 @@ export default function CartDrawer() {
                   rel="noopener noreferrer"
                   className="mt-4 flex min-h-[48px] w-full items-center justify-center rounded-full border-2 border-[#168c4a] font-black text-[#168c4a] transition hover:bg-[#168c4a] hover:text-cream"
                 >
+                  <WhatsAppIcon />
                   Chat on WhatsApp
                 </a>
                 <button

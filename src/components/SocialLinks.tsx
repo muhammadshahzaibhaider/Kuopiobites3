@@ -1,5 +1,6 @@
 import { cx } from "@/lib/format";
 import { SOCIAL_LINKS, type SocialLinkId } from "@/lib/menu";
+import WhatsAppIcon from "./WhatsAppIcon";
 
 function SocialIcon({ id }: { id: SocialLinkId }) {
   if (id === "instagram") {
@@ -26,9 +27,7 @@ function SocialIcon({ id }: { id: SocialLinkId }) {
     );
   }
 
-  if (id === "whatsapp") {
-    return <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true"><path d="M20.5 3.5A11.8 11.8 0 0 0 12.1 0 11.9 11.9 0 0 0 1.8 17.8L.2 23.8l6.2-1.6A11.9 11.9 0 0 0 24 12a11.8 11.8 0 0 0-3.5-8.5Zm-8.4 17.2a9.8 9.8 0 0 1-5-1.4l-.4-.2-3.7 1 1-3.6-.2-.4a9.8 9.8 0 1 1 8.3 4.6Zm5.4-7.3c-.3-.2-1.7-.8-2-.9-.3-.1-.5-.2-.7.2l-.9 1.1c-.2.2-.3.3-.6.1-1.7-.8-2.8-1.5-3.9-3.4-.3-.5.3-.4.8-1.4.1-.2.1-.4 0-.6l-.8-1.9c-.2-.5-.4-.4-.7-.4h-.5c-.2 0-.6.1-.9.4-.3.3-1.2 1.2-1.2 2.9s1.2 3.4 1.4 3.7c.2.2 2.3 3.6 5.7 5 .8.4 1.5.6 2 .7.8.3 1.6.2 2.2.1.7-.1 1.7-.7 1.9-1.4.2-.7.2-1.3.1-1.4Z" /></svg>;
-  }
+  if (id === "whatsapp") return <WhatsAppIcon />;
 
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">

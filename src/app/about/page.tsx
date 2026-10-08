@@ -3,8 +3,9 @@ import { motion } from "framer-motion";
 import { useState } from "react";
 import { Reveal, SectionHead, Stagger, StaggerItem, Steam } from "@/components/ui";
 import { useLang } from "@/lib/i18n";
-import { RESTAURANT, WHATSAPP_DISPLAY, whatsappUrl } from "@/lib/menu";
+import { RESTAURANT, WHATSAPP_DISPLAY, WHATSAPP_GREETING, whatsappUrl } from "@/lib/menu";
 import { useShop } from "@/lib/store";
+import WhatsAppIcon from "@/components/WhatsAppIcon";
 
 export default function AboutPage() {
   const { settings, toast } = useShop();
@@ -64,8 +65,8 @@ export default function AboutPage() {
             <a href={RESTAURANT.phoneHref} className="mt-2 block font-display text-3xl font-black text-cherry-bright hover:text-cherry">
               {RESTAURANT.phone}
             </a>
-            <a href={whatsappUrl("Hello Kuopio Bites! I have a question.")} target="_blank" rel="noopener noreferrer" className="mt-3 flex min-h-[44px] items-center gap-2 font-black text-[#168c4a] hover:underline">
-              <span aria-hidden>◉</span> WhatsApp · {WHATSAPP_DISPLAY}
+            <a href={whatsappUrl(WHATSAPP_GREETING)} target="_blank" rel="noopener noreferrer" aria-label="Chat on WhatsApp" className="mt-3 flex min-h-[44px] items-center gap-2 font-black text-[#168c4a] hover:underline">
+              <WhatsAppIcon /> WhatsApp · {WHATSAPP_DISPLAY}
             </a>
             <p className="mt-1 text-xs font-bold text-cherry/50">{t("about.tap")}</p>
             <ul className="mt-5 space-y-1 text-sm text-cherry/80">

@@ -1,13 +1,11 @@
 import type { Category, MenuItem, ModGroup, PriceVariant, Tag } from "./types";
+import { WHATSAPP_DISPLAY, whatsappUrl } from "../../frontend/src/lib/whatsapp";
+export { WHATSAPP_DISPLAY, WHATSAPP_GREETING, WHATSAPP_NUMBER, whatsappUrl } from "../../frontend/src/lib/whatsapp";
 
 const FACEBOOK_URL = "https://www.facebook.com/share/1Cc27jbJMm/?mibextid=wwXIfr";
 const INSTAGRAM_URL = "https://www.instagram.com/kuopio.bites?rpxt=N2ZqdjFudWFuczA4";
 const WOLT_URL = "https://wolt.com/fi/fin/kuopio/restaurant/kuopio-bites";
 const UBER_EATS_URL = "https://www.ubereats.com/store-browse-uuid/2b21a27b-6e47-587c-956a-f00de5f5fcfa?diningMode=DELIVERY";
-export const WHATSAPP_NUMBER = "358449816223";
-export const WHATSAPP_DISPLAY = "+358 44 981 6223";
-export const whatsappUrl = (message?: string) => `https://wa.me/${WHATSAPP_NUMBER}${message ? `?text=${encodeURIComponent(message)}` : ""}`;
-
 export const RESTAURANT = {
   name: "Kuopio Bites",
   tagline: "& Asian cuisine",
