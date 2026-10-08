@@ -11,6 +11,7 @@ import { useLang } from "@/lib/i18n";
 import { CATEGORY_IMG, FEATURED, MENU as MENU_ALL, RESTAURANT } from "@/lib/menu";
 import { resolveImageSrc } from "@/lib/images";
 import { useShop } from "@/lib/store";
+import SocialLinks from "@/components/SocialLinks";
 import type { Category } from "@/lib/types";
 
 const MARQUEE = [
@@ -250,10 +251,7 @@ export default function Home() {
             <h3 className="font-display text-lg font-black text-cherry">{t("home.call")}</h3>
             <a href={RESTAURANT.phoneHref} className="mt-3 block font-display text-2xl font-black text-gold-deep hover:text-cherry">{RESTAURANT.phone}</a>
             <p className="mt-2 text-sm text-cherry/80">{t("home.phoneNote")}</p>
-            <div className="mt-3 flex gap-3">
-              <a href={RESTAURANT.instagram} target="_blank" rel="noreferrer" className="font-black text-gold-deep underline decoration-gold underline-offset-4">Instagram</a>
-              <a href={RESTAURANT.facebook} target="_blank" rel="noreferrer" className="font-black text-gold-deep underline decoration-gold underline-offset-4">Facebook</a>
-            </div>
+            <SocialLinks className="mt-3" tone="light" />
           </StaggerItem>
         </Stagger>
         <Reveal delay={0.1} className="mt-8 overflow-hidden rounded-3xl border-2 border-gold/50 shadow-lift">
