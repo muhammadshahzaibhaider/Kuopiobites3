@@ -154,7 +154,6 @@ export const EN: Record<string,string> = {
   "footer.thanks": "Kiitos! You're on the list. 🎉",
   "footer.links": "Full menu",
   "footer.book": "Book a table",
-  "footer.staff": "Staff / Admin",
   "footer.vat": "All prices include VAT",
   "track.kicker": "live order tracking",
   "track.notFound": "Order not found",

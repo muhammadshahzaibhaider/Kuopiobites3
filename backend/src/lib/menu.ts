@@ -7,8 +7,10 @@ export const RESTAURANT = {
   phone: "044 981 6223",
   phoneHref: "tel:+358449816223",
   email: "hello@kuopiobites.fi",
-  instagram: "https://instagram.com/kuopiobites",
-  facebook: "https://facebook.com/kuopiobites",
+  instagram: "https://www.instagram.com/kuopio.bites?rpxt=N2ZqdjFudWFuczA4",
+  facebook: "https://www.facebook.com/share/1Cc27jbJMm/?mibextid=wwXIfr",
+  wolt: "https://wolt.com/fi/fin/kuopio/restaurant/kuopio-bites",
+  uberEats: "https://www.ubereats.com/store-browse-uuid/2b21a27b-6e47-587c-956a-f00de5f5fcfa?diningMode=DELIVERY",
   mapEmbed:
     "https://www.google.com/maps?q=Jalkasenkatu%207%2C%2070820%20Kuopio%2C%20Finland&output=embed",
   mapLink: "https://www.google.com/maps?q=Jalkasenkatu+7,+70820+Kuopio",
