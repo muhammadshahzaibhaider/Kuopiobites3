@@ -27,7 +27,7 @@ function CategoryCircle({ cat }: { cat: Category }) {
   const alt = (meta && (lang === "fi" ? meta.altFi || meta.altEn : meta.altEn || meta.altFi)) || title;
   return (
     <Link href={`/menu?cat=${id}`} className="group flex w-24 shrink-0 flex-col items-center gap-2 sm:w-28">
-      <span className="relative block h-24 w-24 overflow-hidden rounded-full border-4 border-cream shadow-card ring-2 ring-gold/50 transition-all duration-300 group-hover:scale-105 group-hover:shadow-lift group-hover:ring-gold motion-reduce:group-hover:scale-100 sm:h-28 sm:w-28">
+      <span className="relative block aspect-square w-24 shrink-0 overflow-hidden rounded-full border-4 border-cream shadow-card ring-2 ring-gold/50 transition-all duration-300 group-hover:scale-105 group-hover:shadow-lift group-hover:ring-gold motion-reduce:group-hover:scale-100 sm:w-28">
         {src ? (
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
@@ -149,7 +149,7 @@ export default function Home() {
         <div className="container-x glass rounded-[2rem] py-10 shadow-card">
           <SectionHead kicker={t("home.browseKicker")} title={t("home.browseTitle")} center />
           <Stagger>
-            <div className="no-scrollbar -mx-4 flex snap-x gap-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:flex-wrap sm:justify-center sm:gap-6 sm:overflow-visible sm:px-0">
+            <div className="no-scrollbar -mx-4 flex snap-x gap-4 overflow-x-auto overflow-y-hidden px-4 py-6 sm:mx-0 sm:flex-wrap sm:justify-center sm:gap-6 sm:overflow-visible sm:px-0">
               {circleCats.map((c) => (
                 <StaggerItem key={c.id} className="snap-start">
                   <CategoryCircle cat={c} />
