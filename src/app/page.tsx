@@ -9,7 +9,9 @@ import { BtnGhost, BtnPrimary, MenuImage, OpenBadge, Reveal, SectionHead, Stagge
 import { eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { CATEGORY_IMG, FEATURED, MENU as MENU_ALL, RESTAURANT } from "@/lib/menu";
+import { resolveImageSrc } from "@/lib/images";
 import { useShop } from "@/lib/store";
+import SocialLinks from "@/components/SocialLinks";
 import type { Category } from "@/lib/types";
 
 const MARQUEE = [
@@ -22,12 +24,12 @@ function CategoryCircle({ cat }: { cat: Category }) {
   const { lang } = useLang();
   const { settings } = useShop();
   const meta = settings.catMeta[id];
-  const src = meta?.img ?? CATEGORY_IMG[id];
+  const src = resolveImageSrc(meta?.img) ?? CATEGORY_IMG[id];
   const title = lang === "fi" ? cat.title : cat.en ?? cat.title;
   const alt = (meta && (lang === "fi" ? meta.altFi || meta.altEn : meta.altEn || meta.altFi)) || title;
   return (
     <Link href={`/menu?cat=${id}`} className="group flex w-24 shrink-0 flex-col items-center gap-2 sm:w-28">
-      <span className="relative block h-24 w-24 overflow-hidden rounded-full border-4 border-cream shadow-card ring-2 ring-gold/50 transition-all duration-300 group-hover:scale-105 group-hover:shadow-lift group-hover:ring-gold motion-reduce:group-hover:scale-100 sm:h-28 sm:w-28">
+      <span className="relative block aspect-square w-24 shrink-0 overflow-hidden rounded-full border-4 border-cream shadow-card ring-2 ring-gold/50 transition-all duration-300 group-hover:scale-105 group-hover:shadow-lift group-hover:ring-gold motion-reduce:group-hover:scale-100 sm:w-28">
         {src ? (
           /* eslint-disable-next-line @next/next/no-img-element */
           <img
@@ -149,7 +151,7 @@ export default function Home() {
         <div className="container-x glass rounded-[2rem] py-10 shadow-card">
           <SectionHead kicker={t("home.browseKicker")} title={t("home.browseTitle")} center />
           <Stagger>
-            <div className="no-scrollbar -mx-4 flex snap-x gap-4 overflow-x-auto px-4 pb-2 sm:mx-0 sm:flex-wrap sm:justify-center sm:gap-6 sm:overflow-visible sm:px-0">
+            <div className="no-scrollbar -mx-4 flex snap-x gap-4 overflow-x-auto overflow-y-hidden px-4 py-6 sm:mx-0 sm:flex-wrap sm:justify-center sm:gap-6 sm:overflow-visible sm:px-0">
               {circleCats.map((c) => (
                 <StaggerItem key={c.id} className="snap-start">
                   <CategoryCircle cat={c} />
@@ -249,10 +251,7 @@ export default function Home() {
             <h3 className="font-display text-lg font-black text-cherry">{t("home.call")}</h3>
             <a href={RESTAURANT.phoneHref} className="mt-3 block font-display text-2xl font-black text-gold-deep hover:text-cherry">{RESTAURANT.phone}</a>
             <p className="mt-2 text-sm text-cherry/80">{t("home.phoneNote")}</p>
-            <div className="mt-3 flex gap-3">
-              <a href={RESTAURANT.instagram} target="_blank" rel="noreferrer" className="font-black text-gold-deep underline decoration-gold underline-offset-4">Instagram</a>
-              <a href={RESTAURANT.facebook} target="_blank" rel="noreferrer" className="font-black text-gold-deep underline decoration-gold underline-offset-4">Facebook</a>
-            </div>
+            <SocialLinks className="mt-3" tone="light" />
           </StaggerItem>
         </Stagger>
         <Reveal delay={0.1} className="mt-8 overflow-hidden rounded-3xl border-2 border-gold/50 shadow-lift">

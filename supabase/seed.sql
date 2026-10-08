@@ -440,12 +440,6 @@ insert into public.translation_strings (key, value_en, value_fi) values ('admin.
 insert into public.translation_strings (key, value_en, value_fi) values ('admin.todayOnly', 'today only', 'vain tänään');
 insert into public.translation_strings (key, value_en, value_fi) values ('admin.bulk', 'Mark selected', 'Merkitse valitut');
 insert into public.translation_strings (key, value_en, value_fi) values ('admin.pre', 'Halwa Puri pre-orders', 'Halwa Puri -ennakkotilaukset');
-insert into public.translation_strings (key, value_en, value_fi) values ('admin.specials', 'Specials & Offers', 'Päivän annos & tarjoukset');
-insert into public.translation_strings (key, value_en, value_fi) values ('admin.cats', 'Categories', 'Kategoriat');
-insert into public.translation_strings (key, value_en, value_fi) values ('admin.trans', 'Translations', 'Käännökset');
-insert into public.translation_strings (key, value_en, value_fi) values ('admin.images', 'Item images', 'Tuotekuvat');
-insert into public.translation_strings (key, value_en, value_fi) values ('admin.audit', 'Audit log', 'Muutosloki');
-insert into public.translation_strings (key, value_en, value_fi) values ('admin.missingFi', 'Missing Finnish translation', 'Suomen kieli puuttuu');
 insert into public.translation_strings (key, value_en, value_fi) values ('admin.upload', 'Upload image', 'Lataa kuva');
 insert into public.translation_strings (key, value_en, value_fi) values ('admin.altEn', 'Alt text (EN)', 'Alt-teksti (EN)');
 insert into public.translation_strings (key, value_en, value_fi) values ('admin.altFi', 'Alt text (FI)', 'Alt-teksti (FI)');

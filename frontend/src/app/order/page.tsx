@@ -267,9 +267,9 @@ export default function OrderPage() {
           {(settings.platforms.wolt || settings.platforms.uberEats) && (
             <p className="mt-3 text-xs text-cherry/60">
               {t("order.platforms")}:{" "}
-              {settings.platforms.wolt && <a href={settings.platforms.wolt} target="_blank" rel="noreferrer" className="font-black text-gold-deep underline decoration-gold underline-offset-4">Wolt</a>}
+              {settings.platforms.wolt && <a href={settings.platforms.wolt} target="_blank" rel="noopener noreferrer" className="font-black text-gold-deep underline decoration-gold underline-offset-4">Wolt</a>}
               {settings.platforms.wolt && settings.platforms.uberEats && " · "}
-              {settings.platforms.uberEats && <a href={settings.platforms.uberEats} target="_blank" rel="noreferrer" className="font-black text-gold-deep underline decoration-gold underline-offset-4">Uber Eats</a>}
+              {settings.platforms.uberEats && <a href={settings.platforms.uberEats} target="_blank" rel="noopener noreferrer" className="font-black text-gold-deep underline decoration-gold underline-offset-4">Uber Eats</a>}
             </p>
           )}
           <button

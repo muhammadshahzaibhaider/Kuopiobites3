@@ -7,7 +7,7 @@ import { orderingInfo } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
 import type { Tag } from "@/lib/types";
-import { CATEGORY_ICON, CATEGORY_SLUG, itemImagePath } from "@/lib/images";
+import { CATEGORY_ICON, CATEGORY_SLUG, itemImagePath, resolveImageSrc } from "@/lib/images";
 import { MENU } from "@/lib/menu";
 
 /* Scroll-reveal wrapper: fade + rise, respects reduced motion */
@@ -270,7 +270,8 @@ export function MenuImage({
   const { settings } = useShop();
   const { t } = useLang();
   const [failed, setFailed] = useState(false);
-  const src = srcOverride ?? settings.itemImages[item.id]?.src ?? itemImagePath(item);
+  const src = resolveImageSrc(srcOverride ?? settings.itemImages[item.id]?.src ?? item.imageUrl) ?? itemImagePath(item);
+  const external = /^(?:https?:\/\/|data:|blob:)/i.test(src);
   const icon = CATEGORY_ICON[CATEGORY_SLUG[item.cat] ?? ""] ?? "🍽";
   return (
     <div className={cx("relative aspect-square w-full overflow-hidden bg-[#F4F4F2]", className)}>
@@ -280,6 +281,9 @@ export function MenuImage({
             {icon}
           </span>
         </div>
+      ) : external ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={src} alt={item.name} loading="lazy" onError={() => setFailed(true)} className="h-full w-full object-cover" />
       ) : (
         <Image
           src={src}

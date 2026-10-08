@@ -1,13 +1,13 @@
 "use client";
-import { useMemo, useRef, useState } from "react";
-import { fileToWebp } from "@/lib/imgtool";
+import { useEffect, useMemo, useState } from "react";
 import { MenuImage } from "@/components/ui";
+import ImageUploader from "@/components/ImageUploader";
 import { CATEGORY_SLUG } from "@/lib/images";
 import { eur, cx } from "@/lib/format";
 import { todayStrHelsinki } from "@/lib/hours";
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
-import type { MenuItem } from "@/lib/types";
+import type { MenuItem, UploadedImg } from "@/lib/types";
 import { CatsTab, SpecialsPanel, ToppingsMetaPanel } from "@/app/admin/v3tabs";
 import { Ic } from "./icons";
 import { Confirm, DataTable, Drawer, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, SubTabs, Toolbar, downloadCSV, inputCls, useDelayedReady, type Col, type FilterDef } from "./ui";
@@ -24,16 +24,21 @@ export function MenuCategoriesView() {
 
 /* ══ ITEMS ══ */
 export function MenuItemsView() {
-  const { settings, saveSettings, overrides, toast, logAudit } = useShop();
+  const { settings, saveSettings, overrides, addItem, removeAdded, categories, toast, logAudit } = useShop();
   const [fCat, setFCat] = useState("all");
   const [fAvail, setFAvail] = useState("all");
   const [edit, setEdit] = useState<MenuItem | null>(null);
+  const [addOpen, setAddOpen] = useState(false);
   const ready = useDelayedReady("items");
+  const categoryOptions = categories();
 
   const rows = useMemo(() => {
     const added = Object.values(overrides.added ?? {}).flat();
-    return [...MENU, ...added];
-  }, [overrides.added]);
+    return [...MENU, ...added].map((item) => {
+      const text = overrides.texts?.en?.[item.id];
+      return text ? { ...item, name: text.name ?? item.name, desc: text.desc ?? item.desc } : item;
+    });
+  }, [overrides.added, overrides.texts, settings]);
 
   const isOff = (id: string) => {
     const st = settings.offItems[id];
@@ -49,6 +54,7 @@ export function MenuItemsView() {
   }, [rows, fCat, fAvail, settings.offItems]);
 
   const cats = useMemo(() => Array.from(new Set(rows.map((r) => r.cat))), [rows]);
+  const isAdded = (id: string) => id.startsWith("custom-") || Object.values(overrides.added ?? {}).some((list) => list.some((item) => item.id === id));
 
   const filters: FilterDef[] = [
     { id: "cat", label: "Category", value: fCat, set: setFCat, options: [{ value: "all", label: "All categories" }, ...cats.map((c) => ({ value: c, label: c }))] },
@@ -108,7 +114,7 @@ export function MenuItemsView() {
     <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
       <Toolbar
         filters={filters}
-        action={<PrimaryBtn onClick={() => setEdit(null)}>Add item</PrimaryBtn>}
+        action={<PrimaryBtn onClick={() => setAddOpen(true)}>Add item</PrimaryBtn>}
       >
         <GhostBtn onClick={() => downloadCSV("menu.csv", [["category", "name", "prices"], ...filtered.map((r) => [r.cat, r.name, r.prices.map((p) => p.value).join("|")])])}><Ic n="csv" size={13} /> Export CSV</GhostBtn>
       </Toolbar>
@@ -130,11 +136,126 @@ export function MenuItemsView() {
         rowMenu={(r) => [
           { label: "Edit item", icon: "edit", onClick: () => setEdit(r) },
           { label: isOff(r.id) ? "Make available" : "Mark sold out", icon: "toggle", danger: !isOff(r.id), onClick: () => setOff([r.id], !isOff(r.id)) },
+          ...(isAdded(r.id) ? [{ label: "Delete item", icon: "trash", danger: true, onClick: async () => { if (!window.confirm(`Delete ${r.name}?`)) return; await removeAdded(r.id); toast("Item deleted", "err"); } }] : []),
         ]}
         pageSizeDefault={25}
       />
       {edit && <ItemEditor item={edit} onClose={() => setEdit(null)} />}
+      {addOpen && <NewItemEditor categories={categoryOptions} defaultCategory={fCat !== "all" ? fCat : undefined} addItem={addItem} toast={toast} onClose={() => setAddOpen(false)} />}
     </div>
+  );
+}
+
+function NewItemEditor({
+  categories,
+  defaultCategory,
+  addItem,
+  onClose,
+  toast,
+}: {
+  categories: { id: string; title: string; en?: string }[];
+  defaultCategory?: string;
+  addItem: (cat: string, name: string, price: number, desc?: string, image?: UploadedImg) => void | Promise<boolean | void>;
+  onClose: () => void;
+  toast: (msg: string, kind?: "ok" | "err") => void;
+}) {
+  const [cat, setCat] = useState(defaultCategory ?? categories[0]?.id ?? "specials");
+  const [name, setName] = useState("");
+  const [desc, setDesc] = useState("");
+  const [price, setPrice] = useState("");
+  const [image, setImage] = useState<UploadedImg | undefined>();
+  const [imageUrl, setImageUrl] = useState("");
+  const [error, setError] = useState("");
+  const [imageError, setImageError] = useState("");
+  const urlIsValid = (value: string) => {
+    try {
+      const parsed = new URL(value);
+      return parsed.protocol === "http:" || parsed.protocol === "https:";
+    } catch {
+      return false;
+    }
+  };
+
+  const setUrl = (value: string) => {
+    setImageUrl(value);
+    setImageError(value.trim() && !urlIsValid(value.trim()) ? "Enter a valid http(s) image URL." : "");
+    if (value.trim()) setImage(undefined);
+  };
+  const previewImage = imageUrl.trim() && urlIsValid(imageUrl.trim())
+    ? { src: imageUrl.trim(), altEn: name.trim(), altFi: name.trim() }
+    : image;
+
+  return (
+    <Drawer open onClose={onClose} title="Add menu item">
+      <form
+        className="space-y-4"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const amount = Number(price);
+          const trimmedUrl = imageUrl.trim();
+          if (!cat) {
+            setError("Choose a valid category.");
+            return;
+          }
+          if (!name.trim()) {
+            setError("Name is required.");
+            return;
+          }
+          if (!price.trim() || !Number.isFinite(amount) || amount < 0) {
+            setError("Enter a valid price.");
+            return;
+          }
+          if (trimmedUrl && !urlIsValid(trimmedUrl)) {
+            setImageError("Enter a valid http(s) image URL.");
+            return;
+          }
+          const imageRef = trimmedUrl
+            ? { src: trimmedUrl, altEn: name.trim(), altFi: name.trim() }
+            : image;
+          const saved = await addItem(cat, name.trim(), amount, desc.trim() || undefined, imageRef);
+          if ((saved as unknown) === false) {
+            setError("The item could not be saved. Please try again.");
+            return;
+          }
+          toast("Item added");
+          onClose();
+        }}
+      >
+        <Field label="Category">
+          <select value={cat} onChange={(e) => { setCat(e.target.value); setError(""); }} className={inputCls}>
+            {categories.map((c) => <option key={c.id} value={c.id}>{c.title}{c.en ? ` · ${c.en}` : ""}</option>)}
+          </select>
+        </Field>
+        <Field label="Name">
+          <input autoFocus value={name} onChange={(e) => { setName(e.target.value); setError(""); }} className={inputCls} placeholder="e.g. Chicken biryani" />
+        </Field>
+        <Field label="Description">
+          <textarea rows={3} value={desc} onChange={(e) => { setDesc(e.target.value); setError(""); }} className={inputCls} placeholder="Short description or ingredients" maxLength={500} />
+        </Field>
+        <Field label="Price (€)">
+          <input type="number" min="0" step="0.1" value={price} onChange={(e) => { setPrice(e.target.value); setError(""); }} className={inputCls} placeholder="0.00" />
+        </Field>
+        <div className="space-y-2 rounded-xl border border-cherry/10 bg-cream p-3">
+          <p className="text-xs font-black uppercase tracking-wide text-cherry/60">Image (optional)</p>
+          <ImageUploader
+            preset="1:1"
+            value={previewImage}
+            fallbackAlt={name}
+            onChange={(next) => { if (!next && imageUrl.trim()) setImageUrl(""); setImage(next ?? undefined); if (next) setImageUrl(""); setImageError(""); }}
+          />
+          <label className="block text-xs font-bold text-cherry/70">
+            Or image URL
+            <input value={imageUrl} onChange={(e) => setUrl(e.target.value)} className={inputCls + " mt-1"} placeholder="https://…" inputMode="url" />
+          </label>
+          {imageError && <p className="text-xs font-bold text-brick">{imageError}</p>}
+        </div>
+        {error && <p className="text-xs font-bold text-brick">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={onClose} className="min-h-[36px] rounded-lg border border-cherry/20 px-3 text-xs font-black text-cherry">Cancel</button>
+          <PrimaryBtn icon="save">Save item</PrimaryBtn>
+        </div>
+      </form>
+    </Drawer>
   );
 }
 
@@ -142,18 +263,20 @@ function ItemEditor({ item, onClose }: { item: MenuItem; onClose: () => void }) 
   const { settings, saveSettings, overrides, setItemText, patchItem, toast } = useShop();
   const [tab, setTab] = useState("general");
   const [confirmOff, setConfirmOff] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const offRec = settings.offItems[item.id];
   const isOff = !!offRec && (offRec.off === true || offRec.offToday === TODAY());
   const textEn = overrides.texts?.en?.[item.id];
   const textFi = overrides.texts?.fi?.[item.id];
 
-  const onUpload = async (f: File) => {
+  const saveImage = async (next: UploadedImg | null) => {
     try {
-      const dataUrl = await fileToWebp(f, "1:1", 1200);
-      saveSettings({ ...settings, itemImages: { ...settings.itemImages, [item.id]: { src: dataUrl, altEn: item.name, altFi: item.name } } });
-      toast("Image applied — site shows it immediately");
+      const itemImages = { ...settings.itemImages };
+      if (next) itemImages[item.id] = next;
+      else delete itemImages[item.id];
+      const saved = await saveSettings({ ...settings, itemImages });
+      if ((saved as unknown) === false) throw new Error("save failed");
+      toast(next ? "Image applied — site shows it immediately" : "Image removed");
     } catch {
       toast("Upload failed — check the file", "err");
     }
@@ -182,11 +305,13 @@ function ItemEditor({ item, onClose }: { item: MenuItem; onClose: () => void }) 
                 <p className="mb-2 text-[11px] text-cherry/40">
                   {settings.itemImages[item.id] ? "Custom uploaded image in use" : `/menu/${CATEGORY_SLUG[item.cat] ?? item.cat}/${item.imageKey ?? item.id}.webp (generated)`}
                 </p>
-                <input ref={fileRef} type="file" accept="image/*" className="hidden" onChange={(e) => e.target.files?.[0] && onUpload(e.target.files[0])} />
-                <GhostBtn onClick={() => fileRef.current?.click()}>Upload / replace…</GhostBtn>
-                {settings.itemImages[item.id] && (
-                  <GhostBtn className="ml-2" onClick={() => { const m = { ...settings.itemImages }; delete m[item.id]; saveSettings({ ...settings, itemImages: m }); }}>Revert to generated</GhostBtn>
-                )}
+                <ImageUploader
+                  preset="1:1"
+                  value={settings.itemImages[item.id]}
+                  fallbackAlt={item.name}
+                  onChange={(next) => { void saveImage(next); }}
+                />
+                {settings.itemImages[item.id] && <p className="text-[11px] text-cherry/40">Delete / replace above to return to the generated placeholder.</p>}
               </div>
             </div>
           </>
@@ -272,18 +397,30 @@ function ItemEditor({ item, onClose }: { item: MenuItem; onClose: () => void }) 
 /* ══ TOPPINGS MASTER ══ */
 export function ToppingsMasterView() {
   const { settings, saveSettings, toast } = useShop();
+  const [draft, setDraft] = useState(settings.toppings);
+  useEffect(() => setDraft(settings.toppings), [settings.toppings]);
+
+  const save = async () => {
+    try {
+      await saveSettings({ ...settings, toppings: draft });
+      toast("Topping list saved");
+    } catch {
+      toast("Topping list could not be saved", "err");
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
         <p className="mb-2 text-xs font-black uppercase tracking-wide text-cherry/50">Topping list (build-your-own pizzas)</p>
         <textarea
           rows={8}
-          value={settings.toppings.join("\n")}
-          onChange={(e) => saveSettings({ ...settings, toppings: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })}
+          value={draft.join("\n")}
+          onChange={(e) => setDraft(e.target.value.split("\n").map((s) => s.trim()).filter(Boolean))}
           className={inputCls}
         />
         <p className="mt-1 text-[11px] text-cherry/40">One topping per line. Removing a topping also removes it from every pizza builder.</p>
-        <div className="mt-3 flex justify-end"><PrimaryBtn icon="save" onClick={() => toast("Topping list saved")}>Save list</PrimaryBtn></div>
+        <div className="mt-3 flex justify-end"><PrimaryBtn icon="save" onClick={() => { void save(); }}>Save list</PrimaryBtn></div>
       </div>
       <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
         <ToppingsMetaPanel />
@@ -302,51 +439,6 @@ export function SpecialsView() {
       </div>
       <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
         <SpecialsPanel />
-      </div>
-    </div>
-  );
-}
-
-/* ══ BULK PRICING ══ */
-export function BulkPricingView() {
-  const { settings, overrides, patchItem, toast } = useShop();
-  const [cat, setCat] = useState("pizza1");
-  const cats = useMemo(() => Array.from(new Set(MENU.map((m) => m.cat))), []);
-  const items = MENU.filter((m) => m.cat === cat);
-  const priceOf = (m: MenuItem, i: number) => overrides.items[m.id]?.prices?.[i] ?? m.prices[i]?.value ?? 0;
-  return (
-    <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
-      <Toolbar action={<GhostBtn onClick={() => downloadCSV("prices.csv", [["category", "item", "variant", "price"], ...MENU.flatMap((m) => m.prices.map((p, i) => [m.cat, m.name, p.label, priceOf(m, i)]))])}><Ic n="csv" size={13} /> Export all prices</GhostBtn>}>
-        <label className="inline-flex items-center gap-2 text-xs font-black text-cherry">
-          Category
-          <select value={cat} onChange={(e) => setCat(e.target.value)} className={inputCls + " w-48"}>
-            {cats.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </label>
-      </Toolbar>
-      <div className="grid gap-px bg-cherry/10 sm:grid-cols-2 lg:grid-cols-3">
-        {items.map((item) => (
-          <div key={item.id} className="bg-cream p-3">
-            <p className="mb-1 text-sm font-black text-cherry">{item.name}</p>
-            {item.prices.map((p, pi) => (
-              <label key={pi} className="mb-1 flex items-center justify-between gap-2 text-xs font-bold text-cherry/70">
-                {p.label}
-                <span className="flex items-center gap-1">
-                  <input
-                    type="number" step="0.5" value={priceOf(item, pi)}
-                    onChange={(e) => patchItem(item.id, { prices: item.prices.map((z, zi) => (zi === pi ? parseFloat(e.target.value) || 0 : priceOf(item, zi))) })}
-                    className="w-20 rounded-lg border border-cherry/20 px-2 py-1 text-right tabular-nums"
-                  />
-                  €
-                </span>
-              </label>
-            ))}
-          </div>
-        ))}
-      </div>
-      <div className="flex items-center justify-between p-4">
-        <p className="text-[11px] text-cherry/40">Edits apply instantly (stored as overrides; base menu untouched).</p>
-        <PrimaryBtn icon="save" onClick={() => toast(`Prices saved for ${cat} · ${settings.vatRate ? "incl. VAT" : ""}`)}>Save changes</PrimaryBtn>
       </div>
     </div>
   );

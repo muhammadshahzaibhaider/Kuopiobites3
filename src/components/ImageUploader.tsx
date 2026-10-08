@@ -1,5 +1,6 @@
 "use client";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { resolveImageSrc } from "@/lib/images";
 import { cx } from "@/lib/format";
 import { fileToWebp, MAX_BYTES } from "@/lib/imgtool";
 import { useLang } from "@/lib/i18n";
@@ -14,23 +15,38 @@ export default function ImageUploader({
   value,
   onChange,
   preset,
+  fallbackAlt,
 }: {
   value?: UploadedImg;
   onChange: (img: UploadedImg | null) => void;
   preset: "1:1" | "16:9";
+  fallbackAlt?: string;
 }) {
   const { t } = useLang();
-  const [altEn, setAltEn] = useState(value?.altEn ?? "");
-  const [altFi, setAltFi] = useState(value?.altFi ?? "");
+  const [altEn, setAltEn] = useState(value?.altEn ?? fallbackAlt ?? "");
+  const [altFi, setAltFi] = useState(value?.altFi ?? fallbackAlt ?? "");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (value) {
+      setAltEn(value.altEn ?? fallbackAlt ?? "");
+      setAltFi(value.altFi ?? fallbackAlt ?? "");
+    } else if (fallbackAlt) {
+      setAltEn((current) => current || fallbackAlt);
+      setAltFi((current) => current || fallbackAlt);
+    }
+  }, [value?.src, value?.altEn, value?.altFi, fallbackAlt]);
 
   const handle = async (file: File | undefined | null) => {
     setErr("");
     if (!file) return;
     if (file.size > MAX_BYTES) {
       setErr("Max 5 MB");
+      return;
+    }
+    if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+      setErr("PNG, JPEG or WebP only");
       return;
     }
     if (!altEn.trim() || !altFi.trim()) {
@@ -66,7 +82,7 @@ export default function ImageUploader({
       >
         {value ? (
           // eslint-disable-next-line @next/next/no-img-element
-          <img src={value.src} alt={value.altEn} className={cx("h-full w-full object-cover", preset === "1:1" ? "rounded-full" : "rounded-lg")} />
+          <img src={resolveImageSrc(value.src) ?? value.src} alt={value.altEn} className={cx("h-full w-full object-cover", preset === "1:1" ? "rounded-full" : "rounded-lg")} />
         ) : busy ? (
           "…"
         ) : (
@@ -76,7 +92,7 @@ export default function ImageUploader({
       </div>
       {err && <p className="text-xs font-bold text-brick">{err}</p>}
       {value && (
-        <button onClick={() => onChange(null)} className="text-xs font-black text-brick underline">
+        <button type="button" onClick={() => onChange(null)} className="text-xs font-black text-brick underline">
           Delete / replace
         </button>
       )}

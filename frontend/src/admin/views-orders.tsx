@@ -6,7 +6,7 @@ import { useLang } from "@/lib/i18n";
 import { useShop, useTick } from "@/lib/store";
 import type { Order, OrderStatus, Reservation } from "@/lib/types";
 import { Ic } from "./icons";
-import { Bars, Confirm, DataTable, Drawer, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, SubTabs, Toolbar, downloadCSV, fmtDT, inputCls, statusTone, useDelayedReady, SkeletonRows, type Col, type FilterDef } from "./ui";
+import { Bars, Confirm, DataTable, Drawer, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, Toolbar, downloadCSV, fmtDT, inputCls, statusTone, useDelayedReady, SkeletonRows, type Col, type FilterDef } from "./ui";
 
 const NEXT: Record<OrderStatus, OrderStatus> = { placed: "accepted", accepted: "preparing", preparing: "ready", ready: "completed", completed: "completed" };
 
@@ -53,7 +53,7 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
         <StatCard label="Pending orders" value={pending} icon="clock" tone="orange" onClick={() => go("orders.queue")} />
         <StatCard label="Reservations" value={upcoming} icon="calendar" onClick={() => go("dining.list")} />
         <StatCard label="Off-menu items" value={offCount} icon="warn" tone={offCount ? "red" : "gray"} onClick={() => go("menu.items")} />
-        <StatCard label="New sign-ups" value={newUsers} icon="users" tone="gold" onClick={() => go("customers.list")} />
+        <StatCard label="New sign-ups" value={newUsers} icon="users" tone="gold" onClick={() => go("customers")} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
@@ -103,7 +103,6 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
           <p className="text-[11px] font-black uppercase tracking-wide text-cherry/50">Quick actions</p>
           <PrimaryBtn onClick={() => go("menu.items")}>Add menu item</PrimaryBtn>
           <GhostBtn className="w-full justify-center" onClick={() => go("menu.special")}>★ Set Today's Special</GhostBtn>
-          <GhostBtn className="w-full justify-center" onClick={() => go("marketing.promos")}>+ Promo code</GhostBtn>
           <button
             onClick={() => setConfirmPause(true)}
             className={settings.paused ? "min-h-[40px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream" : "min-h-[40px] w-full rounded-xl border-2 border-brick px-4 text-sm font-black text-brick hover:bg-brick hover:text-cream"}
@@ -201,7 +200,7 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
       render: (o) =>
         mode !== "refunds" && orderStatus(o) !== "completed" ? (
           <button
-            onClick={(e) => { e.stopPropagation(); setOrderStatus(o.id, NEXT[orderStatus(o)]); toast(`${o.id} → ${NEXT[orderStatus(o)]}`); }}
+            onClick={async (e) => { e.stopPropagation(); const next = NEXT[orderStatus(o)]; if (await setOrderStatus(o.id, next)) toast(`${o.id} → ${next}`); }}
             className="inline-flex min-h-[30px] items-center gap-1 rounded-lg bg-cherry px-2.5 text-[11px] font-black text-cream hover:bg-cherry-bright"
           >
             <Ic n="chevR" size={12} /> {NEXT[orderStatus(o)]}
@@ -223,7 +222,7 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
       bulk={(ids, clear) => (
         <>
           <span className="text-xs font-black text-cherry">{ids.length} selected</span>
-          <GhostBtn onClick={() => { ids.forEach((id) => setOrderStatus(id, NEXT[orderStatus(orders.find((o) => o.id === id)!)] ?? "accepted")); toast(`${ids.length} advanced`); clear(); }}>Advance status</GhostBtn>
+          <GhostBtn onClick={async () => { const results = await Promise.all(ids.map((id) => setOrderStatus(id, NEXT[orderStatus(orders.find((o) => o.id === id)!)] ?? "accepted"))); if (results.every(Boolean)) toast(`${ids.length} advanced`); clear(); }}>Advance status</GhostBtn>
           <GhostBtn onClick={() => { downloadCSV("orders.csv", [["id", "total", "status"], ...ids.map((id) => { const o = orders.find((x) => x.id === id)!; return [o.id, o.total, orderStatus(o)]; })]); clear(); }}><Ic n="csv" size={12} /> CSV</GhostBtn>
         </>
       )}
@@ -307,14 +306,14 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
             </dl>
             <div className="flex flex-wrap gap-2">
               {orderStatus(detail) !== "completed" && (
-                <select value={orderStatus(detail)} onChange={(e) => { setOrderStatus(detail.id, e.target.value as OrderStatus); setDetail({ ...detail }); }} className={inputCls + " w-auto"}>
+                <select value={orderStatus(detail)} onChange={async (e) => { if (await setOrderStatus(detail.id, e.target.value as OrderStatus)) setDetail({ ...detail }); }} className={inputCls + " w-auto"}>
                   {["placed", "accepted", "preparing", "ready", "completed"].map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               )}
               <GhostBtn onClick={() => printTicket(detail)}><Ic n="print" size={13} /> Print ticket</GhostBtn>
               {!detail.refunded && (
                 <button
-                  onClick={async () => { await refundOrder(detail.id); logAudit(`refund ${detail.id}: ${refundReason || "no reason"}`); toast(`${detail.id} refunded`, "err"); setDetail(null); }}
+                  onClick={async () => { if (await refundOrder(detail.id)) { logAudit(`refund ${detail.id}: ${refundReason || "no reason"}`); toast(`${detail.id} refunded`, "err"); setDetail(null); } }}
                   className="ml-auto min-h-[36px] rounded-lg border border-brick px-3 text-xs font-black text-brick hover:bg-brick hover:text-cream"
                 >
                   Refund order
@@ -406,8 +405,8 @@ export function DiningView({ mode }: { mode: "calendar" | "list" | "slots" }) {
               {selRes.note && <p className="rounded-lg bg-gold/15 p-2 text-xs font-bold">{selRes.note}</p>}
               <Pill tone={statusTone(selRes.status === "accepted" ? "accepted-res" : selRes.status ?? "pending")}>{selRes.status ?? "pending"}</Pill>
               <div className="flex gap-2">
-                <GhostBtn onClick={() => { setReservationStatus(selRes.id, "accepted"); toast("Reservation accepted"); }}>Accept</GhostBtn>
-                <GhostBtn onClick={() => { setReservationStatus(selRes.id, "declined"); toast("Reservation declined", "err"); }}>Decline</GhostBtn>
+                <GhostBtn onClick={async () => { if (await setReservationStatus(selRes.id, "accepted")) toast("Reservation accepted"); }}>Accept</GhostBtn>
+                <GhostBtn onClick={async () => { if (await setReservationStatus(selRes.id, "declined")) toast("Reservation declined", "err"); }}>Decline</GhostBtn>
               </div>
             </div>
           )}
@@ -450,8 +449,8 @@ export function DiningView({ mode }: { mode: "calendar" | "list" | "slots" }) {
             key: "act", label: "Actions",
             render: (r) => (
               <span className="flex gap-1">
-                <GhostBtn onClick={() => { setReservationStatus(r.id, "accepted"); toast("Accepted"); }}>✓</GhostBtn>
-                <GhostBtn onClick={() => { setReservationStatus(r.id, "declined"); toast("Declined", "err"); }}>✕</GhostBtn>
+                <GhostBtn onClick={async () => { if (await setReservationStatus(r.id, "accepted")) toast("Accepted"); }}>✓</GhostBtn>
+                <GhostBtn onClick={async () => { if (await setReservationStatus(r.id, "declined")) toast("Declined", "err"); }}>✕</GhostBtn>
               </span>
             ),
           },

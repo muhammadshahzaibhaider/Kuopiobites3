@@ -312,11 +312,10 @@ export function itemImagePath(m: MenuItem): string {
   return `/menu/${cat}/${itemImageKey(m)}.webp`;
 }
 
-export function specPath(cat: string, key: string): string {
-  return `/menu/${cat}/${key}.webp`;
-}
-
-/** images still to generate — used by the coverage report and batching */
-export function missingSpecs(have: Set<string>): ImageSpec[] {
-  return IMAGE_MANIFEST.filter((s) => !have.has(specPath(s.cat, s.key)));
+/** Normalize persisted media keys and relative paths before assigning them to img/src. */
+export function resolveImageSrc(src?: string): string | undefined {
+  const value = src?.trim();
+  if (!value) return undefined;
+  if (/^(?:data:|blob:|https?:\/\/|\/)/i.test(value)) return value;
+  return `/${value}`;
 }

@@ -5,6 +5,7 @@ import { useState } from "react";
 import { useLang } from "@/lib/i18n";
 import { RESTAURANT } from "@/lib/menu";
 import { useShop } from "@/lib/store";
+import SocialLinks from "./SocialLinks";
 
 export default function Footer() {
   const { settings, toast } = useShop();
@@ -24,26 +25,7 @@ export default function Footer() {
           <p className="mt-3 text-sm text-cream/80">
             Grilli · Pizzeria · South Asian & Asian kitchen — made fresh in Kuopio.
           </p>
-          <div className="mt-4 flex gap-3">
-            <a
-              href={RESTAURANT.instagram}
-              target="_blank"
-              rel="noreferrer"
-              aria-label="Instagram"
-              className="grid h-11 w-11 place-items-center rounded-full border border-cream/30 transition hover:bg-cream hover:text-cherry"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current"><path d="M12 2.2c2.7 0 3 0 4.1.1 2.7.1 4.4 1.8 4.5 4.5.1 1.1.1 1.4.1 4.1s0 3-.1 4.1c-.1 2.7-1.8 4.4-4.5 4.5-1.1.1-1.4.1-4.1.1s-3 0-4.1-.1c-2.7-.1-4.4-1.8-4.5-4.5-.1-1.1-.1-1.4-.1-4.1s0-3 .1-4.1C3.5 4.3 5.2 2.6 7.9 2.5c1.1-.1 1.4-.2 4.1-.2Zm0 4.6a5.2 5.2 0 1 0 5.2 5.2A5.2 5.2 0 0 0 12 6.8Zm0 8.6a3.4 3.4 0 1 1 3.4-3.4 3.4 3.4 0 0 1-3.4 3.4Zm5.4-8.8a1.2 1.2 0 1 1-1.2 1.2 1.2 1.2 0 0 1 1.2-1.2Z"/></svg>
-            </a>
-            <a
-              href={RESTAURANT.facebook}
-              target="_blank"
-              rel="noreferrer"
-              aria-label="Facebook"
-              className="grid h-11 w-11 place-items-center rounded-full border border-cream/30 transition hover:bg-cream hover:text-cherry"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current"><path d="M13.5 21v-7h2.4l.4-3h-2.8V9.1c0-.9.3-1.5 1.6-1.5h1.3V4.9c-.3 0-1.1-.1-2-.1-2 0-3.4 1.2-3.4 3.5V11H8.5v3H11v7Z"/></svg>
-            </a>
-          </div>
+          <SocialLinks className="mt-4" />
         </div>
 
         <div>
@@ -77,11 +59,11 @@ export default function Footer() {
             <p className="mt-4 text-sm text-cream/70">
               {t("order.platforms")}:{" "}
               {settings.platforms.wolt && (
-                <a href={settings.platforms.wolt} target="_blank" rel="noreferrer" className="font-black text-gold-soft underline decoration-gold underline-offset-4 hover:text-gold">Wolt</a>
+                <a href={settings.platforms.wolt} target="_blank" rel="noopener noreferrer" className="font-black text-gold-soft underline decoration-gold underline-offset-4 hover:text-gold">Wolt</a>
               )}
               {settings.platforms.wolt && settings.platforms.uberEats && " · "}
               {settings.platforms.uberEats && (
-                <a href={settings.platforms.uberEats} target="_blank" rel="noreferrer" className="font-black text-gold-soft underline decoration-gold underline-offset-4 hover:text-gold">Uber Eats</a>
+                <a href={settings.platforms.uberEats} target="_blank" rel="noopener noreferrer" className="font-black text-gold-soft underline decoration-gold underline-offset-4 hover:text-gold">Uber Eats</a>
               )}
             </p>
           )}
@@ -89,7 +71,6 @@ export default function Footer() {
             <Link className="hover:text-gold" href="/menu">{t("footer.links")}</Link>
             <Link className="hover:text-gold" href="/dining">{t("footer.book")}</Link>
             <Link className="hover:text-gold" href="/account">{t("nav.account")}</Link>
-            <Link className="hover:text-gold" href="/admin">{t("footer.staff")}</Link>
           </div>
         </div>
 
@@ -113,7 +94,7 @@ export default function Footer() {
                   toast("Please enter a valid email", "err");
                   return;
                 }
-                // STUB → POST /api/newsletter (persist locally so Admin ▸ Marketing shows sign-ups)
+                // STUB → POST /api/newsletter (persist locally until newsletter administration is wired)
                 try {
                   const raw = localStorage.getItem("kb_newsletter");
                   const list: { email: string; at: number }[] = raw ? JSON.parse(raw) : [];

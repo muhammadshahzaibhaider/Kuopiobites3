@@ -1,5 +1,5 @@
 /**
- * Client-side image prep shared by the admin uploader and the ZIP bulk import:
+ * Client-side image prep shared by the admin uploader:
  * center-crop to an aspect preset, downscale, encode WebP.
  */
 export type Preset = "1:1" | "16:9";
@@ -48,16 +48,4 @@ export function fileToWebp(file: Blob, preset: Preset, maxW = 1200): Promise<str
     };
     im.src = url;
   });
-}
-
-/** "Tropicana.webp" / "pizza/tropicana.jpg" → "tropicana" */
-export function slugFromFilename(name: string): string {
-  const base = name.split("/").pop() ?? name;
-  return base
-    .replace(/\.[a-z0-9]+$/i, "")
-    .toLowerCase()
-    .replace(/ä/g, "a")
-    .replace(/ö/g, "o")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "");
 }
