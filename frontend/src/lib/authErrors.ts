@@ -40,6 +40,7 @@ export function describeAuthError(code: string): string {
   if (code === "auth.emailInUse") return "This email is already registered. Log in instead?";
   if (code === "auth.register") return "We couldn't create your account. Please try again.";
   if (code === "auth.tooManyAttempts" || code === "http 429") return "Too many attempts. Please wait a few minutes and try again.";
+  if (code === "request.badBody" || code === "request.tooLarge") return "There was a problem sending your request. Please try again.";
   if (code === "auth.emailNotConfirmed") return "Please confirm your email address before signing in.";
   if (code === "auth.confirmationInvalid") return "This confirmation link is invalid or has already been used.";
   if (code === "auth.resetInvalid") return "This reset link is invalid or has expired. Request a new one below.";

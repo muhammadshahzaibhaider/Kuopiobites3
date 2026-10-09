@@ -148,6 +148,11 @@ const orderLimiter = rateLimit({ windowMs: CFG.rate.orderWindowMs, limit: CFG.ra
 const resvLimiter = rateLimit({ windowMs: CFG.rate.reservationWindowMs, limit: CFG.rate.reservationMax, standardHeaders: "draft-7", legacyHeaders: false });
 const uploadLimiter = rateLimit({ windowMs: CFG.rate.uploadWindowMs, limit: CFG.rate.uploadMax, standardHeaders: "draft-7", legacyHeaders: false });
 const newsletterLimiter = rateLimit({ windowMs: CFG.rate.newsletterWindowMs, limit: CFG.rate.newsletterMax, standardHeaders: "draft-7", legacyHeaders: false });
+/* Global ceiling across the whole API: generous enough for a real browsing
+   session (the client fires parallel GETs per page), tight enough to blunt
+   scraping and credential tooling. Per-endpoint limits above stay stricter. */
+const apiLimiter = rateLimit({ windowMs: CFG.rate.apiWindowMs, limit: CFG.rate.apiMax, standardHeaders: "draft-7", legacyHeaders: false, handler: tooManyJson });
+app.use("/api", apiLimiter);
 
 app.get("/api/health", wrap(async (_req, res) => {
   const { error } = await supabaseDb.from("categories").select("id").limit(1);
@@ -945,9 +950,14 @@ app.get("/api/admin/activity", requireStaff("manager"), wrap(async (_req, res) =
 }));
 
 app.use("/api", (_req, res) => fail(res, 404, "route.notFound"));
+app.use((_req, res) => fail(res, 404, "route.notFound"));
 app.use((err: Error & { status?: number; type?: string }, req: Request, res: Response, _next: NextFunction) => {
   safeLogError((req as any).requestId || "unknown", err);
   if (err.status === 413 || err.type === "entity.too.large") return fail(res, 413, "request.tooLarge");
+  /* Malformed JSON bodies (express.json rejects with a SyntaxError typed
+     "entity.parse.failed") are client mistakes, not server faults: answer 400
+     with a stable code instead of leaking a 500. */
+  if (err.type === "entity.parse.failed" || (err instanceof SyntaxError && err.status === 400)) return fail(res, 400, "request.badBody");
   fail(res, err.message.startsWith("CORS") ? 403 : 500, err.message.startsWith("CORS") ? "cors.forbidden" : "internal");
 });
 

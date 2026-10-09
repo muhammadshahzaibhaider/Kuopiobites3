@@ -20,3 +20,6 @@ uploads/
 backend/data/
 .supabase/
 .sudo_as_admin_successful
+
+# Next.js telemetry (anonymous machine ids — local-only, regenerates)
+.config/

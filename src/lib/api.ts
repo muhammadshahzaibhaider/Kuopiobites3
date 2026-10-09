@@ -99,20 +99,40 @@ export async function apiDeleteReservation(id: string): Promise<void> {
 /* ── Auth (STUB → POST /api/auth/register | /api/auth/login) ────────────── */
 
 /** Demo-store hashing (SubtleCrypto). The production app never sees these —
-    its passwords live in Supabase Auth with bcrypt. */
-async function hashPassword(pass: string): Promise<string> {
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(`kuopio-bites:${pass}`));
+    its passwords live in Supabase Auth with bcrypt. The local demo cannot
+    hold a secret key, but passwords still get a per-user random salt so two
+    demo accounts never share a digest and stolen records cannot be
+    rainbow-tabled. Format: v2$<salt-hex>$<sha256-hex>. */
+const HASH_PREFIX = "v2";
+
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
   return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/** Verify a password against the hash, upgrading legacy plaintext records in place. */
+const newSalt = () => Array.from(crypto.getRandomValues(new Uint8Array(12))).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+async function hashPassword(pass: string, salt = newSalt()): Promise<string> {
+  return `${HASH_PREFIX}$${salt}$${await sha256Hex(`kuopio-bites:${salt}:${pass}`)}`;
+}
+
+/** v1 records (before the version prefix) were a single unsalted digest. */
+async function matchesPassword(passHash: string, pass: string): Promise<boolean> {
+  const [version, salt] = passHash.split("$");
+  if (version === HASH_PREFIX && salt) return passHash === (await hashPassword(pass, salt));
+  return passHash === (await sha256Hex(`kuopio-bites:${pass}`));
+}
+
+/** Verify a password, upgrading plaintext/unsalted legacy records in place. */
 async function verifyAndMigrate(u: User, pass: string, users: User[]): Promise<boolean> {
-  if (u.passHash) return u.passHash === (await hashPassword(pass));
-  if ((u as { pass?: string }).pass !== pass) return false;
-  const upgraded: User = { ...u, passHash: await hashPassword(pass) };
-  delete upgraded.pass;
-  const i = users.findIndex((x) => x.id === u.id);
-  if (i >= 0) { users[i] = upgraded; write(K.users, users); }
+  const matches = u.passHash ? await matchesPassword(u.passHash, pass) : (u as { pass?: string }).pass === pass;
+  if (!matches) return false;
+  if (!u.passHash?.startsWith(`${HASH_PREFIX}$`)) {
+    const upgraded: User = { ...u, passHash: await hashPassword(pass) };
+    delete upgraded.pass;
+    const i = users.findIndex((x) => x.id === u.id);
+    if (i >= 0) { users[i] = upgraded; write(K.users, users); }
+  }
   return true;
 }
 
@@ -160,7 +180,10 @@ export function apiLogout() {
   writeSession(null, true);
 }
 
-interface PasswordReset { token: string; userId: string; expiresAt: number }
+/* Tokens are stored hashed (like production's GoTrue), so a localStorage dump
+   cannot be replayed as a reset link. `token` remains only to accept legacy
+   records written before hashing — new records never carry it. */
+interface PasswordReset { token?: string; tokenHash?: string; userId: string; expiresAt: number }
 
 /** STUB → POST /api/auth/forgot-password. Demo mode has no SMTP, so the token
     is returned to the caller (the UI shows it as a clickable reset link). */
@@ -171,7 +194,7 @@ export async function apiRequestPasswordReset(email: string): Promise<string | n
   if (!u) return null; // neutral: never reveal whether the account exists
   const token = uid("rst");
   const resets = read<PasswordReset[]>(K.resets, []).filter((r) => r.expiresAt > Date.now() && r.userId !== u.id);
-  resets.push({ token, userId: u.id, expiresAt: Date.now() + 30 * 60 * 1000 });
+  resets.push({ tokenHash: await sha256Hex(token), userId: u.id, expiresAt: Date.now() + 30 * 60 * 1000 });
   write(K.resets, resets);
   return token;
 }
@@ -180,7 +203,8 @@ export async function apiRequestPasswordReset(email: string): Promise<string | n
 export async function apiResetPassword(token: string, next: string): Promise<string | null> {
   await sleep(300);
   const resets = read<PasswordReset[]>(K.resets, []);
-  const reset = resets.find((r) => r.token === token && r.expiresAt > Date.now());
+  const tokenHash = await sha256Hex(token);
+  const reset = resets.find((r) => (r.tokenHash ? r.tokenHash === tokenHash : r.token === token) && r.expiresAt > Date.now());
   if (!reset) return "auth.resetInvalid";
   const users = read<User[]>(K.users, []);
   const i = users.findIndex((x) => x.id === reset.userId);

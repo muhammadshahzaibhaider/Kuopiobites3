@@ -26,7 +26,7 @@ const sessions = new Map(); // access_token → { userId, revoked }
 const refresh = new Map(); // refresh_token → userId
 const emailTokens = new Map(); // token_hash → { userId, type }
 const pkceCodes = new Map(); // auth code → userId
-const tables = { customers: new Map(), staff_users: new Map(), activity_log: [], categories: new Map(), menu_items: new Map(), orders: new Map(), reservations: new Map(), newsletter_subscribers: new Map(), translation_strings: new Map(), promotions: new Map(), stripe_events: new Map(), settings: new Map() };
+const tables = { customers: new Map(), staff_users: new Map(), activity_log: [], categories: new Map(), menu_items: new Map(), orders: new Map(), reservations: new Map(), newsletter_subscribers: new Map(), translation_strings: new Map(), promotions: new Map(), stripe_events: new Map(), settings: new Map(), toppings: new Map(), shop_settings: new Map(), todays_special: new Map(), order_items: [] };
 let confirmEmail = false;
 
 const tok = () => randomBytes(32).toString("base64url");
@@ -145,11 +145,14 @@ function handleGoTrue(req, res, url, body) {
     /* GoTrue revokes the whole session (access + refresh) on sign-out. */
     const scope = url.searchParams.get("scope") || "global";
     const me = sessions.get(bearer(req));
+    const currentToken = body?.jwt ?? bearer(req);
     const userId = me?.userId ?? (() => { const j = body?.jwt && sessions.get(body.jwt); return j?.userId; })();
     if (userId) {
       for (const [token, s] of sessions) {
         if (s.userId !== userId) continue;
-        const matches = scope === "global" || (scope === "others" && token !== bearer(req)) || (scope === "local" && token === bearer(req));
+        /* "others" keeps the session identified by the passed jwt alive —
+           real GoTrue compares against the jwt claim, not the admin credential. */
+        const matches = scope === "global" || (scope === "others" && token !== currentToken) || (scope === "local" && token === currentToken);
         if (matches) { s.revoked = true; refresh.delete(s.refreshToken); }
       }
     }
@@ -186,6 +189,8 @@ function handleRest(req, res, url, body) {
   if (!store) { res.writeHead(200, { "content-type": "application/json" }); return res.end("[]"); }
   const wantsObject = String(req.headers.accept || "").includes("pgrst.object+json");
   const rows = [...(store instanceof Map ? store.values() : store)];
+  /* PostgREST embeds child resources in select "*, children(*)": */
+  if (table === "orders") for (const row of rows) row.order_items = tables.order_items.filter((it) => it.order_id === row.id);
   const filtered = rows.filter((row) => {
     for (const [key, raw] of url.searchParams) {
       if (["select", "limit", "order", "offset"].includes(key)) continue;
@@ -211,9 +216,9 @@ function handleRest(req, res, url, body) {
   };
   if (req.method === "GET") { res.writeHead(200, { "content-type": "application/json" }); return sendRows(filtered); }
   if (req.method === "POST") {
-    if (!Array.isArray(store)) { res.writeHead(405); return res.end(); }
-    const items = Array.isArray(body) ? body : [body];
-    for (const item of items) store.push({ created_at: nowIso(), ...item });
+    const items = (Array.isArray(body) ? body : [body]).map((item) => ({ created_at: nowIso(), ...item }));
+    if (Array.isArray(store)) store.push(...items);
+    else for (const item of items) store.set(item.id ?? item.email ?? crypto.randomUUID(), { id: "row", ...item });
     res.writeHead(201, { "content-type": "application/json" });
     return sendRows(items);
   }
@@ -241,6 +246,24 @@ const server = http.createServer((req, res) => {
     res.setHeader("content-type", "application/json");
     if (url.pathname.startsWith("/auth/v1")) return handleGoTrue(req, res, url, body);
     if (url.pathname.startsWith("/rest/v1")) {
+      /* Stored procedures the backend calls (SQL versions live in supabase/migrations). */
+      if (url.pathname.startsWith("/rest/v1/rpc/create_order")) {
+        const o = body?.p_order, items = body?.p_items ?? [];
+        if (!o?.id) { res.writeHead(400, { "content-type": "application/json" }); return res.end(JSON.stringify({ code: "PGRST202", message: "missing p_order" })); }
+        tables.orders.set(o.id, { created_at: nowIso(), status: "pending", ...o });
+        for (const item of items) tables.order_items.push({ id: crypto.randomUUID(), order_id: o.id, created_at: nowIso(), ...item });
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end("null");
+      }
+      if (url.pathname.startsWith("/rest/v1/rpc/erase_customer")) {
+        const id = body?.p_customer_id;
+        tables.customers.delete(id);
+        for (const [oid, row] of tables.orders) if (row.customer_id === id) tables.orders.delete(oid);
+        const kept = tables.orders;
+        tables.order_items = tables.order_items.filter((it) => kept.has(it.order_id));
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end("null");
+      }
       /* PostgREST insert into Map-backed tables */
       if (req.method === "POST" && !url.pathname.startsWith("/rest/v1/rpc")) {
         const table = url.pathname.replace("/rest/v1/", "");

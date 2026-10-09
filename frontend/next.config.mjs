@@ -5,6 +5,10 @@ const nextConfig = {
   reactStrictMode: true,
   turbopack: { root: process.cwd() },
   images: { unoptimized: true },
+  /* Do not advertise the framework. */
+  poweredByHeader: false,
+  /* Never emit browser-readable source maps in production builds. */
+  productionBrowserSourceMaps: false,
   async rewrites() {
     return [
       { source: "/api/:path*", destination: `${apiOrigin}/api/:path*` },
@@ -27,6 +31,12 @@ const nextConfig = {
           { key: "X-Frame-Options", value: "DENY" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(self)" },
         ],
+      },
+      /* The admin UI is credential-gated and reached by direct URL only —
+         keep it out of search indexes. */
+      {
+        source: "/admin/:path*",
+        headers: [{ key: "X-Robots-Tag", value: "noindex, nofollow, noarchive" }],
       },
     ];
   },
