@@ -2,9 +2,10 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useState } from "react";
-import AuthForm from "@/components/AuthForm";
+import AuthForm, { PasswordStrength } from "@/components/AuthForm";
 import FavoritesSection from "@/components/FavoritesSection";
 import PasswordInput from "@/components/PasswordInput";
+import { describeAuthError, PASSWORD_MIN_LENGTH, passwordOk } from "@/lib/authErrors";
 import { cx, eur, fmtDate, fmtTime } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
@@ -65,9 +66,12 @@ export default function AccountPage() {
             <h3 className="text-sm font-black text-cherry">Change password</h3>
             <div className="mt-3 space-y-3">
               <PasswordInput label="Current password" autoComplete="current-password" className="min-h-[48px] w-full rounded-2xl border border-cherry/20 bg-cream px-4 text-sm font-bold" value={currentPass} onChange={(e) => setCurrentPass(e.target.value)} placeholder="Current password" />
-              <PasswordInput label="New password" autoComplete="new-password" minLength={12} className="min-h-[48px] w-full rounded-2xl border border-cherry/20 bg-cream px-4 text-sm font-bold" value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder="New password (12+ characters)" />
-              <PasswordInput label="Confirm new password" autoComplete="new-password" minLength={12} className="min-h-[48px] w-full rounded-2xl border border-cherry/20 bg-cream px-4 text-sm font-bold" value={confirmPass} onChange={(e) => setConfirmPass(e.target.value)} placeholder="Confirm new password" />
-              <button type="button" onClick={async () => { if (newPass.length < 12) return toast("New password must be at least 12 characters.", "err"); if (newPass !== confirmPass) return toast("Passwords do not match.", "err"); const error = await changePassword(currentPass, newPass); if (error) return toast(error, "err"); setCurrentPass(""); setNewPass(""); setConfirmPass(""); toast("Password changed"); }} className="min-h-[44px] rounded-full border-2 border-cherry px-5 text-sm font-black text-cherry hover:bg-cherry hover:text-cream">Update password</button>
+              <div>
+                <PasswordInput label="New password" autoComplete="new-password" minLength={PASSWORD_MIN_LENGTH} className="min-h-[48px] w-full rounded-2xl border border-cherry/20 bg-cream px-4 text-sm font-bold" value={newPass} onChange={(e) => setNewPass(e.target.value)} placeholder={`New password (${PASSWORD_MIN_LENGTH}+ characters)`} />
+                <PasswordStrength pass={newPass} />
+              </div>
+              <PasswordInput label="Confirm new password" autoComplete="new-password" minLength={PASSWORD_MIN_LENGTH} className="min-h-[48px] w-full rounded-2xl border border-cherry/20 bg-cream px-4 text-sm font-bold" value={confirmPass} onChange={(e) => setConfirmPass(e.target.value)} placeholder="Confirm new password" />
+              <button type="button" onClick={async () => { if (!passwordOk(newPass)) return toast(`New password must be at least ${PASSWORD_MIN_LENGTH} characters and include a letter and a number.`, "err"); if (newPass !== confirmPass) return toast("Passwords do not match.", "err"); const error = await changePassword(currentPass, newPass); if (error) return toast(error === "auth.badCredentials" ? "Current password is incorrect" : describeAuthError(error), "err"); setCurrentPass(""); setNewPass(""); setConfirmPass(""); toast("Password changed — other devices were signed out"); }} className="min-h-[44px] rounded-full border-2 border-cherry px-5 text-sm font-black text-cherry hover:bg-cherry hover:text-cream">Update password</button>
             </div>
           </div>
           <label className="mt-6 flex cursor-pointer items-center justify-between gap-4 rounded-2xl bg-cream px-4 py-3">

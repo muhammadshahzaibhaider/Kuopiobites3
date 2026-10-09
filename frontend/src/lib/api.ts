@@ -18,15 +18,22 @@ export const fetchTranslations = () => api<Record<string, Record<string, string>
 export async function apiRegister(d: { name: string; email: string; pass: string; phone?: string }) {
   return api<{ user: Omit<User, "pass">; needsConfirmation: boolean; devConfirmationToken?: string }>("/api/auth/register", { method: "POST", body: d });
 }
-export async function apiLogin(email: string, pass: string) {
-  const r = await api<{ user: Omit<User, "pass"> }>("/api/auth/login", { method: "POST", body: { email, pass } });
+export async function apiLogin(email: string, pass: string, remember = true) {
+  const r = await api<{ user: Omit<User, "pass"> }>("/api/auth/login", { method: "POST", body: { email, pass, remember } });
   return r.user;
 }
+export const apiForgotPassword = (email: string) =>
+  api<{ ok: true }>("/api/auth/forgot-password", { method: "POST", body: { email } });
+export const apiResendConfirmation = (email: string) =>
+  api<{ ok: true }>("/api/auth/resend-confirmation", { method: "POST", body: { email } });
+export type ResetProof = { token: string; type?: "signup" | "email" | "recovery" } | { accessToken: string; refreshToken: string } | { code: string };
+export const apiResetPassword = (proof: ResetProof, next: string) =>
+  api<{ ok: true }>("/api/auth/reset-password", { method: "POST", body: { ...proof, next } });
 export async function apiAdminLogin(username: string, password: string) {
   const r = await api<{ role: string }>("/api/auth/admin-login", { method: "POST", body: { username, password } });
   return r.role;
 }
-export const apiConfirmEmail = (confirmation: string | { accessToken: string; refreshToken: string }) =>
+export const apiConfirmEmail = (confirmation: string | { token: string; type?: string } | { accessToken: string; refreshToken: string } | { code: string }) =>
   api<{ confirmed: true }>("/api/auth/confirm-email", {
     method: "POST",
     body: typeof confirmation === "string" ? { token: confirmation } : confirmation,

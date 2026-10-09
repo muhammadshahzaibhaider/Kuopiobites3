@@ -20,8 +20,8 @@ import { openInfo } from "./lib/hours";
 import type { CartLine, MenuItem, Order, Reservation, Settings, User } from "./lib/types";
 import {
   accountPatchSchema, cartSchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema, customerOrderSchema, passwordChangeSchema,
-  loginSchema, menuItemSchema, paramId, promotionPatchSchema, registerSchema, reorderSchema, reservationSchema,
-  settingsSchema, specialPatchSchema, staffLoginSchema, statusSchema, translationSchema, newsletterSchema,
+  forgotPasswordSchema, loginSchema, menuItemSchema, paramId, promotionPatchSchema, registerSchema, reorderSchema, reservationSchema,
+  resetPasswordSchema, settingsSchema, specialPatchSchema, staffLoginSchema, statusSchema, translationSchema, newsletterSchema,
 } from "./schemas";
 import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
 
@@ -134,12 +134,25 @@ const publicUser = (row: any): Omit<User, "pass"> => ({
 const authUser = (req: Request) => (req as any).customer as any;
 const authStaff = (req: Request) => (req as any).staff as { id: string; username: string; role: Role };
 
-const authLimiter = rateLimit({ windowMs: CFG.rate.authWindowMs, limit: CFG.rate.authMax, standardHeaders: "draft-7", legacyHeaders: false });
-const loginLimiter = rateLimit({ windowMs: CFG.rate.loginWindowMs, limit: CFG.rate.loginMax, standardHeaders: "draft-7", legacyHeaders: false });
+/* Auth limiters answer with the same JSON envelope as every other error so the
+   SPA can show a human message instead of a raw "http 429". */
+const tooManyJson = (req: Request, res: Response) => {
+  const reset = (req as any).rateLimit?.resetTime as Date | undefined;
+  const retryAfter = reset ? Math.max(1, Math.ceil((reset.getTime() - Date.now()) / 1000)) : 60;
+  res.setHeader("Retry-After", String(retryAfter));
+  fail(res, 429, "auth.tooManyAttempts");
+};
+const authLimiter = rateLimit({ windowMs: CFG.rate.authWindowMs, limit: CFG.rate.authMax, standardHeaders: "draft-7", legacyHeaders: false, handler: tooManyJson });
+const loginLimiter = rateLimit({ windowMs: CFG.rate.loginWindowMs, limit: CFG.rate.loginMax, standardHeaders: "draft-7", legacyHeaders: false, handler: tooManyJson });
 const orderLimiter = rateLimit({ windowMs: CFG.rate.orderWindowMs, limit: CFG.rate.orderMax, standardHeaders: "draft-7", legacyHeaders: false });
 const resvLimiter = rateLimit({ windowMs: CFG.rate.reservationWindowMs, limit: CFG.rate.reservationMax, standardHeaders: "draft-7", legacyHeaders: false });
 const uploadLimiter = rateLimit({ windowMs: CFG.rate.uploadWindowMs, limit: CFG.rate.uploadMax, standardHeaders: "draft-7", legacyHeaders: false });
 const newsletterLimiter = rateLimit({ windowMs: CFG.rate.newsletterWindowMs, limit: CFG.rate.newsletterMax, standardHeaders: "draft-7", legacyHeaders: false });
+/* Global ceiling across the whole API: generous enough for a real browsing
+   session (the client fires parallel GETs per page), tight enough to blunt
+   scraping and credential tooling. Per-endpoint limits above stay stricter. */
+const apiLimiter = rateLimit({ windowMs: CFG.rate.apiWindowMs, limit: CFG.rate.apiMax, standardHeaders: "draft-7", legacyHeaders: false, handler: tooManyJson });
+app.use("/api", apiLimiter);
 
 app.get("/api/health", wrap(async (_req, res) => {
   const { error } = await supabaseDb.from("categories").select("id").limit(1);
@@ -211,7 +224,7 @@ app.get("/api/items/:id", wrap(async (req, res) => {
       password: b.pass,
       options: { data: { name: b.name, phone: b.phone ?? null }, emailRedirectTo: `${CFG.publicWebUrl}/auth/confirm` },
     });
-    if (error || !data.user) return fail(res, error?.code === "user_already_exists" ? 409 : 400, "auth.register");
+    if (error || !data.user) return fail(res, error?.code === "user_already_exists" ? 409 : 400, error?.code === "user_already_exists" ? "auth.emailInUse" : "auth.register");
     if (data.session) issueCustomerSession(res, data.session.access_token, data.session.refresh_token);
     const profile = await customerRow(data.user.id);
     const user = profile ? publicUser(profile) : {
@@ -251,7 +264,7 @@ app.get("/api/items/:id", wrap(async (req, res) => {
     }
     if (result.emailNotConfirmed) return fail(res, 403, "auth.emailNotConfirmed");
     if (!result.row || !result.session) return fail(res, 401, "auth.badCredentials");
-    issueCustomerSession(res, result.session.access_token, result.session.refresh_token);
+    issueCustomerSession(res, result.session.access_token, result.session.refresh_token, b.remember ?? true);
     ok(res, { user: publicUser(result.row) });
   }));
 
@@ -275,60 +288,85 @@ app.get("/api/items/:id", wrap(async (req, res) => {
       confirmEmailSchema,
       z.object({ accessToken: z.string().min(1), refreshToken: z.string().min(1) }).strict(),
     ]).parse(req.body);
-    if ("token" in body) {
-      const { data, error } = await authClient().auth.verifyOtp({ token_hash: body.token, type: "email" });
-      if (error || !data.user) return fail(res, 400, "auth.confirmationInvalid");
-      if (data.session) issueCustomerSession(res, data.session.access_token, data.session.refresh_token);
-    } else {
-      const { data, error } = await supabaseDb.auth.getUser(body.accessToken);
-      if (error || !data.user?.email_confirmed_at) return fail(res, 400, "auth.confirmationInvalid");
-      const profile = await customerRow(data.user.id);
-      if (!profile) return fail(res, 400, "auth.confirmationInvalid");
-      issueCustomerSession(res, body.accessToken, body.refreshToken);
+    if ("code" in body) {
+      /* PKCE links (Supabase default for newer projects) carry ?code=. */
+      const { data, error } = await authClient().auth.exchangeCodeForSession(body.code);
+      if (error || !data.user || !data.session) return fail(res, 400, "auth.confirmationInvalid");
+      issueCustomerSession(res, data.session.access_token, data.session.refresh_token);
+      return ok(res, { confirmed: true });
     }
+    if ("token" in body) {
+      /* Templates differ: some send type=email, the default sends type=signup.
+         Honour the link's type and fall back across the email aliases. */
+      const tried = new Set<string>();
+      for (const type of [body.type, "email", "signup"] as const) {
+        if (!type || tried.has(type)) continue;
+        tried.add(type);
+        const { data, error } = await authClient().auth.verifyOtp({ token_hash: body.token, type });
+        if (!error && data.user) {
+          if (data.session) issueCustomerSession(res, data.session.access_token, data.session.refresh_token);
+          return ok(res, { confirmed: true });
+        }
+      }
+      return fail(res, 400, "auth.confirmationInvalid");
+    }
+    const { data, error } = await supabaseDb.auth.getUser(body.accessToken);
+    if (error || !data.user?.email_confirmed_at) return fail(res, 400, "auth.confirmationInvalid");
+    const profile = await customerRow(data.user.id);
+    if (!profile) return fail(res, 400, "auth.confirmationInvalid");
+    issueCustomerSession(res, body.accessToken, body.refreshToken);
     ok(res, { confirmed: true });
   }));
-/* stale SQLite auth block retained temporarily for safe reconstruction
-  const staff = scope === "staff" ? await staffRow(identifier) : undefined;
-  const email = scope === "customer" ? identifier : staff?.email;
-  const result = email
-    ? await authClient().auth.signInWithPassword({ email, password })
-    : { data: { user: null, session: null }, error: { code: "invalid_credentials" } };
-  const matchesStaff = scope !== "staff" || Boolean(staff && result.data.user?.id === staff.id);
-  const row = result.data.user && matchesStaff
-    ? scope === "customer" ? await customerRow(result.data.user.id) : staff
-    : undefined;
-  if (result.error || !result.data.session || !row) {
-    if (result.error?.code === "email_not_confirmed") return { lockedUntil: 0, row: null, session: null, emailNotConfirmed: true } as const;
-  db.transaction(() => {
-    return { lockedUntil: lock || 0, row: null, session: null, emailNotConfirmed: false } as const;
-      `INSERT INTO users (id, name, email, pass_hash, phone, addresses, marketing, created_at, email_verified)
-       VALUES (?, ?, ?, ?, ?, '[]', 0, ?, 0)`
-  return { row, session: result.data.session, lockedUntil: 0, emailNotConfirmed: false } as const;
-    db.prepare(`INSERT INTO email_tokens (token_hash, user_id, expires_at) VALUES (?, ?, ?)`).run(tokenHash, user.id, Date.now() + 24 * 60 * 60 * 1000);
-  })();
-  try {
-    await sendConfirmationEmail(user.email, user.name, rawToken);
-  } catch (error) {
-    db.transaction(() => {
-      db.prepare(`DELETE FROM email_tokens WHERE token_hash = ?`).run(tokenHash);
-      db.prepare(`DELETE FROM users WHERE id = ?`).run(user.id);
-    })();
-    throw error;
-  }
-  ok(res, {
-    user,
-    needsConfirmation: true,
-    // Legacy email-confirmation note removed during the Supabase Auth migration.
-    ...(CFG.isProduction || smtpConfigured ? {} : { devConfirmationToken: rawToken }),
-  }, 201);
-}));
 
-*/
-app.post("/api/auth/logout", (req, res) => {
-  clearSessionCookies(res);
+  app.post("/api/auth/resend-confirmation", authLimiter, wrap(async (req, res) => {
+    const { email } = forgotPasswordSchema.parse(req.body);
+    /* Neutral response either way; Supabase only mails existing unconfirmed users. */
+    await authClient().auth.resend({ type: "signup", email, options: { emailRedirectTo: `${CFG.publicWebUrl}/auth/confirm` } }).catch(() => {});
+    ok(res, { ok: true });
+  }));
+
+  app.post("/api/auth/forgot-password", authLimiter, wrap(async (req, res) => {
+    const { email } = forgotPasswordSchema.parse(req.body);
+    /* Always neutral ("if this email is registered…"): GoTrue never reveals
+       whether the address exists, and neither do we. The token lives only in
+       GoTrue (hashed at rest), expires quickly, and is single-use. */
+    await authClient().auth.resetPasswordForEmail(email, { redirectTo: `${CFG.publicWebUrl}/auth/reset` }).catch(() => {});
+    ok(res, { ok: true });
+  }));
+
+  app.post("/api/auth/reset-password", authLimiter, wrap(async (req, res) => {
+    const body = resetPasswordSchema.parse(req.body);
+    let userId: string | null = null;
+    let verifiedAccessToken: string | null = null;
+    if ("code" in body) {
+      const { data, error } = await authClient().auth.exchangeCodeForSession(body.code);
+      if (!error && data.user && data.session) { userId = data.user.id; verifiedAccessToken = data.session.access_token; }
+    } else if ("accessToken" in body) {
+      const { data, error } = await supabaseDb.auth.getUser(body.accessToken);
+      if (!error && data.user) { userId = data.user.id; verifiedAccessToken = body.accessToken; }
+    } else {
+      const { data, error } = await authClient().auth.verifyOtp({ token_hash: body.token, type: body.type ?? "recovery" });
+      if (!error && data.user) { userId = data.user.id; verifiedAccessToken = data.session?.access_token ?? null; }
+    }
+    /* Same message for expired, reused, malformed, or alien tokens. */
+    if (!userId) return fail(res, 400, "auth.resetInvalid");
+    const { error: updateError } = await supabaseDb.auth.admin.updateUserById(userId, { password: body.next });
+    if (updateError) return fail(res, 400, "auth.resetInvalid");
+    /* Invalidate every existing session so the old password dies everywhere. */
+    if (verifiedAccessToken) await supabaseDb.auth.admin.signOut(verifiedAccessToken, "global").catch(() => {});
+    clearSessionCookies(res, { keepCsrf: true });
+    ok(res, { ok: true });
+  }));
+
+app.post("/api/auth/logout", wrap(async (req, res) => {
+  /* Revoke this session's tokens server-side (best effort), then drop cookies.
+     The CSRF cookie stays: it is a per-browser token, and removing it orphaned
+     the SPA's cached double-submit token (every later mutation failed). */
+  const token = (req as any).accessToken as string | null;
+  if (token) await supabaseDb.auth.admin.signOut(token, "local").catch(() => {});
+  clearSessionCookies(res, { keepCsrf: true });
   ok(res, { ok: true });
-});
+}));
 
 /* ── server-side pricing ───────────────────────────────────────────────── */
 app.post("/api/cart/price", wrap(async (req, res) => {
@@ -720,6 +758,10 @@ app.put("/api/account/password", requireCustomer, wrap(async (req, res) => {
   if (verifyError) return fail(res, 400, "auth.badCredentials");
   const { error } = await supabaseDb.auth.admin.updateUserById(currentAuth(req)!.sub, { password: body.next });
   if (error) throw error;
+  /* Signing out other sessions means a stolen laptop session dies when the
+     owner rotates their password. The current session stays valid. */
+  const token = (req as any).accessToken as string | null;
+  if (token) await supabaseDb.auth.admin.signOut(token, "others").catch(() => {});
   ok(res, { ok: true });
 }));
 
@@ -739,7 +781,7 @@ app.delete("/api/account", requireCustomer, wrap(async (req, res) => {
   const auth = currentAuth(req)!;
   const { error } = await supabaseDb.auth.admin.deleteUser(auth.sub);
   if (error) throw error;
-  clearSessionCookies(res);
+  clearSessionCookies(res, { keepCsrf: true });
   ok(res, { ok: true });
 }));
 
@@ -908,9 +950,14 @@ app.get("/api/admin/activity", requireStaff("manager"), wrap(async (_req, res) =
 }));
 
 app.use("/api", (_req, res) => fail(res, 404, "route.notFound"));
+app.use((_req, res) => fail(res, 404, "route.notFound"));
 app.use((err: Error & { status?: number; type?: string }, req: Request, res: Response, _next: NextFunction) => {
   safeLogError((req as any).requestId || "unknown", err);
   if (err.status === 413 || err.type === "entity.too.large") return fail(res, 413, "request.tooLarge");
+  /* Malformed JSON bodies (express.json rejects with a SyntaxError typed
+     "entity.parse.failed") are client mistakes, not server faults: answer 400
+     with a stable code instead of leaking a 500. */
+  if (err.type === "entity.parse.failed" || (err instanceof SyntaxError && err.status === 400)) return fail(res, 400, "request.badBody");
   fail(res, err.message.startsWith("CORS") ? 403 : 500, err.message.startsWith("CORS") ? "cors.forbidden" : "internal");
 });
 

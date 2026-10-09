@@ -1,0 +1,6 @@
+# Kuopio Bites — shop pages are public, tools are not.
+# The admin panel is credential-gated and reachable by direct URL only.
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /api/

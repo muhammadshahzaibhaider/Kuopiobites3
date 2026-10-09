@@ -16,6 +16,8 @@ const K = {
   reservations: "kb_reservations",
   users: "kb_users",
   session: "kb_session",
+  sessionEphemeral: "kb_session_ephemeral",
+  resets: "kb_password_resets",
   settings: "kb_settings",
   overrides: "kb_overrides",
   cart: "kb_cart",
@@ -96,35 +98,134 @@ export async function apiDeleteReservation(id: string): Promise<void> {
 
 /* ── Auth (STUB → POST /api/auth/register | /api/auth/login) ────────────── */
 
-export async function apiRegister(u: User): Promise<void> {
-  await sleep(500);
-  const users = read<User[]>(K.users, []);
-  users.push(u);
-  write(K.users, users);
-  write(K.session, u.id);
+/** Demo-store hashing (SubtleCrypto). The production app never sees these —
+    its passwords live in Supabase Auth with bcrypt. The local demo cannot
+    hold a secret key, but passwords still get a per-user random salt so two
+    demo accounts never share a digest and stolen records cannot be
+    rainbow-tabled. Format: v2$<salt-hex>$<sha256-hex>. */
+const HASH_PREFIX = "v2";
+
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-export async function apiLogin(email: string, pass: string): Promise<User> {
+const newSalt = () => Array.from(crypto.getRandomValues(new Uint8Array(12))).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+async function hashPassword(pass: string, salt = newSalt()): Promise<string> {
+  return `${HASH_PREFIX}$${salt}$${await sha256Hex(`kuopio-bites:${salt}:${pass}`)}`;
+}
+
+/** v1 records (before the version prefix) were a single unsalted digest. */
+async function matchesPassword(passHash: string, pass: string): Promise<boolean> {
+  const [version, salt] = passHash.split("$");
+  if (version === HASH_PREFIX && salt) return passHash === (await hashPassword(pass, salt));
+  return passHash === (await sha256Hex(`kuopio-bites:${pass}`));
+}
+
+/** Verify a password, upgrading plaintext/unsalted legacy records in place. */
+async function verifyAndMigrate(u: User, pass: string, users: User[]): Promise<boolean> {
+  const matches = u.passHash ? await matchesPassword(u.passHash, pass) : (u as { pass?: string }).pass === pass;
+  if (!matches) return false;
+  if (!u.passHash?.startsWith(`${HASH_PREFIX}$`)) {
+    const upgraded: User = { ...u, passHash: await hashPassword(pass) };
+    delete upgraded.pass;
+    const i = users.findIndex((x) => x.id === u.id);
+    if (i >= 0) { users[i] = upgraded; write(K.users, users); }
+  }
+  return true;
+}
+
+/** remember=false keeps the session only for the browser session (sessionStorage). */
+function writeSession(id: string | null, remember: boolean): void {
+  if (typeof window === "undefined") return;
+  if (id && !remember) {
+    sessionStorage.setItem(K.sessionEphemeral, id);
+    write(K.session, null);
+  } else {
+    sessionStorage.removeItem(K.sessionEphemeral);
+    write(K.session, id);
+  }
+  window.dispatchEvent(new CustomEvent("kb-local", { detail: K.session }));
+}
+
+export function readSession(): string | null {
+  const stable = read<string | null>(K.session, null);
+  if (stable) return stable;
+  if (typeof window === "undefined") return null;
+  return sessionStorage.getItem(K.sessionEphemeral);
+}
+
+export async function apiRegister(u: User, remember = true): Promise<void> {
   await sleep(500);
   const users = read<User[]>(K.users, []);
-  const u = users.find(
-    (x) => x.email.toLowerCase() === email.toLowerCase() && x.pass === pass
-  );
-  if (!u) throw new Error("Wrong email or password");
-  write(K.session, u.id);
-  return u;
+  const record: User = { ...u, passHash: await hashPassword(u.pass ?? "") };
+  delete record.pass;
+  users.push(record);
+  write(K.users, users);
+  writeSession(u.id, remember);
+}
+
+export async function apiLogin(email: string, pass: string, remember = true): Promise<User> {
+  await sleep(500);
+  const users = read<User[]>(K.users, []);
+  const u = users.find((x) => x.email.toLowerCase() === email.trim().toLowerCase());
+  /* One generic message for both unknown email and wrong password. */
+  if (!u || !(await verifyAndMigrate(u, pass, users))) throw new Error("auth.badCredentials");
+  writeSession(u.id, remember);
+  return { ...u, pass: undefined };
 }
 
 export function apiLogout() {
-  write(K.session, null);
+  writeSession(null, true);
+}
+
+/* Tokens are stored hashed (like production's GoTrue), so a localStorage dump
+   cannot be replayed as a reset link. `token` remains only to accept legacy
+   records written before hashing — new records never carry it. */
+interface PasswordReset { token?: string; tokenHash?: string; userId: string; expiresAt: number }
+
+/** STUB → POST /api/auth/forgot-password. Demo mode has no SMTP, so the token
+    is returned to the caller (the UI shows it as a clickable reset link). */
+export async function apiRequestPasswordReset(email: string): Promise<string | null> {
+  await sleep(400);
+  const users = read<User[]>(K.users, []);
+  const u = users.find((x) => x.email.toLowerCase() === email.trim().toLowerCase());
+  if (!u) return null; // neutral: never reveal whether the account exists
+  const token = uid("rst");
+  const resets = read<PasswordReset[]>(K.resets, []).filter((r) => r.expiresAt > Date.now() && r.userId !== u.id);
+  resets.push({ tokenHash: await sha256Hex(token), userId: u.id, expiresAt: Date.now() + 30 * 60 * 1000 });
+  write(K.resets, resets);
+  return token;
+}
+
+/** STUB → POST /api/auth/reset-password. Single-use, 30-minute expiry. */
+export async function apiResetPassword(token: string, next: string): Promise<string | null> {
+  await sleep(300);
+  const resets = read<PasswordReset[]>(K.resets, []);
+  const tokenHash = await sha256Hex(token);
+  const reset = resets.find((r) => (r.tokenHash ? r.tokenHash === tokenHash : r.token === token) && r.expiresAt > Date.now());
+  if (!reset) return "auth.resetInvalid";
+  const users = read<User[]>(K.users, []);
+  const i = users.findIndex((x) => x.id === reset.userId);
+  if (i < 0) return "auth.resetInvalid";
+  const upgraded: User = { ...users[i], passHash: await hashPassword(next) };
+  delete upgraded.pass;
+  users[i] = upgraded;
+  write(K.users, users);
+  write(K.resets, resets.filter((r) => r.token !== token));
+  writeSession(null, true); // invalidate existing sessions, like production
+  return null;
 }
 
 export async function apiChangePassword(id: string, current: string, next: string): Promise<string | null> {
   await sleep(200);
   const users = read<User[]>(K.users, []);
   const i = users.findIndex((x) => x.id === id);
-  if (i < 0 || users[i].pass !== current) return "Current password is incorrect";
-  users[i] = { ...users[i], pass: next };
+  if (i < 0 || !(await verifyAndMigrate(users[i], current, users))) return "Current password is incorrect";
+  const upgraded: User = { ...users[i], passHash: await hashPassword(next) };
+  delete upgraded.pass;
+  users[i] = upgraded;
   write(K.users, users);
   return null;
 }
@@ -142,9 +243,6 @@ export async function apiUpdateUser(id: string, patch: Partial<User>) {
 
 export function readUsers(): User[] {
   return read<User[]>(K.users, []);
-}
-export function readSession(): string | null {
-  return read<string | null>(K.session, null);
 }
 
 /* ── Settings / overrides ───────────────────────────────────────────────── */

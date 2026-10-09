@@ -335,8 +335,21 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
 function printTicket(o: Order) {
   const w = window.open("", "_blank", "width=320,height=600");
   if (!w) return;
-  w.document.write(`<pre style="font:12px monospace;white-space:pre-wrap">${o.id}  ${new Date(o.createdAt).toLocaleString("fi-FI")}\n${o.customer.name} · ${o.type}\n--------------------------------\n${o.lines.map((l) => `${l.qty}x ${l.name} (${l.variantLabel})${l.options.length ? "\n   " + l.options.join("\n   ") : ""}`).join("\n")}\n--------------------------------\nTOTAL ${o.total.toFixed(2)} EUR\n${o.note ? "NOTE: " + o.note : ""}</pre>`);
-  w.document.close();
+  const ticket = [
+    `${o.id}  ${new Date(o.createdAt).toLocaleString("fi-FI")}`,
+    `${o.customer.name} · ${o.type}`,
+    "--------------------------------",
+    ...o.lines.map((l) => `${l.qty}x ${l.name} (${l.variantLabel})${l.options.length ? "\n   " + l.options.join("\n   ") : ""}`),
+    "--------------------------------",
+    `TOTAL ${o.total.toFixed(2)} EUR`,
+    ...(o.note ? [`NOTE: ${o.note}`] : []),
+  ].join("\n");
+  /* Never interpolate customer/menu text into document.write: textContent
+     prevents a stored note/name from becoming script in the print window. */
+  const pre = w.document.createElement("pre");
+  pre.style.cssText = "font:12px monospace;white-space:pre-wrap";
+  pre.textContent = ticket;
+  w.document.body.replaceChildren(pre);
   w.print();
 }
 

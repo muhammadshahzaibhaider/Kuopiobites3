@@ -2,7 +2,7 @@
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cx } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
@@ -39,10 +39,12 @@ export function LangToggle() {
 
 export default function Header() {
   const pathname = usePathname();
-  const { cartCount, pulse, setCartOpen, user, settings } = useShop();
+  const { cartCount, pulse, setCartOpen, user, settings, logout } = useShop();
   const { t } = useLang();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const fn = () => setScrolled(window.scrollY > 10);
@@ -51,7 +53,17 @@ export default function Header() {
     return () => window.removeEventListener("scroll", fn);
   }, []);
 
-  useEffect(() => setOpen(false), [pathname]);
+  useEffect(() => { setOpen(false); setAccountOpen(false); }, [pathname]);
+
+  /* Close the account dropdown on outside pointer / Escape. */
+  useEffect(() => {
+    if (!accountOpen) return;
+    const onPointer = (e: PointerEvent) => { if (!accountRef.current?.contains(e.target as Node)) setAccountOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setAccountOpen(false); };
+    document.addEventListener("pointerdown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => { document.removeEventListener("pointerdown", onPointer); document.removeEventListener("keydown", onKey); };
+  }, [accountOpen]);
 
   return (
     <>
@@ -109,15 +121,58 @@ export default function Header() {
               <OpenBadge />
             </span>
             <LangToggle />
-            <Link
-              href="/account"
-              aria-label={t("nav.account")}
-              className="grid h-11 w-11 place-items-center rounded-full border border-cream/30 text-cream transition hover:bg-cream hover:text-cherry"
-            >
-              <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current">
-                <path d="M12 12a4.5 4.5 0 1 0-4.5-4.5A4.5 4.5 0 0 0 12 12Zm0 2.2c-4 0-7.5 2-7.5 4.6V21h15v-2.2c0-2.6-3.5-4.6-7.5-4.6Z" />
-              </svg>
-            </Link>
+            {user ? (
+              <div className="relative" ref={accountRef}>
+                <button
+                  type="button"
+                  onClick={() => setAccountOpen((current) => !current)}
+                  aria-label={`${t("nav.account")} — ${user.name}`}
+                  aria-haspopup="menu"
+                  aria-expanded={accountOpen}
+                  className="relative grid h-11 w-11 place-items-center rounded-full border border-gold bg-cream text-cherry transition hover:bg-gold-soft active:scale-90"
+                >
+                  <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current">
+                    <path d="M12 12a4.5 4.5 0 1 0-4.5-4.5A4.5 4.5 0 0 0 12 12Zm0 2.2c-4 0-7.5 2-7.5 4.6V21h15v-2.2c0-2.6-3.5-4.6-7.5-4.6Z" />
+                  </svg>
+                </button>
+                <AnimatePresence>
+                  {accountOpen && (
+                    <motion.div
+                      initial={{ opacity: 0, y: -6, scale: 0.97 }}
+                      animate={{ opacity: 1, y: 0, scale: 1 }}
+                      exit={{ opacity: 0, y: -6, scale: 0.97 }}
+                      transition={{ duration: 0.18 }}
+                      role="menu"
+                      aria-label={t("nav.account")}
+                      className="absolute right-0 top-full z-50 mt-2 w-56 overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep p-2 shadow-lift"
+                    >
+                      <p className="truncate px-3 pb-1 pt-2 text-xs font-black text-cherry/60">Moi, {user.name.split(" ")[0]} 👋</p>
+                      <Link role="menuitem" href="/account" onClick={() => setAccountOpen(false)} className="block rounded-xl px-3 py-2.5 text-sm font-black text-cherry transition hover:bg-cream">{t("acct.profile")}</Link>
+                      <Link role="menuitem" href="/account" onClick={() => setAccountOpen(false)} className="block rounded-xl px-3 py-2.5 text-sm font-black text-cherry transition hover:bg-cream">{t("nav.orders")}</Link>
+                      <Link role="menuitem" href="/favorites" onClick={() => setAccountOpen(false)} className="block rounded-xl px-3 py-2.5 text-sm font-black text-cherry transition hover:bg-cream">{t("nav.favorites")}</Link>
+                      <button
+                        role="menuitem"
+                        type="button"
+                        onClick={() => { setAccountOpen(false); logout(); }}
+                        className="block w-full rounded-xl px-3 py-2.5 text-left text-sm font-black text-cherry-bright transition hover:bg-cream"
+                      >
+                        {t("acct.signout")}
+                      </button>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            ) : (
+              <Link
+                href="/account"
+                aria-label={t("nav.account")}
+                className="grid h-11 w-11 place-items-center rounded-full border border-cream/30 text-cream transition hover:bg-cream hover:text-cherry"
+              >
+                <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current">
+                  <path d="M12 12a4.5 4.5 0 1 0-4.5-4.5A4.5 4.5 0 0 0 12 12Zm0 2.2c-4 0-7.5 2-7.5 4.6V21h15v-2.2c0-2.6-3.5-4.6-7.5-4.6Z" />
+                </svg>
+              </Link>
+            )}
             <button
               onClick={() => setCartOpen(true)}
               aria-label={`Open cart, ${cartCount} items`}
@@ -213,6 +268,21 @@ export default function Header() {
                   >
                     {user ? `Moi, ${user.name.split(" ")[0]} 👋` : t("nav.signin")}
                   </Link>
+                  <Link
+                    href="/favorites"
+                    className="block rounded-xl px-4 py-3 text-lg font-black text-cream hover:bg-cream/10"
+                  >
+                    {t("nav.favorites")}
+                  </Link>
+                  {user && (
+                    <button
+                      type="button"
+                      onClick={() => { setOpen(false); logout(); }}
+                      className="block w-full rounded-xl px-4 py-3 text-left text-lg font-black text-gold-soft hover:bg-cream/10"
+                    >
+                      {t("acct.signout")}
+                    </button>
+                  )}
                 </motion.div>
               </nav>
               <div className="flex items-center gap-4 px-9 pt-4">

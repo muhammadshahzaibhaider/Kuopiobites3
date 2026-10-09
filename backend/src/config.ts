@@ -89,6 +89,11 @@ export const CFG = {
   staffCookieName: "kb_staff_session",
   csrfCookieName: "kb_csrf",
   rate: {
+    /* Broad ceiling for every API request per IP. Site traffic fans out into
+       several parallel GETs per page view, so this sits far above the
+       per-endpoint limits below. */
+    apiWindowMs: positiveInt("API_RATE_WINDOW_MS", 15 * 60_000),
+    apiMax: positiveInt("API_RATE_MAX", 600),
     authWindowMs: positiveInt("AUTH_RATE_WINDOW_MS", 60_000),
     authMax: positiveInt("AUTH_RATE_MAX", 10),
     loginWindowMs: positiveInt("LOGIN_RATE_WINDOW_MS", 15 * 60_000),
@@ -106,13 +111,8 @@ export const CFG = {
   },
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || "",
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
-  smtp: {
-    host: process.env.SMTP_HOST || "",
-    port: positiveInt("SMTP_PORT", 587),
-    user: process.env.SMTP_USER || "",
-    password: process.env.SMTP_PASSWORD || "",
-    from: process.env.SMTP_FROM || "Kuopio Bites <no-reply@kuopiobites.fi>",
-  },
+  /* Outbound mail is handled by Supabase Auth (GoTrue) — SMTP credentials are
+     configured in the Supabase Dashboard, never in this process. */
   allowDemoPayments,
 };
 
