@@ -41,6 +41,10 @@ interface ShopCtx {
   login: (email: string, pass: string) => Promise<string | null>;
   logout: () => void;
   updateUser: (patch: Partial<User>) => Promise<void>;
+  changePassword: (current: string, next: string) => Promise<string | null>;
+  favorites: string[];
+  isFavorite: (itemId: string) => boolean;
+  toggleFavorite: (itemId: string) => Promise<void>;
   adminLogin: (u: string, p: string) => Promise<string | null>;
   adminLogout: () => void;
   staffRole: string | null;
@@ -83,6 +87,7 @@ export function useShop(): ShopCtx {
   return c;
 }
 
+const GUEST_FAVORITES_KEY = "kb_guest_favorites";
 const readLS = <T,>(k: string, f: T): T => {
   if (typeof window === "undefined") return f;
   try { const r = localStorage.getItem(k); return r ? (JSON.parse(r) as T) : f; } catch { return f; }
@@ -102,13 +107,18 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [cartOpen, setCartOpen] = useState(false);
   const [pulse, setPulse] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [favorites, setFavorites] = useState<string[]>([]);
   const [serverPricing, setServerPricing] = useState<ShopCtx["serverPricing"]>(null);
   const allItems = BASE_ITEMS; // live array, hydrated in place from the backend
   const allCats = BASE_CATS;
 
   // Load the saved cart AFTER hydration: reading localStorage during the first render made the
   // client HTML differ from the server HTML (React #418/#423 on every page with a non-empty cart).
-  useEffect(() => { setCart(readLS<CartLine[]>("kb_cart", [])); setCartReady(true); }, []);
+  useEffect(() => {
+    setCart(readLS<CartLine[]>("kb_cart", []));
+    setFavorites(readLS<string[]>(GUEST_FAVORITES_KEY, []));
+    setCartReady(true);
+  }, []);
   useEffect(() => { if (cartReady) localStorage.setItem("kb_cart", JSON.stringify(cart)); }, [cart, cartReady]);
 
   const toast = useCallback((msg: string, kind: "ok" | "err" = "ok") => {
@@ -127,7 +137,19 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       setSettings(s);
       hydrateMenu(items, cats);
       hydrateTranslations(tr);
-      setUser((session.user ?? null) as User | null);
+      const sessionUser = (session.user ?? null) as User | null;
+      const guest = readLS<string[]>(GUEST_FAVORITES_KEY, []);
+      if (sessionUser) {
+        const merged = Array.from(new Set([...(sessionUser.favorites ?? []), ...guest]));
+        setUser({ ...sessionUser, favorites: merged });
+        setFavorites(merged);
+        if (guest.length || merged.length !== (sessionUser.favorites ?? []).length) {
+          try { await api.apiUpdateAccount({ favorites: merged }); localStorage.removeItem(GUEST_FAVORITES_KEY); } catch { /* keep optimistic favorites; retry on next account action */ }
+        }
+      } else {
+        setUser(null);
+        setFavorites(Array.from(new Set(guest)));
+      }
       setStaffRole(staffSession.role);
       if (staffSession.role) {
         const [o, r] = await Promise.all([api.apiListOrders(), api.apiListReservations()]);
@@ -167,15 +189,44 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const login: ShopCtx["login"] = async (email, pass) => {
     try {
       const u = await api.apiLogin(email, pass);
-      setUser(u as User);
+      const guest = readLS<string[]>(GUEST_FAVORITES_KEY, []);
+      const merged = Array.from(new Set([...(u.favorites ?? []), ...guest]));
+      setUser({ ...(u as User), favorites: merged });
+      setFavorites(merged);
+      if (guest.length) { await api.apiUpdateAccount({ favorites: merged }); localStorage.removeItem(GUEST_FAVORITES_KEY); }
       void refresh();
       return null;
     } catch (e) { return (e as Error).message; }
   };
-  const logout = () => { void api.apiLogout(); setUser(null); setOrders([]); };
+  const logout = () => {
+    localStorage.setItem(GUEST_FAVORITES_KEY, JSON.stringify(favorites));
+    void api.apiLogout(); setUser(null); setFavorites(favorites); setOrders([]);
+  };
   const updateUser: ShopCtx["updateUser"] = async (patch) => {
     const u = await api.apiUpdateAccount(patch);
     setUser({ ...user, ...u } as User);
+    if (patch.favorites) setFavorites(Array.from(new Set(patch.favorites)));
+  };
+  const changePassword: ShopCtx["changePassword"] = async (current, next) => {
+    try { await api.apiChangePassword(current, next); return null; }
+    catch (e) { return (e as Error).message; }
+  };
+  const isFavorite = useCallback((itemId: string) => favorites.includes(itemId), [favorites]);
+  const toggleFavorite: ShopCtx["toggleFavorite"] = async (itemId) => {
+    const previous = favorites;
+    const next = previous.includes(itemId) ? previous.filter((id) => id !== itemId) : [...previous, itemId];
+    setFavorites(next);
+    if (!user) { localStorage.setItem(GUEST_FAVORITES_KEY, JSON.stringify(next)); toast(previous.includes(itemId) ? "Removed from favorites" : "Added to favorites"); return; }
+    setUser({ ...user, favorites: next });
+    try {
+      const updated = await api.apiUpdateAccount({ favorites: next });
+      setUser({ ...user, ...updated, favorites: next } as User);
+      toast(previous.includes(itemId) ? "Removed from favorites" : "Added to favorites");
+    } catch (e) {
+      setFavorites(previous); setUser({ ...user, favorites: previous });
+      toast((e as Error).message || "Could not update favorites", "err");
+      throw e;
+    }
   };
   const adminLogin: ShopCtx["adminLogin"] = async (u, p) => {
     try {
@@ -449,7 +500,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     overrides: { items: {}, order: {} },
     patchItem, moveItem, moveItemTo, addItem, removeAdded, addCat, setItemText,
     effectiveMenu, categories,
-    user, users, register, login, logout, updateUser, adminLogin, adminLogout, staffRole,
+    user, users, register, login, logout, updateUser, changePassword, favorites, isFavorite, toggleFavorite, adminLogin, adminLogout, staffRole,
     cart, addLine, setQty, removeLine, clearCart, cartOpen, setCartOpen, cartCount, cartSubtotal,
     pulse, priceCart, serverPricing,
     orders, startCheckout, placeOrder, setOrderStatus, refundOrder, orderStatus,

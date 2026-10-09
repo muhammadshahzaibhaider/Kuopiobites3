@@ -8,6 +8,7 @@ import { offerPrice, optionOff, trDesc, trIng, trLabel, trName } from "@/lib/v3"
 import type { MenuItem } from "@/lib/types";
 import { MenuImage, QtyStepper, TagBadge } from "./ui";
 import { useModalA11y } from "./useModalA11y";
+import FavoriteButton from "./FavoriteButton";
 
 export default function ItemModal({ item, onClose }: { item: MenuItem | null; onClose: () => void }) {
   const { addLine, toast, settings } = useShop();
@@ -104,7 +105,10 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
                 <div className="mt-2 flex flex-wrap gap-2">{item.tags?.map((tag) => <TagBadge key={tag} tag={tag} />)}</div>
               </div>
             </div>
-            <button onClick={onClose} aria-label="Close item details" className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-cherry/20 text-cherry hover:bg-cherry hover:text-cream">✕</button>
+            <div className="flex shrink-0 items-center gap-2">
+              <FavoriteButton itemId={item.id} />
+              <button onClick={onClose} aria-label="Close item details" className="grid h-11 w-11 shrink-0 place-items-center rounded-full border border-cherry/20 text-cherry hover:bg-cherry hover:text-cream">✕</button>
+            </div>
           </div>
 
           {item.prices.length > 1 && (

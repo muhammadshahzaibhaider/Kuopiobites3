@@ -1,10 +1,11 @@
 import type { Category, MenuItem, ModGroup, PriceVariant, Tag } from "./types";
+import { WHATSAPP_DISPLAY, whatsappUrl } from "../../frontend/src/lib/whatsapp";
+export { WHATSAPP_DISPLAY, WHATSAPP_GREETING, WHATSAPP_NUMBER, whatsappUrl } from "../../frontend/src/lib/whatsapp";
 
 const FACEBOOK_URL = "https://www.facebook.com/share/1Cc27jbJMm/?mibextid=wwXIfr";
 const INSTAGRAM_URL = "https://www.instagram.com/kuopio.bites?rpxt=N2ZqdjFudWFuczA4";
 const WOLT_URL = "https://wolt.com/fi/fin/kuopio/restaurant/kuopio-bites";
 const UBER_EATS_URL = "https://www.ubereats.com/store-browse-uuid/2b21a27b-6e47-587c-956a-f00de5f5fcfa?diningMode=DELIVERY";
-
 export const RESTAURANT = {
   name: "Kuopio Bites",
   tagline: "& Asian cuisine",
@@ -16,6 +17,8 @@ export const RESTAURANT = {
   facebook: FACEBOOK_URL,
   wolt: WOLT_URL,
   uberEats: UBER_EATS_URL,
+  whatsapp: whatsappUrl(),
+  whatsappDisplay: WHATSAPP_DISPLAY,
   mapEmbed:
     "https://www.google.com/maps?q=Jalkasenkatu%207%2C%2070820%20Kuopio%2C%20Finland&output=embed",
   mapLink: "https://www.google.com/maps?q=Jalkasenkatu+7,+70820+Kuopio",
@@ -26,6 +29,7 @@ export const SOCIAL_LINKS = [
   { id: "instagram", label: "Instagram", ariaLabel: "Instagram", href: RESTAURANT.instagram },
   { id: "wolt", label: "Wolt", ariaLabel: "Order on Wolt", href: RESTAURANT.wolt },
   { id: "uberEats", label: "Uber Eats", ariaLabel: "Order on Uber Eats", href: RESTAURANT.uberEats },
+  { id: "whatsapp", label: "WhatsApp", ariaLabel: "Chat on WhatsApp", href: RESTAURANT.whatsapp },
 ] as const;
 export type SocialLinkId = (typeof SOCIAL_LINKS)[number]["id"];
 

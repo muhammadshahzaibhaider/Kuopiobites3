@@ -123,6 +123,8 @@ export interface User {
   marketing: boolean;
   lang?: Lang;
   createdAt: number;
+  /** Item ids saved by this customer; optional for migration-safe old records. */
+  favorites?: string[];
 }
 
 export type DayHours = { open: string; close: string } | null;

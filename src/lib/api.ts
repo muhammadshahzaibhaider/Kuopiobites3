@@ -19,6 +19,7 @@ const K = {
   settings: "kb_settings",
   overrides: "kb_overrides",
   cart: "kb_cart",
+  favorites: "kb_guest_favorites",
 };
 
 function read<T>(key: string, fallback: T): T {
@@ -116,6 +117,16 @@ export async function apiLogin(email: string, pass: string): Promise<User> {
 
 export function apiLogout() {
   write(K.session, null);
+}
+
+export async function apiChangePassword(id: string, current: string, next: string): Promise<string | null> {
+  await sleep(200);
+  const users = read<User[]>(K.users, []);
+  const i = users.findIndex((x) => x.id === id);
+  if (i < 0 || users[i].pass !== current) return "Current password is incorrect";
+  users[i] = { ...users[i], pass: next };
+  write(K.users, users);
+  return null;
 }
 
 export async function apiUpdateUser(id: string, patch: Partial<User>) {

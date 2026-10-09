@@ -82,6 +82,10 @@ interface ShopCtx {
   login: (email: string, pass: string) => Promise<string | null>;
   logout: () => void;
   updateUser: (patch: Partial<User>) => Promise<void>;
+  changePassword: (current: string, next: string) => Promise<string | null>;
+  favorites: string[];
+  isFavorite: (itemId: string) => boolean;
+  toggleFavorite: (itemId: string) => Promise<void>;
 
   cart: CartLine[];
   addLine: (l: Omit<CartLine, "key">) => void;
@@ -131,6 +135,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [cartOpen, setCartOpen] = useState(false);
   const [pulse, setPulse] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [guestFavorites, setGuestFavorites] = useStored<string[]>(api.db.K.favorites, []);
 
   /* merge defaults so older stored settings gain new fields (toppings, special…) */
   const settings = useMemo<Settings>(
@@ -170,15 +175,21 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       addresses: [],
       marketing: false,
       createdAt: Date.now(),
+      favorites: Array.from(new Set(guestFavorites)),
     };
     await api.apiRegister(u);
     setUsers((p) => [...p, u]);
+    setGuestFavorites([]);
     setSessionId(u.id);
     return null;
   };
   const login: ShopCtx["login"] = async (email, pass) => {
     try {
       const u = await api.apiLogin(email, pass);
+      const merged = Array.from(new Set([...(u.favorites ?? []), ...guestFavorites]));
+      const updated = merged.length !== (u.favorites ?? []).length ? await api.apiUpdateUser(u.id, { favorites: merged }) : u;
+      setUsers((p) => p.map((x) => x.id === u.id ? { ...x, ...(updated ?? u), favorites: merged } : x));
+      setGuestFavorites([]);
       setSessionId(u.id);
       return null;
     } catch (e) {
@@ -186,6 +197,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     }
   };
   const logout = () => {
+    setGuestFavorites(favorites);
     api.apiLogout();
     setSessionId(null);
   };
@@ -193,6 +205,23 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     if (!user) return;
     const updated = await api.apiUpdateUser(user.id, patch);
     if (updated) setUsers((p) => p.map((x) => (x.id === updated.id ? updated : x)));
+  };
+
+  const changePassword: ShopCtx["changePassword"] = async (current, next) => {
+    if (!user) return "auth.required";
+    return api.apiChangePassword(user.id, current, next);
+  };
+  const favorites = useMemo(() => Array.from(new Set(user?.favorites ?? guestFavorites)), [user?.favorites, guestFavorites]);
+  const isFavorite = useCallback((itemId: string) => favorites.includes(itemId), [favorites]);
+  const toggleFavorite: ShopCtx["toggleFavorite"] = async (itemId) => {
+    const previous = favorites;
+    const next = previous.includes(itemId) ? previous.filter((id) => id !== itemId) : [...previous, itemId];
+    if (user) {
+      const updated = await api.apiUpdateUser(user.id, { favorites: next });
+      if (updated) setUsers((p) => p.map((x) => (x.id === updated.id ? updated : x)));
+      else { toast("Could not update favorites", "err"); throw new Error("favorites.updateFailed"); }
+    } else setGuestFavorites(next);
+    toast(previous.includes(itemId) ? "Removed from favorites" : "Added to favorites");
   };
 
   /* cart */
@@ -462,7 +491,8 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     register,
     login,
     logout,
-    updateUser,
+    updateUser, changePassword,
+    favorites, isFavorite, toggleFavorite,
     cart,
     addLine,
     setQty,

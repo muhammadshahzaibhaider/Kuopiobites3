@@ -116,7 +116,7 @@ export function currentAuth(req: Request): TokenPayload | null {
 
 export async function customerRow(id: string) {
   const { data, error } = await db.from("customers")
-    .select("id, name, email, phone, addresses, marketing_consent, created_at, lang")
+    .select("id, name, email, phone, addresses, marketing_consent, favorites, created_at, lang")
     .eq("id", id).maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return undefined;
@@ -127,6 +127,7 @@ export async function customerRow(id: string) {
     phone: data.phone ?? "",
     addresses: JSON.stringify(data.addresses ?? []),
     marketing: data.marketing_consent ? 1 : 0,
+    favorites: Array.from(new Set(data.favorites ?? [])),
     created_at: Date.parse(data.created_at),
     lang: data.lang,
   };

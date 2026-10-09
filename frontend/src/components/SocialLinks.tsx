@@ -1,5 +1,6 @@
 import { cx } from "@/lib/format";
 import { SOCIAL_LINKS, type SocialLinkId } from "@/lib/menu";
+import WhatsAppIcon from "./WhatsAppIcon";
 
 function SocialIcon({ id }: { id: SocialLinkId }) {
   if (id === "instagram") {
@@ -26,6 +27,7 @@ function SocialIcon({ id }: { id: SocialLinkId }) {
     );
   }
 
+  if (id === "whatsapp") return <WhatsAppIcon />;
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current" aria-hidden="true">
       <rect x="3" y="4" width="18" height="16" rx="4" fill="none" stroke="currentColor" strokeWidth="1.8" />

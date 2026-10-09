@@ -12,6 +12,7 @@ import {
 import type { MenuItem } from "@/lib/types";
 import { PizzaImage, QtyStepper } from "./ui";
 import { useModalA11y } from "./useModalA11y";
+import FavoriteButton from "./FavoriteButton";
 
 /**
  * Wolt-style pizza sheet: size + extra toppings with live total.
@@ -113,7 +114,10 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
         >
           {/* header */}
           <div className="relative shrink-0 border-b-2 border-gold/40 p-5 pb-4">
-            <button onClick={onClose} aria-label="Close" className="absolute right-4 top-4 z-10 grid h-10 w-10 place-items-center rounded-full border border-cherry/20 bg-cream text-cherry hover:bg-cherry hover:text-cream">✕</button>
+            <div className="absolute right-4 top-4 z-10 flex gap-2">
+              <FavoriteButton itemId={item.id} />
+              <button onClick={onClose} aria-label="Close" className="grid h-10 w-10 place-items-center rounded-full border border-cherry/20 bg-cream text-cherry hover:bg-cherry hover:text-cream">✕</button>
+            </div>
             <div className="flex items-start gap-4">
               <div className="w-24 shrink-0 sm:w-28">
                 <PizzaImage item={item} className="rounded-2xl" />

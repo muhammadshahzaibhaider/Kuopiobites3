@@ -7,6 +7,7 @@ import OffersStrip from "@/components/OffersStrip";
 import PizzaSheet from "@/components/PizzaSheet";
 import PreorderSheet from "@/components/PreorderSheet";
 import { MenuImage, StaggerItem, TagBadge } from "@/components/ui";
+import FavoriteButton from "@/components/FavoriteButton";
 import { cx, eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { MENU } from "@/lib/menu";
@@ -212,7 +213,8 @@ function ItemGrid({ items, onAdd, highlight }: { items: MenuItem[]; onAdd: (m: M
                 "relative",
                 highlight === m.id && "rounded-3xl ring-4 ring-gold motion-safe:animate-pulseSoft"
               )}
-            >
+              >
+              <FavoriteButton itemId={m.id} className="absolute right-3 top-3 z-10" />
               <button
                 onClick={() => onAdd(m)}
                 disabled={off}
