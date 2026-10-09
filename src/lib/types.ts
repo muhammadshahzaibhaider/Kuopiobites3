@@ -117,7 +117,10 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  pass: string;
+  /** Legacy plaintext password — migrated to passHash on first login. Optional for old records. */
+  pass?: string;
+  /** SHA-256 password hash (demo stub store; production uses Supabase Auth). */
+  passHash?: string;
   phone?: string;
   addresses: string[];
   marketing: boolean;

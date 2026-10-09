@@ -77,9 +77,11 @@ interface ShopCtx {
   categories: () => Category[];
 
   user: User | null;
+  /* True once the local session has been read after hydration. */
+  authChecked: boolean;
   users: User[];
   register: (d: { name: string; email: string; pass: string; phone?: string }) => Promise<string | null>;
-  login: (email: string, pass: string) => Promise<string | null>;
+  login: (email: string, pass: string, remember?: boolean) => Promise<string | null>;
   logout: () => void;
   updateUser: (patch: Partial<User>) => Promise<void>;
   changePassword: (current: string, next: string) => Promise<string | null>;
@@ -128,7 +130,11 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [rawSettings, setSettings] = useStored<Settings>("kb_settings", DEFAULT_SETTINGS);
   const [overrides, setOverrides] = useStored<Overrides>("kb_overrides", EMPTY_OVERRIDES);
   const [users, setUsers] = useStored<User[]>("kb_users", []);
-  const [sessionId, setSessionId] = useStored<string | null>("kb_session", null);
+  /* Session read happens after hydration: persistent logins live in
+     localStorage, "don't remember me" logins in sessionStorage. */
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  useEffect(() => { setSessionId(api.readSession()); setAuthChecked(true); }, []);
   const [cart, setCart] = useStored<CartLine[]>("kb_cart", []);
   const [orders, setOrders] = useStored<Order[]>("kb_orders", []);
   const [reservations, setReservations] = useStored<Reservation[]>("kb_reservations", []);
@@ -164,28 +170,29 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
 
   /* auth */
   const register: ShopCtx["register"] = async (d) => {
-    if (users.some((u) => u.email.toLowerCase() === d.email.toLowerCase()))
-      return "An account with this email already exists";
+    const email = d.email.trim().toLowerCase();
+    if (users.some((u) => u.email.toLowerCase() === email))
+      return "auth.emailInUse";
     const u: User = {
       id: uid("u"),
-      name: d.name,
-      email: d.email,
+      name: d.name.trim(),
+      email,
       pass: d.pass,
-      phone: d.phone,
+      phone: d.phone?.trim() || undefined,
       addresses: [],
       marketing: false,
       createdAt: Date.now(),
       favorites: Array.from(new Set(guestFavorites)),
     };
     await api.apiRegister(u);
-    setUsers((p) => [...p, u]);
+    setUsers((p) => [...p, { ...u, pass: undefined }]);
     setGuestFavorites([]);
     setSessionId(u.id);
     return null;
   };
-  const login: ShopCtx["login"] = async (email, pass) => {
+  const login: ShopCtx["login"] = async (email, pass, remember = true) => {
     try {
-      const u = await api.apiLogin(email, pass);
+      const u = await api.apiLogin(email, pass, remember);
       const merged = Array.from(new Set([...(u.favorites ?? []), ...guestFavorites]));
       const updated = merged.length !== (u.favorites ?? []).length ? await api.apiUpdateUser(u.id, { favorites: merged }) : u;
       setUsers((p) => p.map((x) => x.id === u.id ? { ...x, ...(updated ?? u), favorites: merged } : x));
@@ -487,6 +494,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     effectiveMenu,
     categories,
     user,
+    authChecked,
     users,
     register,
     login,

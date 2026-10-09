@@ -82,14 +82,48 @@ export const cartSchema = z.object({
   lang: z.enum(["en", "fi"]).default("en"), code: text(40).optional(),
 }).strict();
 
+/* Emails are always normalized (trim + lowercase) before lookup or storage so
+   " USER@Example.FI " logs into the account created as user@example.fi. */
+const email = z.string().trim().toLowerCase().email().max(120);
+
+/* Pragmatic international format: "+358 44 981 6223" and "0449816223" both fit. */
+const phoneSchema = z.preprocess(
+  (value) => (typeof value === "string" && value.trim() === "" ? undefined : value),
+  z.string().trim().regex(/^\+?[0-9][0-9\s().-]{4,24}$/, "validation.phone").max(30).optional()
+);
+
+/* Policy: 8+ characters with at least one letter and one number. Existing
+   accounts created under the old 12-character rule remain valid — this only
+   governs newly set passwords. */
+export const passwordPolicy = z.string().min(8, "validation.passwordLength").max(200)
+  .regex(/[A-Za-z]/, "validation.passwordLetter")
+  .regex(/\d/, "validation.passwordNumber");
+
 export const registerSchema = z.object({
-  name: text(80).min(1), email: z.string().trim().email().max(120),
-  pass: z.string().min(12).max(200), phone: text(30).optional(),
+  name: text(80).min(1), email,
+  pass: passwordPolicy, phone: phoneSchema,
 }).strict();
 
-export const loginSchema = z.object({ email: z.string().trim().email().max(120), pass: z.string().min(1).max(200) }).strict();
+export const loginSchema = z.object({
+  email, pass: z.string().min(1).max(200),
+  /* remember=false issues browser-session cookies instead of 30-day ones. */
+  remember: z.boolean().optional(),
+}).strict();
 export const staffLoginSchema = z.object({ username: text(40).min(1), password: z.string().min(1).max(200) }).strict();
-export const confirmEmailSchema = z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{40,}$/) }).strict();
+
+/* Supabase confirmation/recovery links arrive in three shapes depending on the
+   project template: PKCE ?code=, ?token_hash=&type=, or #access_token implicit. */
+export const emailLinkType = z.enum(["signup", "email", "recovery"]);
+export const confirmEmailSchema = z.union([
+  z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{40,}$/), type: emailLinkType.optional() }).strict(),
+  z.object({ code: z.string().min(20).max(300) }).strict(),
+]);
+export const forgotPasswordSchema = z.object({ email }).strict();
+export const resetPasswordSchema = z.union([
+  z.object({ token: z.string().regex(/^[A-Za-z0-9_-]{40,}$/), type: emailLinkType.optional(), next: passwordPolicy }).strict(),
+  z.object({ accessToken: z.string().min(1), refreshToken: z.string().min(1), next: passwordPolicy }).strict(),
+  z.object({ code: z.string().min(20).max(300), next: passwordPolicy }).strict(),
+]);
 
 export const customerOrderSchema = z.object({
   type: z.enum(["pickup", "delivery"]),
@@ -159,7 +193,7 @@ export const accountPatchSchema = z.object({
   name: text(80).min(1).optional(), phone: text(30).optional(), addresses: z.array(text(160)).max(6).optional(), marketing: z.boolean().optional(),
   favorites: z.array(text(100)).max(500).optional(),
 }).strict();
-export const passwordChangeSchema = z.object({ current: z.string().min(1).max(200), next: z.string().min(12).max(200) }).strict();
+export const passwordChangeSchema = z.object({ current: z.string().min(1).max(200), next: passwordPolicy }).strict();
 export const translationSchema = z.object({ lang: z.enum(["en", "fi"]), key: text(160).min(1), value: text(2000) }).strict();
 export const newsletterSchema = z.object({ email: z.string().trim().email().max(160) }).strict();
 export const promotionPatchSchema = offerSchema.omit({ id: true }).strict();

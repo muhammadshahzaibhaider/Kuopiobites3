@@ -50,27 +50,38 @@ export function ensureCsrfCookie(res: Response, req: Request): string {
   return token;
 }
 
-export function clearSessionCookies(res: Response): void {
+export function clearSessionCookies(res: Response, opts: { keepCsrf?: boolean } = {}): void {
   res.append("Set-Cookie", `${CFG.customerCookieName}=; ${cookieFlags(0)}`);
   res.append("Set-Cookie", `${CFG.staffCookieName}=; ${cookieFlags(0)}`);
   res.append("Set-Cookie", `kb_customer_refresh=; ${cookieFlags(0)}`);
   res.append("Set-Cookie", `kb_staff_refresh=; ${cookieFlags(0)}`);
-  res.append("Set-Cookie", `${CFG.csrfCookieName}=; ${csrfFlags(0)}`);
+  res.append("Set-Cookie", `kb_remember=; ${cookieFlags(0)}`);
+  /* The CSRF cookie is a per-browser double-submit token, not a session secret.
+     Clearing it on logout orphaned the SPA's cached token and made every later
+     mutation fail with csrf.invalid until a full page reload. */
+  if (!opts.keepCsrf) res.append("Set-Cookie", `${CFG.csrfCookieName}=; ${csrfFlags(0)}`);
 }
 
-function setSessionCookie(res: Response, scope: "customer" | "staff", accessToken: string, refreshToken: string): void {
+function setSessionCookie(res: Response, scope: "customer" | "staff", accessToken: string, refreshToken: string, remember = true): void {
   const name = scope === "staff" ? CFG.staffCookieName : CFG.customerCookieName;
   const refreshName = scope === "staff" ? "kb_staff_refresh" : "kb_customer_refresh";
-  res.append("Set-Cookie", `${name}=${encodeURIComponent(accessToken)}; ${cookieFlags(60 * 60)}`);
-  res.append("Set-Cookie", `${refreshName}=${encodeURIComponent(refreshToken)}; ${cookieFlags(30 * 24 * 60 * 60)}`);
+  /* remember=false → browser-session cookies (no Max-Age) so the login ends
+     when the browser closes; staff sessions always persist on the device. */
+  const accessMaxAge = remember ? 60 * 60 : undefined;
+  const refreshMaxAge = remember ? 30 * 24 * 60 * 60 : undefined;
+  res.append("Set-Cookie", `${name}=${encodeURIComponent(accessToken)}; ${cookieFlags(accessMaxAge)}`);
+  res.append("Set-Cookie", `${refreshName}=${encodeURIComponent(refreshToken)}; ${cookieFlags(refreshMaxAge)}`);
+  /* The marker lets token refreshes keep the caller's remember-me choice.
+     Pre-marker sessions default to remembered, matching the old 30-day cookie. */
+  res.append("Set-Cookie", `kb_remember=${remember ? "1" : "0"}; ${cookieFlags(refreshMaxAge)}`);
 }
 
-export function issueCustomerSession(res: Response, accessToken: string, refreshToken: string): void {
-  setSessionCookie(res, "customer", accessToken, refreshToken);
+export function issueCustomerSession(res: Response, accessToken: string, refreshToken: string, remember = true): void {
+  setSessionCookie(res, "customer", accessToken, refreshToken, remember);
 }
 
-export function issueStaffSession(res: Response, accessToken: string, refreshToken: string): void {
-  setSessionCookie(res, "staff", accessToken, refreshToken);
+export function issueStaffSession(res: Response, accessToken: string, refreshToken: string, remember = true): void {
+  setSessionCookie(res, "staff", accessToken, refreshToken, remember);
 }
 
 /**
@@ -88,6 +99,7 @@ export async function readAuth(req: Request, res: Response, next: NextFunction):
   const accessToken = cookie || bearer;
   (req as any).auth = null;
   (req as any).authSource = cookie ? "cookie" : bearer ? "bearer" : "none";
+  (req as any).accessToken = accessToken ?? null;
   if (!accessToken && !refreshToken) return next();
 
   try {
@@ -95,9 +107,11 @@ export async function readAuth(req: Request, res: Response, next: NextFunction):
     if (!user && refreshToken) {
       const { data, error } = await authClient().auth.refreshSession({ refresh_token: refreshToken });
       if (!error && data.session && data.user) {
-        setSessionCookie(res, requestedScope, data.session.access_token, data.session.refresh_token);
+        const remembered = cookieValue(req, "kb_remember") !== "0";
+        setSessionCookie(res, requestedScope, data.session.access_token, data.session.refresh_token, remembered);
         user = data.user;
         (req as any).authSource = "cookie";
+        (req as any).accessToken = data.session.access_token;
       }
     }
     if (user) {

@@ -36,9 +36,12 @@ interface ShopCtx {
   categories: () => Category[];
 
   user: User | null;
+  /* True once the first session probe finished — pages use it before
+     deciding whether "already logged in" redirects should fire. */
+  authChecked: boolean;
   users: User[];
   register: (d: { name: string; email: string; pass: string; phone?: string }) => Promise<string | null>;
-  login: (email: string, pass: string) => Promise<string | null>;
+  login: (email: string, pass: string, remember?: boolean) => Promise<string | null>;
   logout: () => void;
   updateUser: (patch: Partial<User>) => Promise<void>;
   changePassword: (current: string, next: string) => Promise<string | null>;
@@ -98,6 +101,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   /* Session identity comes from the HttpOnly cookie via /api/auth/session;
      profile data is in memory only, not localStorage. */
   const [user, setUser] = useState<User | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
   const [staffRole, setStaffRole] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
   const [cartReady, setCartReady] = useState(false);
@@ -165,6 +169,8 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       // offline first-paint fallback (bundled data) stays in place
       console.warn("backend unreachable, using bundled fallback", e);
+    } finally {
+      setAuthChecked(true);
     }
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
@@ -186,9 +192,9 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       return result.needsConfirmation ? "auth.confirmationSent" : null;
     } catch (e) { return (e as Error).message; }
   };
-  const login: ShopCtx["login"] = async (email, pass) => {
+  const login: ShopCtx["login"] = async (email, pass, remember = true) => {
     try {
-      const u = await api.apiLogin(email, pass);
+      const u = await api.apiLogin(email, pass, remember);
       const guest = readLS<string[]>(GUEST_FAVORITES_KEY, []);
       const merged = Array.from(new Set([...(u.favorites ?? []), ...guest]));
       setUser({ ...(u as User), favorites: merged });
@@ -500,7 +506,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     overrides: { items: {}, order: {} },
     patchItem, moveItem, moveItemTo, addItem, removeAdded, addCat, setItemText,
     effectiveMenu, categories,
-    user, users, register, login, logout, updateUser, changePassword, favorites, isFavorite, toggleFavorite, adminLogin, adminLogout, staffRole,
+    user, authChecked, users, register, login, logout, updateUser, changePassword, favorites, isFavorite, toggleFavorite, adminLogin, adminLogout, staffRole,
     cart, addLine, setQty, removeLine, clearCart, cartOpen, setCartOpen, cartCount, cartSubtotal,
     pulse, priceCart, serverPricing,
     orders, startCheckout, placeOrder, setOrderStatus, refundOrder, orderStatus,
