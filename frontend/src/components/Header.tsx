@@ -39,7 +39,7 @@ export function LangToggle() {
 
 export default function Header() {
   const pathname = usePathname();
-  const { cartCount, pulse, setCartOpen, user, settings, logout } = useShop();
+  const { cartCount, pulse, setCartOpen, openLoginGate, user, settings, logout } = useShop();
   const { t } = useLang();
   const [scrolled, setScrolled] = useState(false);
   const [open, setOpen] = useState(false);
@@ -174,15 +174,15 @@ export default function Header() {
               </Link>
             )}
             <button
-              onClick={() => setCartOpen(true)}
-              aria-label={`Open cart, ${cartCount} items`}
+              onClick={() => (user ? setCartOpen(true) : openLoginGate())}
+              aria-label={user ? `Open cart, ${cartCount} items` : "Cart – log in to use it"}
               className="relative grid h-11 w-11 place-items-center rounded-full bg-gold text-cherry-dark shadow-card transition hover:bg-gold-soft active:scale-90"
             >
               <svg viewBox="0 0 24 24" className="h-5 w-5 fill-current">
                 <path d="M7 4h-2l-1 2h2l2.6 9.4A2 2 0 0 0 10.5 17h7.7a2 2 0 0 0 1.9-1.4L22 8H6.4L7 4Zm3.5 15a1.5 1.5 0 1 0 1.5 1.5A1.5 1.5 0 0 0 10.5 19Zm7 0a1.5 1.5 0 1 0 1.5 1.5 1.5 1.5 0 0 0-1.5-1.5Z" />
               </svg>
               <AnimatePresence>
-                {cartCount > 0 && (
+                {user && cartCount > 0 && (
                   <motion.span
                     key={pulse}
                     initial={{ scale: 0.4 }}
