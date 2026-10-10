@@ -9,6 +9,8 @@ const nextConfig = {
   poweredByHeader: false,
   /* Never emit browser-readable source maps in production builds. */
   productionBrowserSourceMaps: false,
+  /* No bottom-left route/debug indicator (devoverlay). */
+  devIndicators: false,
   async rewrites() {
     return [
       { source: "/api/:path*", destination: `${apiOrigin}/api/:path*` },

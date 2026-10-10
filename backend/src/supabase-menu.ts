@@ -59,8 +59,11 @@ export async function listItems(categoryId?: string): Promise<MenuItem[]> {
 }
 
 export async function getItem(id: string): Promise<MenuItem | null> {
-  const row = must(await db.from("menu_items").select("*").eq("id", id).maybeSingle());
-  return row ? toApiItem(row as ItemRow) : null;
+  /* Look up without must(): a missing row must surface as null (so callers can
+     answer 404) instead of throwing — must() turns empty results into errors. */
+  const { data, error } = await db.from("menu_items").select("*").eq("id", id).maybeSingle();
+  if (error && error.code !== "PGRST116") throw new Error(error.message);
+  return data ? toApiItem(data as ItemRow) : null;
 }
 
 export function toDatabaseItem(item: MenuItem, sortOrder: number) {

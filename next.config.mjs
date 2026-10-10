@@ -6,6 +6,8 @@ const nextConfig = {
   poweredByHeader: false,
   /* Never emit browser-readable source maps in production builds. */
   productionBrowserSourceMaps: false,
+  /* No bottom-left route/debug indicator (devoverlay). */
+  devIndicators: false,
   async headers() {
     const productionOnly = process.env.NODE_ENV === "production";
     const scriptSrc = productionOnly ? "'self' 'unsafe-inline'" : "'self' 'unsafe-inline' 'unsafe-eval'";

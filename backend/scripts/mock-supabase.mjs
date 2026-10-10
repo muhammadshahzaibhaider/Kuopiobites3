@@ -26,7 +26,7 @@ const sessions = new Map(); // access_token → { userId, revoked }
 const refresh = new Map(); // refresh_token → userId
 const emailTokens = new Map(); // token_hash → { userId, type }
 const pkceCodes = new Map(); // auth code → userId
-const tables = { customers: new Map(), staff_users: new Map(), activity_log: [], categories: new Map(), menu_items: new Map(), orders: new Map(), reservations: new Map(), newsletter_subscribers: new Map(), translation_strings: new Map(), promotions: new Map(), stripe_events: new Map(), settings: new Map(), toppings: new Map(), shop_settings: new Map(), todays_special: new Map(), order_items: [] };
+const tables = { customers: new Map(), staff_users: new Map(), activity_log: [], categories: new Map(), menu_items: new Map(), orders: new Map(), reservations: new Map(), newsletter_subscribers: new Map(), translation_strings: new Map(), promotions: new Map(), stripe_events: new Map(), settings: new Map(), toppings: new Map(), shop_settings: new Map(), todays_special: new Map(), order_items: [], customer_favorites: new Map(), cart_items: new Map() };
 let confirmEmail = false;
 
 const tok = () => randomBytes(32).toString("base64url");
@@ -206,32 +206,37 @@ function handleRest(req, res, url, body) {
     }
     return true;
   });
-  const sendRows = (list) => {
-    if (wantsObject) {
-      if (!list.length) { res.writeHead(406, { "content-type": "application/json" }); return res.end(JSON.stringify({ code: "PGRST116", message: "0 rows" })); }
-      return res.end(JSON.stringify(list[0]));
+  /* Headers are written exactly once, inside sendOnce. (The old design called
+     writeHead in the method branch and AGAIN in the responder for empty
+     maybeSingle results → ERR_HTTP_HEADERS_SENT crashed the whole mock.) */
+  const sendOnce = (list, status) => {
+    if (wantsObject && !list.length) {
+      res.writeHead(406, { "content-type": "application/json" });
+      return res.end(JSON.stringify({ code: "PGRST116", message: "0 rows" }));
     }
+    res.writeHead(status, { "content-type": "application/json" });
+    return sendRowsBody(list);
+  };
+  const sendRowsBody = (list) => {
+    if (wantsObject) return res.end(JSON.stringify(list[0]));
     const limit = Number(url.searchParams.get("limit") || list.length || 1);
     res.end(JSON.stringify(list.slice(0, limit)));
   };
-  if (req.method === "GET") { res.writeHead(200, { "content-type": "application/json" }); return sendRows(filtered); }
+  if (req.method === "GET") return sendOnce(filtered, 200);
   if (req.method === "POST") {
     const items = (Array.isArray(body) ? body : [body]).map((item) => ({ created_at: nowIso(), ...item }));
     if (Array.isArray(store)) store.push(...items);
     else for (const item of items) store.set(item.id ?? item.email ?? crypto.randomUUID(), { id: "row", ...item });
-    res.writeHead(201, { "content-type": "application/json" });
-    return sendRows(items);
+    return sendOnce(items, 201);
   }
   if (req.method === "PATCH") {
     for (const row of filtered) Object.assign(row, body);
-    res.writeHead(200, { "content-type": "application/json" });
     const preferRep = String(req.headers.prefer || "").includes("return=representation");
-    return sendRows(preferRep ? filtered : []);
+    return sendOnce(preferRep ? filtered : [filtered[0] ?? null].filter(Boolean), 200);
   }
   if (req.method === "DELETE") {
     for (const row of filtered) if (store instanceof Map) store.delete(row.id ?? row.email); else store.splice(store.indexOf(row), 1);
-    res.writeHead(200, { "content-type": "application/json" });
-    return sendRows(filtered);
+    return sendOnce(filtered, 200);
   }
   res.writeHead(405); res.end();
 }
@@ -271,10 +276,27 @@ const server = http.createServer((req, res) => {
         if (store instanceof Map) {
           const items = Array.isArray(body) ? body : [body];
           const upsert = String(req.headers.prefer || "").includes("resolution=merge-duplicates");
+          /* Business-key unique constraints, like the real tables. */
+          const uniqueOf = {
+            customer_favorites: (item) => item.customer_id && item.menu_item_id && `${item.customer_id}|${item.menu_item_id}`,
+            cart_items: (item) => item.customer_id && item.line_key && `${item.customer_id}|${item.line_key}`,
+          }[table];
           for (const item of items) {
-            const key = item.id ?? item.email ?? item.key ?? item.event_id;
+            /* Rows without a natural key still get a real uuid: with undefined
+               every insert would collide at the same Map slot — favorites and
+               cart rows have no id/email/key field of their own on insert. */
+            const key = item.id ?? item.email ?? item.key ?? item.event_id ?? crypto.randomUUID();
             if (!upsert && store.has(key)) { res.writeHead(409, { "content-type": "application/json" }); return res.end(JSON.stringify({ code: "23505", message: "duplicate key" })); }
-            store.set(key, { created_at: nowIso(), ...item });
+            if (uniqueOf) {
+              const businessKey = uniqueOf(item);
+              if (businessKey && [...store.values()].some((row) => uniqueOf(row) === businessKey)) {
+                res.writeHead(409, { "content-type": "application/json" });
+                return res.end(JSON.stringify({ code: "23505", message: "duplicate key value violates unique constraint" }));
+              }
+            }
+            /* Row id equals the Map key: PATCH/DELETE filter .eq("id", …) and
+               then delete by row.id — a mismatched id would silently no-op. */
+            store.set(key, { id: key, created_at: nowIso(), ...item });
           }
           res.writeHead(201, { "content-type": "application/json" });
           const wantsObject = String(req.headers.accept || "").includes("pgrst.object+json");

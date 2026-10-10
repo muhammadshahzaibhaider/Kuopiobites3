@@ -45,8 +45,25 @@ export const apiAdminLogout = () => api<{ ok: true }>("/api/auth/logout", { meth
 export const apiUpload = (body: Blob) => apiBinary<{ url: string; mime: string }>("/api/uploads", body, { contentType: body.type || "image/webp", staff: true });
 
 export const apiCurrentAccount = () => api<Omit<User, "pass">>("/api/account");
-export const apiUpdateAccount = (patch: Partial<Pick<User, "name" | "phone" | "addresses" | "marketing" | "favorites">>) =>
+export const apiUpdateAccount = (patch: Partial<Pick<User, "name" | "phone" | "addresses" | "marketing">>) =>
   api<User>("/api/account", { method: "PUT", body: patch });
+/* ── favorites (per user, server-side) ────────────────────────────────── */
+export const apiListFavorites = () => api<string[]>("/api/favorites");
+export const apiAddFavorite = (itemId: string) =>
+  api<{ favorites: string[] }>("/api/favorites", { method: "POST", body: { itemId } });
+export const apiRemoveFavorite = (itemId: string) =>
+  api<{ favorites: string[] }>(`/api/favorites/${encodeURIComponent(itemId)}`, { method: "DELETE" });
+export const apiMergeFavorites = (itemIds: string[]) =>
+  api<{ favorites: string[] }>("/api/favorites/merge", { method: "POST", body: { itemIds } });
+/* ── cart (per user, server-side; guests receive 401) ─────────────────── */
+export const apiListCart = () => api<CartLine[]>("/api/cart");
+export const apiAddCartLine = (line: CartLine) => api<CartLine[]>("/api/cart/lines", { method: "POST", body: line });
+export const apiSetCartQty = (key: string, qty: number) =>
+  api<CartLine[]>(`/api/cart/lines/${encodeURIComponent(key)}`, { method: "PATCH", body: { qty } });
+export const apiRemoveCartLine = (key: string) =>
+  api<CartLine[]>(`/api/cart/lines/${encodeURIComponent(key)}`, { method: "DELETE" });
+export const apiClearCart = () => api<CartLine[]>("/api/cart", { method: "DELETE" });
+export const apiMergeCart = (lines: CartLine[]) => api<CartLine[]>("/api/cart", { method: "PUT", body: { lines } });
 export const apiChangePassword = (current: string, next: string) => api<{ ok: true }>("/api/account/password", { method: "PUT", body: { current, next } });
 export const apiAccountOrders = () => api<Order[]>("/api/account/orders");
 export const apiCustomers = () =>

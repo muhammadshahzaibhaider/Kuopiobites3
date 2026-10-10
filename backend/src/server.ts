@@ -19,11 +19,14 @@ import { effectiveItems, loadSettings, orderStatus, priceCart, validateOrder } f
 import { openInfo } from "./lib/hours";
 import type { CartLine, MenuItem, Order, Reservation, Settings, User } from "./lib/types";
 import {
-  accountPatchSchema, cartSchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema, customerOrderSchema, passwordChangeSchema,
+  accountPatchSchema, cartLineSchema, cartMergeSchema, cartQtySchema, cartSchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema,
+  customerOrderSchema, favoriteAddSchema, favoriteMergeSchema, passwordChangeSchema,
   forgotPasswordSchema, loginSchema, menuItemSchema, paramId, promotionPatchSchema, registerSchema, reorderSchema, reservationSchema,
   resetPasswordSchema, settingsSchema, specialPatchSchema, staffLoginSchema, statusSchema, translationSchema, newsletterSchema,
 } from "./schemas";
 import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
+import { addFavorite, listFavorites, mergeFavorites, removeFavorite, safeListFavorites } from "./supabase-favorites";
+import { addCartLine, clearCart, listCart, mergeCartLines, removeCartLine, safeListCart, setCartLineQty } from "./supabase-cart";
 
 const app = express();
 app.set("trust proxy", CFG.isProduction ? 1 : false);
@@ -88,7 +91,9 @@ app.use((req, res, next) => {
   next();
 });
 app.use((req, res, next) => {
-  ensureCsrfCookie(res, req);
+  /* Mint at most one CSRF cookie per request: the dedicated route below
+     reuses the same token instead of appending a duplicate Set-Cookie. */
+  res.locals.csrfToken = ensureCsrfCookie(res, req);
   next();
 });
 app.use(readAuth);
@@ -121,14 +126,14 @@ const wrap =
   };
 
 const uid = (prefix: string) => `${prefix}-${randomBytes(9).toString("base64url")}`;
-const publicUser = (row: any): Omit<User, "pass"> => ({
+const publicUser = (row: any, favorites: string[] = []): Omit<User, "pass"> => ({
   id: row.id,
   name: row.name,
   email: row.email,
   phone: row.phone || "",
   addresses: JSON.parse(row.addresses || "[]"),
   marketing: Boolean(row.marketing),
-  favorites: Array.from(new Set(row.favorites ?? [])),
+  favorites: Array.from(new Set(favorites)),
   createdAt: row.created_at,
 } as Omit<User, "pass">);
 const authUser = (req: Request) => (req as any).customer as any;
@@ -204,7 +209,7 @@ app.get("/api/items/:id", wrap(async (req, res) => {
     ok(res, { subscribed: true });
   }));
 
-  app.get("/api/auth/csrf", (req, res) => ok(res, { csrfToken: ensureCsrfCookie(res, req) }));
+  app.get("/api/auth/csrf", (req, res) => ok(res, { csrfToken: res.locals.csrfToken ?? ensureCsrfCookie(res, req) }));
   app.get("/api/auth/session", wrap(async (req, res) => {
     const auth = currentAuth(req);
     if (!auth) return ok(res, { user: null, role: null });
@@ -726,7 +731,12 @@ app.delete("/api/reservations/:id", requireStaff("kitchen"), wrap(async (req, re
 }));
 
 /* ── customer account / GDPR ───────────────────────────────────────────── */
-app.get("/api/account", requireCustomer, wrap((req, res) => ok(res, publicUser(authUser(req)))));
+app.get("/api/account", requireCustomer, wrap(async (req, res) => {
+  /* Favorites attach via the fail-safe loader: a favorites outage must never
+     break the session/profile page. */
+  const favorites = await safeListFavorites((req as any).requestId || "unknown", currentAuth(req)!.sub);
+  ok(res, publicUser(authUser(req), favorites));
+}));
 
 app.put("/api/account", requireCustomer, wrap(async (req, res) => {
   const auth = currentAuth(req)!;
@@ -738,17 +748,89 @@ app.put("/api/account", requireCustomer, wrap(async (req, res) => {
     phone: body.phone ?? row.phone,
     addresses,
     marketing: body.marketing ?? Boolean(row.marketing),
-    favorites: Array.from(new Set(body.favorites ?? row.favorites ?? [])),
   };
   const { data, error } = await supabaseDb.from("customers").update({
     name: next.name,
     phone: next.phone,
     addresses: next.addresses,
     marketing_consent: next.marketing,
-    favorites: next.favorites,
-  }).eq("id", auth.sub).select("id, name, email, phone, addresses, marketing_consent, favorites, created_at").single();
+  }).eq("id", auth.sub).select("id, name, email, phone, addresses, marketing_consent, created_at").single();
   if (error) throw error;
-  ok(res, publicUser({ ...data, addresses: JSON.stringify(data.addresses ?? []), marketing: data.marketing_consent ? 1 : 0, favorites: data.favorites ?? [], created_at: Date.parse(data.created_at) }));
+  const favorites = await safeListFavorites((req as any).requestId || "unknown", auth.sub);
+  ok(res, publicUser({ ...data, addresses: JSON.stringify(data.addresses ?? []), marketing: data.marketing_consent ? 1 : 0, created_at: Date.parse(data.created_at) }, favorites));
+}));
+
+/* ── favorites (always the session owner's rows) ───────────────────────── */
+app.get("/api/favorites", requireCustomer, wrap(async (req, res) => {
+  ok(res, await safeListFavorites((req as any).requestId || "unknown", currentAuth(req)!.sub));
+}));
+
+app.post("/api/favorites", requireCustomer, wrap(async (req, res) => {
+  const body = favoriteAddSchema.parse(req.body);
+  const added = await addFavorite(currentAuth(req)!.sub, body.itemId);
+  if (!added) return fail(res, 404, "item.notFound");
+  ok(res, { favorites: await listFavorites(currentAuth(req)!.sub) }, 201);
+}));
+
+app.delete("/api/favorites/:itemId", requireCustomer, wrap(async (req, res) => {
+  const itemId = paramId.parse(req.params.itemId);
+  await removeFavorite(currentAuth(req)!.sub, itemId);
+  ok(res, { favorites: await listFavorites(currentAuth(req)!.sub) });
+}));
+
+app.post("/api/favorites/merge", requireCustomer, wrap(async (req, res) => {
+  const body = favoriteMergeSchema.parse(req.body);
+  const favorites = await mergeFavorites((req as any).requestId || "unknown", currentAuth(req)!.sub, body.itemIds);
+  ok(res, { favorites });
+}));
+
+/* ── cart (server-side, per-user; guests get 401) ──────────────────────── */
+app.get("/api/cart", requireCustomer, wrap(async (req, res) => {
+  ok(res, await safeListCart((req as any).requestId || "unknown", currentAuth(req)!.sub));
+}));
+
+app.post("/api/cart/lines", requireCustomer, wrap(async (req, res) => {
+  /* The deterministic merge key is derived server-side when the client did
+     not send one, so direct API callers get the same idempotent stacking. */
+  const rawBody = (req.body ?? {}) as Record<string, unknown>;
+  if (typeof rawBody.key !== "string" || !rawBody.key.length)
+    rawBody.key = `${rawBody.itemId ?? ""}|${rawBody.variantLabel ?? ""}|${JSON.stringify(rawBody.options ?? [])}`.slice(0, 100);
+  const line = cartLineSchema.parse(rawBody) as unknown as CartLine;
+  const added = await addCartLine(currentAuth(req)!.sub, line);
+  if (!added) return fail(res, 404, "item.notFound");
+  ok(res, await safeListCart((req as any).requestId || "unknown", currentAuth(req)!.sub), 201);
+}));
+
+app.patch("/api/cart/lines/:key", requireCustomer, wrap(async (req, res) => {
+  const key = z.string().min(1).max(120).parse(decodeURIComponent(req.params.key));
+  const body = cartQtySchema.parse(req.body);
+  const found = await setCartLineQty(currentAuth(req)!.sub, key, body.qty);
+  if (!found && body.qty > 0) return fail(res, 404, "cart.lineNotFound");
+  ok(res, await safeListCart((req as any).requestId || "unknown", currentAuth(req)!.sub));
+}));
+
+app.delete("/api/cart/lines/:key", requireCustomer, wrap(async (req, res) => {
+  const key = z.string().min(1).max(120).parse(decodeURIComponent(req.params.key));
+  await removeCartLine(currentAuth(req)!.sub, key);
+  ok(res, await safeListCart((req as any).requestId || "unknown", currentAuth(req)!.sub));
+}));
+
+app.delete("/api/cart", requireCustomer, wrap(async (req, res) => {
+  await clearCart(currentAuth(req)!.sub);
+  ok(res, []);
+}));
+
+/* One-time import of a pre-login/local cart after sign-in. Unknown items are
+   skipped; the request only ever touches the session owner's rows. */
+app.put("/api/cart", requireCustomer, wrap(async (req, res) => {
+  const rawBody = (req.body ?? {}) as { lines?: Record<string, unknown>[] };
+  for (const line of rawBody.lines ?? []) {
+    if (typeof line.key !== "string" || !line.key.length)
+      line.key = `${line.itemId ?? ""}|${line.variantLabel ?? ""}|${JSON.stringify(line.options ?? [])}`.slice(0, 100);
+  }
+  const body = cartMergeSchema.parse(rawBody);
+  const lines = await mergeCartLines((req as any).requestId || "unknown", currentAuth(req)!.sub, body.lines as unknown as CartLine[]);
+  ok(res, lines);
 }));
 
 app.put("/api/account/password", requireCustomer, wrap(async (req, res) => {

@@ -6,6 +6,7 @@ import "./globals.css";
 import Header from "@/components/Header";
 import Footer from "@/components/Footer";
 import CartDrawer from "@/components/CartDrawer";
+import LoginGate from "@/components/LoginGate";
 import { FixedBackgroundGate, MobileCTA, PageFade, Splash, Toasts } from "@/components/chrome";
 import { LangProvider } from "@/lib/i18n";
 import { ShopProvider } from "@/lib/store";
@@ -47,6 +48,7 @@ export default function RootLayout({
             </PageFade>
             <Footer />
             <CartDrawer />
+            <LoginGate />
             <MobileCTA />
             <Toasts />
           </ShopProvider>

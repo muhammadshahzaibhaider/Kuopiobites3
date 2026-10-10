@@ -12,10 +12,17 @@ import PreorderSheet from "./PreorderSheet";
 import { MenuImage } from "./ui";
 
 export default function FavoritesSection() {
-  const { favorites, effectiveMenu } = useShop();
+  const { favorites, effectiveMenu, user, openLoginGate } = useShop();
   const { lang } = useLang();
   const [open, setOpen] = useState<MenuItem | null>(null);
   const items = useMemo(() => effectiveMenu(MENU, lang).filter((item) => favorites.includes(item.id)), [effectiveMenu, favorites, lang]);
+  if (!user)
+    return <section className="mt-6 rounded-3xl border border-cherry/10 bg-cream-deep p-6 shadow-card">
+      <p className="font-script text-xl text-gold-deep">saved for later</p>
+      <h2 className="font-display text-lg font-black text-cherry">Favorites</h2>
+      <p className="mt-4 text-sm text-cherry/60">Log in or create an account to save your favorite dishes here.</p>
+      <button type="button" onClick={openLoginGate} className="mt-4 inline-flex min-h-[44px] items-center rounded-full bg-cherry-bright px-6 font-black text-cream hover:bg-cherry">Log in / Sign up</button>
+    </section>;
   return <section className="mt-6 rounded-3xl border border-cherry/10 bg-cream-deep p-6 shadow-card">
     <div className="flex items-end justify-between gap-4"><div><p className="font-script text-xl text-gold-deep">saved for later</p><h2 className="font-display text-lg font-black text-cherry">Favorites</h2></div><span className="text-sm font-black text-cherry/50">{items.length}</span></div>
     {items.length === 0 ? <p className="mt-4 text-sm text-cherry/60">Your favorite dishes will appear here.</p> : <ul className="mt-4 grid gap-3 sm:grid-cols-2">{items.map((item) => <li key={item.id} className="flex items-center gap-3 rounded-2xl bg-cream p-3">

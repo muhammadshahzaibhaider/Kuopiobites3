@@ -57,6 +57,11 @@ interface ShopCtx {
   setQty: (key: string, qty: number) => void;
   removeLine: (key: string) => void;
   clearCart: () => void;
+  /* Guests never mutate cart/favorites: they get a login prompt instead. The
+     pending action is replayed automatically once they sign in. */
+  loginGate: boolean;
+  openLoginGate: () => void;
+  closeLoginGate: () => void;
   cartOpen: boolean;
   setCartOpen: (b: boolean) => void;
   cartCount: number;
@@ -91,10 +96,29 @@ export function useShop(): ShopCtx {
 }
 
 const GUEST_FAVORITES_KEY = "kb_guest_favorites";
+const LEGACY_CART_KEY = "kb_cart";
+const PENDING_ACTION_KEY = "kb_pending_action";
 const readLS = <T,>(k: string, f: T): T => {
   if (typeof window === "undefined") return f;
   try { const r = localStorage.getItem(k); return r ? (JSON.parse(r) as T) : f; } catch { return f; }
 };
+
+/* A deterministic cart-line key: identical item+variant+options merge into one
+   server row no matter which device or session issued them. */
+const lineKeyOf = (l: Omit<CartLine, "key"> | CartLine): string =>
+  `${l.itemId}|${l.variantLabel}|${JSON.stringify(l.options ?? [])}`.slice(0, 100);
+
+type PendingAction =
+  | { kind: "cart"; line: Omit<CartLine, "key"> }
+  | { kind: "favorite"; itemId: string };
+const stashPending = (action: PendingAction) => {
+  try { sessionStorage.setItem(PENDING_ACTION_KEY, JSON.stringify(action)); } catch { /* quota: skip */ }
+};
+const readPending = (): PendingAction | null => {
+  if (typeof window === "undefined") return null;
+  try { const raw = sessionStorage.getItem(PENDING_ACTION_KEY); return raw ? (JSON.parse(raw) as PendingAction) : null; } catch { return null; }
+};
+const clearPending = () => { try { sessionStorage.removeItem(PENDING_ACTION_KEY); } catch { /* noop */ } };
 
 export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -104,11 +128,12 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [authChecked, setAuthChecked] = useState(false);
   const [staffRole, setStaffRole] = useState<string | null>(null);
   const [cart, setCart] = useState<CartLine[]>([]);
-  const [cartReady, setCartReady] = useState(false);
+
   const [orders, setOrders] = useState<Order[]>([]);
   const [users, setUsers] = useState<User[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
+  const [loginGate, setLoginGate] = useState(false);
   const [pulse, setPulse] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
@@ -116,20 +141,69 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const allItems = BASE_ITEMS; // live array, hydrated in place from the backend
   const allCats = BASE_CATS;
 
-  // Load the saved cart AFTER hydration: reading localStorage during the first render made the
-  // client HTML differ from the server HTML (React #418/#423 on every page with a non-empty cart).
-  useEffect(() => {
-    setCart(readLS<CartLine[]>("kb_cart", []));
-    setFavorites(readLS<string[]>(GUEST_FAVORITES_KEY, []));
-    setCartReady(true);
-  }, []);
-  useEffect(() => { if (cartReady) localStorage.setItem("kb_cart", JSON.stringify(cart)); }, [cart, cartReady]);
+  /* The authenticated user's cart & favorites always come from the server
+     (hydrateUser). Guests hold neither — only a legacy local copy imported
+     once on the next sign-in. Nothing user-related is read from this device
+     beyond session cookies. */
 
   const toast = useCallback((msg: string, kind: "ok" | "err" = "ok") => {
     const id = uid("t");
     setToasts((t) => [...t, { id, msg, kind }]);
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
   }, []);
+
+  /* Pull the owner's private data after sign-in: favorites + server cart,
+     import any pre-login leftovers exactly once, then replay the action the
+     guest started (e.g. an Add-to-Cart that was gated behind login). Failures
+     here never break the session itself — each load degrades to empty. */
+  const hydrateUser = useCallback(async (u: User) => {
+    const [favoriteIds, cartLines] = await Promise.all([
+      api.apiListFavorites().catch(() => [] as string[]),
+      api.apiListCart().catch(() => [] as CartLine[]),
+    ]);
+    let favs = favoriteIds;
+    let cartLinesOut = cartLines;
+    const legacyFavs = readLS<string[]>(GUEST_FAVORITES_KEY, []);
+    const legacyCart = readLS<CartLine[]>(LEGACY_CART_KEY, []);
+    if (legacyFavs.length) {
+      try {
+        favs = (await api.apiMergeFavorites(legacyFavs)).favorites;
+      } catch { /* keep server list; legacy key still cleared below */ }
+    }
+    if (legacyCart.length) {
+      try {
+        cartLinesOut = await api.apiMergeCart(legacyCart.map((l) => ({ ...l, key: l.key || lineKeyOf(l) })));
+      } catch { /* keep server list */ }
+    }
+    try {
+      localStorage.removeItem(GUEST_FAVORITES_KEY);
+      localStorage.removeItem(LEGACY_CART_KEY);
+    } catch { /* noop */ }
+    setUser({ ...u, favorites: favs });
+    setFavorites(favs);
+    setCart(cartLinesOut);
+
+    const pending = readPending();
+    if (pending) {
+      clearPending();
+      if (pending.kind === "cart") {
+        try {
+          const line: CartLine = { ...pending.line, key: lineKeyOf(pending.line) };
+          cartLinesOut = await api.apiAddCartLine(line);
+          setCart(cartLinesOut);
+          setPulse((p) => p + 1);
+          setTimeout(() => toast("Added to cart ✔"), 0);
+        } catch { setTimeout(() => toast("Item could not be added — pick it again from the menu", "err"), 0); }
+      } else if (pending.kind === "favorite" && !favs.includes(pending.itemId)) {
+        try {
+          const updated = await api.apiAddFavorite(pending.itemId);
+          setFavorites(updated.favorites);
+          setUser((prev) => (prev ? { ...prev, favorites: updated.favorites } : prev));
+          setTimeout(() => toast("Added to favorites"), 0);
+        } catch { /* keep as-is */ }
+      }
+    }
+  }, [toast]);
 
   /* ── boot: hydrate everything from the backend ── */
   const refresh = useCallback(async () => {
@@ -142,17 +216,12 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       hydrateMenu(items, cats);
       hydrateTranslations(tr);
       const sessionUser = (session.user ?? null) as User | null;
-      const guest = readLS<string[]>(GUEST_FAVORITES_KEY, []);
       if (sessionUser) {
-        const merged = Array.from(new Set([...(sessionUser.favorites ?? []), ...guest]));
-        setUser({ ...sessionUser, favorites: merged });
-        setFavorites(merged);
-        if (guest.length || merged.length !== (sessionUser.favorites ?? []).length) {
-          try { await api.apiUpdateAccount({ favorites: merged }); localStorage.removeItem(GUEST_FAVORITES_KEY); } catch { /* keep optimistic favorites; retry on next account action */ }
-        }
+        await hydrateUser(sessionUser);
       } else {
         setUser(null);
-        setFavorites(Array.from(new Set(guest)));
+        setFavorites([]);
+        setCart([]);
       }
       setStaffRole(staffSession.role);
       if (staffSession.role) {
@@ -172,7 +241,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setAuthChecked(true);
     }
-  }, []);
+  }, [hydrateUser]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   /* ── auth: identity is maintained by HttpOnly cookies, never localStorage ── */
@@ -184,7 +253,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
            the SMTP confirmation link and never returns the token. */
         await api.apiConfirmEmail(result.devConfirmationToken);
         const u = await api.apiLogin(d.email, d.pass);
-        setUser(u as User);
+        await hydrateUser(u as User);
         void refresh();
         return null;
       }
@@ -195,23 +264,32 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const login: ShopCtx["login"] = async (email, pass, remember = true) => {
     try {
       const u = await api.apiLogin(email, pass, remember);
-      const guest = readLS<string[]>(GUEST_FAVORITES_KEY, []);
-      const merged = Array.from(new Set([...(u.favorites ?? []), ...guest]));
-      setUser({ ...(u as User), favorites: merged });
-      setFavorites(merged);
-      if (guest.length) { await api.apiUpdateAccount({ favorites: merged }); localStorage.removeItem(GUEST_FAVORITES_KEY); }
-      void refresh();
+      await hydrateUser(u as User);
+      api.apiAccountOrders().then(setOrders).catch(() => {});
       return null;
     } catch (e) { return (e as Error).message; }
   };
-  const logout = () => {
-    localStorage.setItem(GUEST_FAVORITES_KEY, JSON.stringify(favorites));
-    void api.apiLogout(); setUser(null); setFavorites(favorites); setOrders([]);
+  /* Signing out wipes every trace of the owner: no cart, no favorites, no
+     cached private data survives into the next session on this device. */
+  const logout = async () => {
+    try { await api.apiLogout(); } catch { /* backend down: still clear locally */ }
+    try {
+      localStorage.removeItem(GUEST_FAVORITES_KEY);
+      localStorage.removeItem(LEGACY_CART_KEY);
+    } catch { /* noop */ }
+    clearPending();
+    setUser(null);
+    setFavorites([]);
+    setCart([]);
+    setOrders([]);
+    setUsers([]);
+    setCartOpen(false);
+    setLoginGate(false);
+    setAuthChecked(true);
   };
   const updateUser: ShopCtx["updateUser"] = async (patch) => {
     const u = await api.apiUpdateAccount(patch);
     setUser({ ...user, ...u } as User);
-    if (patch.favorites) setFavorites(Array.from(new Set(patch.favorites)));
   };
   const changePassword: ShopCtx["changePassword"] = async (current, next) => {
     try { await api.apiChangePassword(current, next); return null; }
@@ -219,15 +297,22 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   };
   const isFavorite = useCallback((itemId: string) => favorites.includes(itemId), [favorites]);
   const toggleFavorite: ShopCtx["toggleFavorite"] = async (itemId) => {
+    /* Guests never mutate favorites: stash the intent behind the login gate. */
+    if (!user) {
+      stashPending({ kind: "favorite", itemId });
+      setLoginGate(true);
+      return;
+    }
     const previous = favorites;
-    const next = previous.includes(itemId) ? previous.filter((id) => id !== itemId) : [...previous, itemId];
+    const adding = !previous.includes(itemId);
+    const next = adding ? [...previous, itemId] : previous.filter((id) => id !== itemId);
     setFavorites(next);
-    if (!user) { localStorage.setItem(GUEST_FAVORITES_KEY, JSON.stringify(next)); toast(previous.includes(itemId) ? "Removed from favorites" : "Added to favorites"); return; }
     setUser({ ...user, favorites: next });
     try {
-      const updated = await api.apiUpdateAccount({ favorites: next });
-      setUser({ ...user, ...updated, favorites: next } as User);
-      toast(previous.includes(itemId) ? "Removed from favorites" : "Added to favorites");
+      const res = adding ? await api.apiAddFavorite(itemId) : await api.apiRemoveFavorite(itemId);
+      setFavorites(res.favorites);
+      setUser((prev) => (prev ? { ...prev, favorites: res.favorites } : prev));
+      toast(adding ? "Added to favorites" : "Removed from favorites");
     } catch (e) {
       setFavorites(previous); setUser({ ...user, favorites: previous });
       toast((e as Error).message || "Could not update favorites", "err");
@@ -244,22 +329,44 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   };
   const adminLogout = () => { void api.apiAdminLogout(); setStaffRole(null); setOrders([]); };
 
-  /* ── cart (local; totals always from the server) ── */
+  /* ── cart (server is the single source of truth for logged-in users;
+        totals always re-priced by the server at checkout) ── */
+  /* Re-sync from the server whenever a mutation failed or raced. */
+  const syncCart = () => { if (user) api.apiListCart().then(setCart).catch(() => {}); };
   const addLine: ShopCtx["addLine"] = (l) => {
+    /* Guests get the login prompt; the line is replayed after they sign in. */
+    if (!user) {
+      stashPending({ kind: "cart", line: l });
+      setLoginGate(true);
+      return;
+    }
+    const line: CartLine = { ...l, key: lineKeyOf(l) };
     setCart((p) => {
-      const same = p.find(
-        (x) => x.itemId === l.itemId && x.variantLabel === l.variantLabel &&
-          JSON.stringify(x.options) === JSON.stringify(l.options)
-      );
-      if (same) return p.map((x) => (x.key === same.key ? { ...x, qty: x.qty + l.qty } : x));
-      return [...p, { ...l, key: uid("l") }];
+      const same = p.find((x) => x.key === line.key);
+      if (same) return p.map((x) => (x.key === line.key ? { ...x, qty: Math.min(x.qty + line.qty, 99) } : x));
+      return [...p, line];
     });
     setPulse((p) => p + 1);
+    api.apiAddCartLine(line).then(setCart).catch((e) => {
+      toast((e as Error).message || "Cart could not be updated", "err");
+      syncCart();
+    });
   };
-  const setQty = (key: string, qty: number) =>
-    setCart((p) => (qty <= 0 ? p.filter((x) => x.key !== key) : p.map((x) => (x.key === key ? { ...x, qty } : x))));
-  const removeLine = (key: string) => setCart((p) => p.filter((x) => x.key !== key));
-  const clearCart = () => setCart([]);
+  const setQty = (key: string, qty: number) => {
+    if (!user) return;
+    if (qty <= 0) { removeLine(key); return; }
+    setCart((p) => p.map((x) => (x.key === key ? { ...x, qty } : x)));
+    api.apiSetCartQty(key, qty).then(setCart).catch(syncCart);
+  };
+  const removeLine = (key: string) => {
+    if (!user) return;
+    setCart((p) => p.filter((x) => x.key !== key));
+    api.apiRemoveCartLine(key).then(setCart).catch(syncCart);
+  };
+  const clearCart = () => {
+    setCart([]);
+    if (user) api.apiClearCart().then(setCart).catch(syncCart);
+  };
   const cartCount = cart.reduce((a, l) => a + l.qty, 0);
   const cartSubtotal = cart.reduce((a, l) => a + l.qty * l.unitPrice, 0);
 
@@ -507,7 +614,10 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     patchItem, moveItem, moveItemTo, addItem, removeAdded, addCat, setItemText,
     effectiveMenu, categories,
     user, authChecked, users, register, login, logout, updateUser, changePassword, favorites, isFavorite, toggleFavorite, adminLogin, adminLogout, staffRole,
-    cart, addLine, setQty, removeLine, clearCart, cartOpen, setCartOpen, cartCount, cartSubtotal,
+    cart, addLine, setQty, removeLine, clearCart, loginGate,
+    openLoginGate: () => setLoginGate(true),
+    closeLoginGate: () => setLoginGate(false),
+    cartOpen, setCartOpen, cartCount, cartSubtotal,
     pulse, priceCart, serverPricing,
     orders, startCheckout, placeOrder, setOrderStatus, refundOrder, orderStatus,
     reservations, addReservation, cancelReservation, setReservationStatus,
