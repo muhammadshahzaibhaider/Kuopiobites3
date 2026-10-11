@@ -1,11 +1,13 @@
 import "./config";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-const url = process.env.SUPABASE_URL;
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const url = (process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim();
+const key = (process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SECRET_KEY || "").trim();
 
 if (!url || !key) {
-  throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in backend/.env");
+  if (!process.env.VERCEL) {
+    throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in backend/.env");
+  }
 }
 
 const authOptions = {
@@ -14,9 +16,24 @@ const authOptions = {
   detectSessionInUrl: false,
 };
 
-export const db: SupabaseClient = createClient(url, key, { auth: authOptions });
+function requireClient(): SupabaseClient {
+  if (!url || !key) {
+    throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in backend/.env");
+  }
+  return createClient(url, key, { auth: authOptions });
+}
 
-export const authClient = (): SupabaseClient => createClient(url, key, { auth: authOptions });
+const eagerClient: SupabaseClient | null = url && key ? createClient(url, key, { auth: authOptions }) : null;
+
+export const db: SupabaseClient = eagerClient ?? new Proxy({} as SupabaseClient, {
+  get(_target, prop, receiver) {
+    const client = requireClient();
+    const value = Reflect.get(client, prop, receiver);
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});
+
+export const authClient = (): SupabaseClient => requireClient();
 
 export function must<T>(result: { data: T | null; error: { message: string } | null }): T {
   if (result.error) throw new Error(result.error.message);

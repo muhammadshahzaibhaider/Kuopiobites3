@@ -30,7 +30,15 @@ import { addCartLine, clearCart, listCart, mergeCartLines, removeCartLine, safeL
 
 const app = express();
 export default app;
-app.set("trust proxy", CFG.isProduction ? 1 : false);
+app.set("trust proxy", CFG.isProduction || Boolean(process.env.VERCEL) ? 1 : false);
+
+const bareApiPrefix = /^\/(?:health|categories|items|settings|translations|todays-special|newsletter|auth|cart|uploads|checkout|orders|reservations|account|favorites|promotions|admin|customers|analytics|webhooks)(?:\/|\?|$)/;
+app.use((req, _res, next) => {
+  if (bareApiPrefix.test(req.url)) {
+    req.url = `/api${req.url}`;
+  }
+  next();
+});
 
 /* Security headers apply to JSON, media, and error responses. The browser CSP
    itself is also set by Next.js; this API policy is intentionally conservative. */
@@ -159,6 +167,10 @@ const newsletterLimiter = rateLimit({ windowMs: CFG.rate.newsletterWindowMs, lim
    scraping and credential tooling. Per-endpoint limits above stay stricter. */
 const apiLimiter = rateLimit({ windowMs: CFG.rate.apiWindowMs, limit: CFG.rate.apiMax, standardHeaders: "draft-7", legacyHeaders: false, handler: tooManyJson });
 app.use("/api", apiLimiter);
+
+app.get(["/", "/api"], (_req, res) => {
+  ok(res, { status: "ok", ts: Date.now() });
+});
 
 app.get("/api/health", wrap(async (_req, res) => {
   const { error } = await supabaseDb.from("categories").select("id").limit(1);
