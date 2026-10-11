@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
-import { resolve, dirname } from "node:path";
+import { resolve } from "node:path";
 
-const here = __dirname;
+const here = typeof __dirname !== "undefined" ? __dirname : resolve(process.cwd(), "src");
 const envPath = resolve(here, "../.env");
 
 /**
@@ -34,7 +34,20 @@ const bool = (name: string, fallback: boolean): boolean => {
 };
 
 const nodeEnv = process.env.NODE_ENV || "development";
-const rawOrigins = (process.env.CORS_ORIGINS || "http://localhost:3000")
+const isVercel = Boolean(process.env.VERCEL);
+const vercelOrigin = process.env.VERCEL_URL
+  ? (process.env.VERCEL_URL.startsWith("http") ? process.env.VERCEL_URL : `https://${process.env.VERCEL_URL}`)
+  : undefined;
+
+const defaultOrigins =
+  process.env.CORS_ORIGINS ||
+  process.env.CORS_ORIGIN ||
+  process.env.PUBLIC_WEB_URL ||
+  process.env.FRONTEND_URL ||
+  vercelOrigin ||
+  (nodeEnv === "production" ? "https://localhost" : "http://localhost:3000");
+
+const rawOrigins = defaultOrigins
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -52,12 +65,26 @@ const origins = rawOrigins.map((origin) => {
   return parsed.origin;
 });
 
-if (nodeEnv === "production" && origins.some((origin) => !origin.startsWith("https://"))) {
+const isHttpsOrLocalhost = (urlStr: string): boolean =>
+  urlStr.startsWith("https://") || /^http:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?$/i.test(urlStr);
+
+if (nodeEnv === "production" && !isVercel && origins.some((origin) => !origin.startsWith("https://"))) {
   throw new Error("Production CORS_ORIGINS must contain HTTPS origins only");
 }
-if (nodeEnv === "production" && !(process.env.PUBLIC_WEB_URL || origins[0]).startsWith("https://"))
+if (nodeEnv === "production" && isVercel && origins.some((origin) => !isHttpsOrLocalhost(origin))) {
+  throw new Error("Production CORS_ORIGINS must contain HTTPS origins only");
+}
+
+const publicWebUrl = (process.env.PUBLIC_WEB_URL || process.env.FRONTEND_URL || origins[0]).replace(/\/+$/, "");
+const publicApiUrl = (
+  process.env.PUBLIC_API_URL ||
+  vercelOrigin ||
+  (nodeEnv === "production" ? publicWebUrl : `http://localhost:${positiveInt("PORT", 4000)}`)
+).replace(/\/+$/, "");
+
+if (nodeEnv === "production" && !(isVercel ? isHttpsOrLocalhost(publicWebUrl) : publicWebUrl.startsWith("https://")))
   throw new Error("PUBLIC_WEB_URL must be HTTPS in production");
-if (nodeEnv === "production" && !(process.env.PUBLIC_API_URL || "").startsWith("https://"))
+if (nodeEnv === "production" && !(isVercel ? isHttpsOrLocalhost(publicApiUrl) : publicApiUrl.startsWith("https://")))
   throw new Error("PUBLIC_API_URL must be HTTPS in production");
 
 const cookieSameSite = (process.env.COOKIE_SAME_SITE || "lax").toLowerCase();
@@ -71,15 +98,17 @@ const allowDemoPayments = bool("ALLOW_DEMO_PAYMENTS", false);
 if (nodeEnv === "production" && allowDemoPayments)
   throw new Error("ALLOW_DEMO_PAYMENTS is forbidden in production");
 
+const dataRoot = isVercel ? "/tmp" : resolve(here, "..");
+
 export const CFG = {
   nodeEnv,
   isProduction: nodeEnv === "production",
   port: positiveInt("PORT", 4000),
   corsOrigins: origins,
-  publicWebUrl: process.env.PUBLIC_WEB_URL || origins[0],
-  publicApiUrl: process.env.PUBLIC_API_URL || `http://localhost:${positiveInt("PORT", 4000)}`,
-  dbFile: resolve(here, "..", process.env.DB_FILE || "./data/kuopio.db"),
-  uploadsDir: resolve(here, "..", process.env.UPLOAD_DIR || "./data/uploads"),
+  publicWebUrl,
+  publicApiUrl,
+  dbFile: resolve(dataRoot, process.env.DB_FILE || "./data/kuopio.db"),
+  uploadsDir: resolve(dataRoot, process.env.UPLOAD_DIR || "./data/uploads"),
   jsonBodyLimit: process.env.JSON_BODY_LIMIT || "2mb",
   maxUploadBytes: positiveInt("MAX_UPLOAD_BYTES", 5 * 1024 * 1024),
   cookieSecure,
@@ -114,4 +143,3 @@ export const CFG = {
      configured in the Supabase Dashboard, never in this process. */
   allowDemoPayments,
 };
-
