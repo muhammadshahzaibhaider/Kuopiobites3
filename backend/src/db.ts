@@ -1,4 +1,18 @@
-import Database from "better-sqlite3";
+export interface LegacyDb {
+  pragma(sql: string): unknown;
+  exec(sql: string): unknown;
+  prepare(sql: string): {
+    run(...params: unknown[]): unknown;
+    get(...params: unknown[]): unknown;
+    all(...params: unknown[]): unknown;
+  };
+}
+type DatabaseCtor = new (path: string) => LegacyDb;
+const Database: DatabaseCtor = (() => {
+  const mod = (require("better-sqlite3") as { default?: DatabaseCtor } | DatabaseCtor);
+  return (mod as { default?: DatabaseCtor }).default ?? (mod as DatabaseCtor);
+})();
+
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { CFG } from "./config";
