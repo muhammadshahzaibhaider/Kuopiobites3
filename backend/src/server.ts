@@ -29,6 +29,7 @@ import { addFavorite, listFavorites, mergeFavorites, removeFavorite, safeListFav
 import { addCartLine, clearCart, listCart, mergeCartLines, removeCartLine, safeListCart, setCartLineQty } from "./supabase-cart";
 
 const app = express();
+export default app;
 app.set("trust proxy", CFG.isProduction ? 1 : false);
 
 /* Security headers apply to JSON, media, and error responses. The browser CSP
@@ -1043,6 +1044,8 @@ app.use((err: Error & { status?: number; type?: string }, req: Request, res: Res
   fail(res, err.message.startsWith("CORS") ? 403 : 500, err.message.startsWith("CORS") ? "cors.forbidden" : "internal");
 });
 
-app.listen(CFG.port, "0.0.0.0", () => {
-  console.log(`backend listening on :${CFG.port} (origins: ${CFG.corsOrigins.join(", ")})`);
-});
+if (!process.env.VERCEL) {
+  app.listen(CFG.port, "0.0.0.0", () => {
+    console.log(`backend listening on :${CFG.port} (origins: ${CFG.corsOrigins.join(", ")})`);
+  });
+}
