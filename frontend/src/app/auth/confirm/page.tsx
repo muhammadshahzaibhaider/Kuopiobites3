@@ -13,9 +13,8 @@ function ConfirmInner() {
   const ran = useRef(false);
 
   useEffect(() => {
-    if (ran.current) return; // React 18 strict-mode double effect
+    if (ran.current) return;
     ran.current = true;
-    /* Supabase links arrive as ?code= (PKCE), ?token_hash=&type=, or #access_token (implicit). */
     const code = params.get("code") || "";
     const tokenHash = params.get("token_hash") || params.get("token") || "";
     const type = params.get("type") || undefined;
@@ -31,7 +30,7 @@ function ConfirmInner() {
       .then(() => refresh())
       .then(() => {
         setState("ok");
-        setTimeout(() => router.replace("/account"), 900);
+        setTimeout(() => router.replace("/login"), 4000);
       })
       .catch(() => setState("error"));
   }, [params, refresh, router]);
@@ -40,13 +39,13 @@ function ConfirmInner() {
     <main className="container-x pt-32 pb-16 text-center">
       <div className="mx-auto max-w-lg rounded-3xl border border-cherry/10 bg-cream-deep p-8 shadow-card">
         <h1 className="font-display text-3xl font-black text-cherry">
-          {state === "loading" ? "Confirming your email…" : state === "ok" ? "Email confirmed 🎉" : "Confirmation link invalid"}
+          {state === "loading" ? "Confirming your email…" : state === "ok" ? "Account created successfully 🎉" : "Confirmation link invalid"}
         </h1>
         <p className="mt-3 text-cherry/70" role={state === "error" ? "alert" : undefined}>
-          {state === "ok" ? "You're signed in — taking you to your account…" : state === "error" ? "The link may have expired or already been used. You can request a new one from the sign-in page." : "Please wait a moment."}
+          {state === "ok" ? "You're all set — now sign in to continue. Taking you to the sign-in page in a few seconds…" : state === "error" ? "The link may have expired or already been used. You can request a new one from the sign-in page." : "Please wait a moment."}
         </p>
         {state === "error" && <Link href="/login" className="mt-6 inline-flex min-h-[48px] items-center rounded-full bg-cherry-bright px-7 font-black text-cream">Back to sign in</Link>}
-        {state === "ok" && <Link href="/account" className="mt-6 inline-flex min-h-[48px] items-center rounded-full bg-cherry-bright px-7 font-black text-cream">Go to account</Link>}
+        {state === "ok" && <Link href="/login" className="mt-6 inline-flex min-h-[48px] items-center rounded-full bg-cherry-bright px-7 font-black text-cream">Sign in to continue</Link>}
       </div>
     </main>
   );
