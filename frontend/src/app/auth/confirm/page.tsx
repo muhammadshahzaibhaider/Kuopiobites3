@@ -25,27 +25,39 @@ function ConfirmInner() {
       : tokenHash ? { token: tokenHash, type } as const
       : accessToken && refreshToken ? { accessToken, refreshToken } as const
       : null;
+    /* Code-based confirmations (email link + Google OAuth callback) establish a
+       session directly, so route the user onward; token/OTP flows still need a
+       sign-in. `next` (set by the Google OAuth start) overrides the default. */
+    const next = params.get("next") || (code ? "/account" : "/login");
     if (!confirmation) { setState("error"); return; }
     apiConfirmEmail(confirmation)
       .then(() => refresh())
       .then(() => {
         setState("ok");
-        setTimeout(() => router.replace("/login"), 4000);
+        setTimeout(() => router.replace(next), 4000);
       })
       .catch(() => setState("error"));
   }, [params, refresh, router]);
+
+  const signedIn = params.get("code");
 
   return (
     <main className="container-x pt-32 pb-16 text-center">
       <div className="mx-auto max-w-lg rounded-3xl border border-cherry/10 bg-cream-deep p-8 shadow-card">
         <h1 className="font-display text-3xl font-black text-cherry">
-          {state === "loading" ? "Confirming your email…" : state === "ok" ? "Account created successfully 🎉" : "Confirmation link invalid"}
+          {state === "loading" ? (signedIn ? "Signing you in…" : "Confirming your email…") : state === "ok" ? (signedIn ? "Signed in with Google 🎉" : "Account created successfully 🎉") : "Confirmation link invalid"}
         </h1>
         <p className="mt-3 text-cherry/70" role={state === "error" ? "alert" : undefined}>
-          {state === "ok" ? "You're all set — now sign in to continue. Taking you to the sign-in page in a few seconds…" : state === "error" ? "The link may have expired or already been used. You can request a new one from the sign-in page." : "Please wait a moment."}
+          {state === "ok"
+            ? (signedIn
+                ? "You're in! Taking you to your account in a few seconds…"
+                : "You're all set — now sign in to continue. Taking you to the sign-in page in a few seconds…")
+            : state === "error"
+              ? "The link may have expired or already been used. You can request a new one from the sign-in page."
+              : "Please wait a moment."}
         </p>
         {state === "error" && <Link href="/login" className="mt-6 inline-flex min-h-[48px] items-center rounded-full bg-cherry-bright px-7 font-black text-cream">Back to sign in</Link>}
-        {state === "ok" && <Link href="/login" className="mt-6 inline-flex min-h-[48px] items-center rounded-full bg-cherry-bright px-7 font-black text-cream">Sign in to continue</Link>}
+        {state === "ok" && <Link href={signedIn ? "/account" : "/login"} className="mt-6 inline-flex min-h-[48px] items-center rounded-full bg-cherry-bright px-7 font-black text-cream">{signedIn ? "Go to account" : "Sign in to continue"}</Link>}
       </div>
     </main>
   );
