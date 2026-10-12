@@ -36,7 +36,8 @@ Role matrix (enforced server-side, never by hiding UI):
 - `GET /api/auth/csrf` → a non-secret CSRF token and sets the CSRF cookie.
 - `GET /api/auth/session` → current customer session; send `X-Session-Scope: staff` to inspect the staff session.
 - `POST /api/auth/register {name,email,pass,phone?}` → an unverified account and `needsConfirmation: true`. Passwords must be at least 12 characters. Email confirmation is required before login; SMTP is required in production.
-- `POST /api/auth/confirm-email {token}` → consumes a single-use, 24-hour confirmation token.
+- `POST /api/auth/confirm-email {token}` → consumes a single-use, 24-hour confirmation token. Also accepts `{code}` (authorization-code flow) used by email-confirmation and Google OAuth callbacks; the code is redeemed server-side for a session cookie and a `customers` row is ensured for first-time sign-ins.
+- `GET /api/auth/google` → starts the Supabase Google OAuth flow and 302-redirects the browser to Google. The provider is already enabled in the Supabase dashboard. Google returns to `/auth/confirm?code=…&next=/account`, which the existing confirm-email code exchange redeems for the session cookie. No client-side Supabase key is exposed; the browser only ever holds the HttpOnly session cookie.
 - `POST /api/auth/login {email,pass}` → customer session cookie. Failed attempts are rate-limited, audited without raw identifiers, and temporarily locked after the configured threshold.
 - `POST /api/auth/admin-login {username,password}` → staff session cookie. Staff remain email/password-only; roles are `owner`, `manager`, and `kitchen`.
 - `POST /api/auth/logout` → clears both session cookies.

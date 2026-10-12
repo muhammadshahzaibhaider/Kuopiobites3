@@ -35,6 +35,15 @@ export const db: SupabaseClient = eagerClient ?? new Proxy({} as SupabaseClient,
 
 export const authClient = (): SupabaseClient => requireClient();
 
+/**
+ * A Supabase auth client pinned to the non-PKCE authorization-code flow. We
+ * exchange the OAuth `?code=` on the server (in /api/auth/confirm-email) where
+ * no browser-stored PKCE verifier exists, so the code must be redeemable without
+ * one. Used for both Google sign-in initiation and the server-side code exchange.
+ */
+export const codeFlowAuthClient = (): SupabaseClient =>
+  url && key ? createClient(url, key, { auth: { ...authOptions, flowType: "code" } }) : requireClient();
+
 export function must<T>(result: { data: T | null; error: { message: string } | null }): T {
   if (result.error) throw new Error(result.error.message);
   if (result.data === null) throw new Error("not found");

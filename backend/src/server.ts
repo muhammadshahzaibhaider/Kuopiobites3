@@ -6,12 +6,12 @@ import { z } from "zod";
 import { createHmac, randomBytes, timingSafeEqual, createHash } from "node:crypto";
 import Stripe from "stripe";
 import { CFG } from "./config";
-import { authClient, db as supabaseDb, logActivity } from "./supabase";
+import { authClient, codeFlowAuthClient, db as supabaseDb, logActivity } from "./supabase";
 import { getItem, listCategories, listItems, toDatabaseItem } from "./supabase-menu";
 import { getOrder, listCustomerOrders, listOrders } from "./supabase-orders";
 import { saveSettings } from "./supabase-settings";
 import {
-  clearSessionCookies, currentAuth, customerRow, ensureCsrfCookie, issueCustomerSession, issueStaffSession,
+  clearSessionCookies, currentAuth, customerRow, ensureCsrfCookie, ensureCustomerRow, issueCustomerSession, issueStaffSession,
   readAuth, requireCustomer, requireStaff, staffById, staffRow, csrfCookie,
   type Role, type TokenPayload,
 } from "./auth";
@@ -301,16 +301,35 @@ app.get("/api/items/:id", wrap(async (req, res) => {
     ok(res, { role: staff.role });
   }));
 
+  /* Google sign-in (Supabase OAuth, provider already enabled). Starts the
+     authorization-code flow and 302-redirects the browser to Google. Google
+     returns to /auth/confirm?code=…, which the existing confirm-email code
+     exchange below redeems for a session cookie. `next` is threaded through so
+     the callback can land the user on the right page. */
+  app.get("/api/auth/google", wrap(async (_req, res) => {
+    const { data, error } = await codeFlowAuthClient().auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: `${CFG.publicWebUrl}/auth/confirm?next=/account` },
+    });
+    if (error || !data.url) return fail(res, 503, "auth.oauthUnavailable");
+    res.redirect(data.url);
+  }));
+
   app.post("/api/auth/confirm-email", authLimiter, wrap(async (req, res) => {
     const body = z.union([
       confirmEmailSchema,
       z.object({ accessToken: z.string().min(1), refreshToken: z.string().min(1) }).strict(),
     ]).parse(req.body);
     if ("code" in body) {
-      /* PKCE links (Supabase default for newer projects) carry ?code=. */
-      const { data, error } = await authClient().auth.exchangeCodeForSession(body.code);
+      /* Authorization-code links (Supabase email & OAuth callbacks) carry ?code=.
+         Redeemed server-side on the non-PKCE code-flow client, so no browser
+         verifier is required. */
+      const { data, error } = await codeFlowAuthClient().auth.exchangeCodeForSession(body.code);
       if (error || !data.user || !data.session) return fail(res, 400, "auth.confirmationInvalid");
       issueCustomerSession(res, data.session.access_token, data.session.refresh_token);
+      /* First-time Google (and other code-flow) users must own a customers row
+         so cart / favorites / orders hydrate; the DB trigger also covers this. */
+      await ensureCustomerRow(data.user);
       return ok(res, { confirmed: true });
     }
     if ("token" in body) {
@@ -555,7 +574,7 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
       }],
       customer_email: created.order.customer.email,
       metadata: { order_id: created.order.id, amount_eur: created.order.total.toFixed(2) },
-      success_url: `${CFG.publicWebUrl}/track/${created.order.id}?payment=success`,
+      success_url: `${CFG.publicWebUrl}/track?id=${created.order.id}&payment=success`,
       cancel_url: `${CFG.publicWebUrl}/order?payment=cancelled`,
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
     });

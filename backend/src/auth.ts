@@ -200,3 +200,38 @@ export async function staffRow(username: string) {
 export function csrfCookie(req: Request): string | null {
   return cookieValue(req, CFG.csrfCookieName);
 }
+
+/**
+ * Idempotently provisions a `customers` profile row for an Auth identity.
+ *
+ * A database trigger (`on_auth_user_created`) already inserts this row for every
+ * new Auth user — including first-time Google sign-ins — but we re-assert it here
+ * so a Google user is guaranteed a profile (id, email, name) before the SPA reads
+ * their session. Without the row, `requireCustomer` would reject them and their
+ * cart / favorites / orders would not hydrate. `ignoreDuplicates` keeps any
+ * existing row (and its name) intact — this never clobbers data.
+ */
+export async function ensureCustomerRow(user: {
+  id: string;
+  email?: string | null;
+  phone?: string | null;
+  user_metadata?: Record<string, unknown> | null;
+}): Promise<void> {
+  const meta = (user.user_metadata ?? {}) as Record<string, unknown>;
+  const name =
+    (typeof meta.full_name === "string" && meta.full_name.trim()) ||
+    (typeof meta.name === "string" && meta.name.trim()) ||
+    "";
+  const email = (user.email ?? "").toLowerCase().trim();
+  try {
+    const { error } = await db.from("customers").upsert(
+      { id: user.id, email: email || null, name, phone: user.phone ?? null },
+      { onConflict: "id", ignoreDuplicates: true }
+    );
+    if (error) throw error;
+  } catch (error) {
+    /* Non-fatal: the trigger provisions the row independently, so a transient
+       failure here must not break the sign-in that already succeeded. */
+    console.error("ensureCustomerRow failed:", error instanceof Error ? error.message : error);
+  }
+}
