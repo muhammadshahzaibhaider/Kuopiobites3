@@ -216,7 +216,6 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
                   name: item.name,
                   variantLabel: item.prices[variant].label ?? "",
                   qty,
-                  variantLabel: item.prices[variant].label ?? "",
                   options,
                   note: note.trim() || undefined,
                   img: settings.itemImages[item.id]?.src,
