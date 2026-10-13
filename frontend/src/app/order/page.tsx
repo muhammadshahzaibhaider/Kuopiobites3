@@ -43,6 +43,10 @@ export default function OrderPage() {
   const total = serverPricing?.total ?? localTotal;
   const vat = serverPricing?.vat ?? Math.round((total * (settings.vatRate / (1 + settings.vatRate))) * 100) / 100;
 
+  useEffect(() => {
+    setPhone(user?.phone ?? "");
+  }, [user?.phone]);
+
   useEffect(() => { void priceCart(type, code || undefined); /* server-side reprice on every cart change */ }, [cart, type, code]);
 
   const postalOk = useMemo(() => {
@@ -51,7 +55,8 @@ export default function OrderPage() {
     return !!m && m[1].startsWith("70");
   }, [address, type]);
   const minOk = type !== "delivery" || cartSubtotal >= settings.minOrder;
-  const canPay = (open.open || !!scheduled) && user && cart.length > 0 && postalOk && minOk && unavailable.length === 0 && !preErr && !paying;
+  const phoneOk = phone.trim().length >= 3;
+  const canPay = (open.open || !!scheduled) && user && cart.length > 0 && phoneOk && postalOk && minOk && unavailable.length === 0 && !preErr && !paying;
 
   const pay = async () => {
     if (!user) return;
@@ -132,10 +137,12 @@ export default function OrderPage() {
             {user ? (
               <div className="rounded-3xl border border-cherry/10 bg-cream-deep p-5 text-sm font-bold text-cherry/80 shadow-card">
                 {user.name} · {user.email}
-                {phone === "" && (
+                {(user.phone ?? "").trim().length < 3 && (
                   <input
+                    type="tel"
+                    autoComplete="tel"
                     className="mt-3 min-h-[44px] w-full rounded-2xl border border-cherry/20 bg-cream px-4"
-                    placeholder="Phone for order updates"
+                    placeholder="Phone for order updates (required)"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                   />
