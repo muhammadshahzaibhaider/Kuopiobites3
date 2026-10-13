@@ -204,18 +204,20 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
             <button
               disabled={!valid}
               onClick={() => {
-                const gName: Record<string, string> = { top: "Täytteet", spice: "Spice", sauce: "Kastike", dips: "Dipit" };
+                /* Backend re-validates EVERY options entry as an exact menu-option label.
+                   Display strings like "Spice: medium"/"Note: ..." can never match → 400
+                   validation.invalidOption. Send raw selected labels; note has its own field. */
                 const options: string[] = [];
                 for (const g of item.mods ?? []) {
                   const p = sel[g.id] ?? [];
-                  if (p.length) options.push(`${gName[g.id] ?? g.name}: ${p.join(", ")}`);
+                  if (p.length) options.push(...p);
                 }
-                if (note.trim()) options.push(`Note: ${note.trim()}`);
                 addLine({
                   itemId: item.id,
                   name: item.name,
                   variantLabel: item.prices[variant].label ?? "",
                   qty,
+                  unitPrice: off ? off.now : unit,
                   options,
                   note: note.trim() || undefined,
                   img: settings.itemImages[item.id]?.src,
