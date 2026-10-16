@@ -184,7 +184,8 @@ export function liveOffers(s: Settings): Offer[] {
   return s.offers
     .filter((o) => o.active)
     .filter((o) => (!o.start || o.start <= today) && (!o.end || o.end >= today))
-    .filter((o) => !o.days?.length || o.days.includes(day));
+    .filter((o) => !o.days?.length || o.days.includes(day))
+    .filter((o) => !o.maxUses || (o.uses ?? 0) < o.maxUses);
 }
 
 export interface DiscountResult {
@@ -199,56 +200,56 @@ export function computeDiscount(
   lines: CartLine[],
   subtotal: number,
   lang: Lang,
-  code?: string
+  code?: string,
+  items: MenuItem[] = MENU,
 ): DiscountResult {
-  const live = liveOffers(s).filter((o) => !o.code || (code ?? "").toUpperCase() === o.code.toUpperCase());
+  const normalizedCode = code?.trim().toUpperCase();
+  const live = liveOffers(s).filter((offer) => !offer.code || normalizedCode === offer.code.trim().toUpperCase());
+  const itemById = new Map(items.map((item) => [item.id, item]));
   let best: DiscountResult = { amount: 0, title: "", freeDelivery: false };
-  for (const o of live) {
-    const scoped = lines.filter((l) =>
-      o.scope.whole
-        ? true
-        : o.scope.category
-          ? MENU.find((m) => m.id === l.itemId)?.cat === o.scope.category
-          : (o.scope.itemIds ?? []).includes(l.itemId)
-    );
-    const scopedTotal = scoped.reduce((a, l) => a + l.qty * l.unitPrice, 0);
-    if (o.minOrder && subtotal < o.minOrder) continue;
-    if (o.maxUses && (o.uses ?? 0) >= o.maxUses) continue;
-    const title = lang === "fi" ? o.titleFi : o.titleEn;
-    if (o.type === "freeDelivery") {
-      if (!best.freeDelivery) best = { amount: 0, title, freeDelivery: true, offer: o };
+  for (const offer of live) {
+    const scoped = lines.filter((line) => offer.scope.whole
+      ? true
+      : offer.scope.category
+        ? itemById.get(line.itemId)?.cat === offer.scope.category
+        : (offer.scope.itemIds ?? []).includes(line.itemId));
+    const scopedTotal = scoped.reduce((sum, line) => sum + line.qty * line.unitPrice, 0);
+    if (offer.minOrder && subtotal < offer.minOrder) continue;
+    const title = lang === "fi" ? offer.titleFi : offer.titleEn;
+    if (offer.type === "freeDelivery") {
+      if (!best.freeDelivery) best = { amount: 0, title, freeDelivery: true, offer };
       continue;
     }
     let amount = 0;
-    if (o.type === "percent") amount = (scopedTotal * o.value) / 100;
-    if (o.type === "fixed") amount = Math.min(o.value, subtotal);
-    if (o.type === "override") {
-      const l = lines.find((x) => (o.scope.itemIds ?? []).includes(x.itemId));
-      if (l) amount = Math.max(0, (l.unitPrice - o.value) * l.qty);
+    if (offer.type === "percent") amount = (scopedTotal * offer.value) / 100;
+    if (offer.type === "fixed") amount = Math.min(offer.value, scopedTotal);
+    if (offer.type === "override") {
+      amount = scoped.reduce((sum, line) => (offer.scope.itemIds ?? []).includes(line.itemId)
+        ? sum + Math.max(0, line.unitPrice - offer.value) * line.qty : sum, 0);
     }
-    if (o.type === "bundle") {
-      const ids = o.scope.itemIds ?? [];
-      if (ids.length && ids.every((id) => lines.some((l) => l.itemId === id))) amount = o.value;
+    if (offer.type === "bundle") {
+      const ids = offer.scope.itemIds ?? [];
+      if (ids.length && ids.every((id) => scoped.some((line) => line.itemId === id))) amount = Math.min(offer.value, scopedTotal);
     }
-    if (o.type === "freeItem") {
-      const l = lines.find((x) => (o.scope.itemIds ?? []).includes(x.itemId));
-      if (l) amount = l.unitPrice;
+    if (offer.type === "freeItem") {
+      const line = scoped.find((candidate) => (offer.scope.itemIds ?? []).includes(candidate.itemId));
+      if (line) amount = Math.min(line.unitPrice, scopedTotal);
     }
     amount = Math.round(amount * 100) / 100;
-    if (amount > best.amount) best = { amount, title, freeDelivery: best.freeDelivery, offer: o };
+    if (amount > best.amount) best = { amount, title, freeDelivery: best.freeDelivery, offer };
   }
   return best;
 }
 
-/** struck-through price for an item when an override/percent offer is live */
+/** A safe strike-through preview for unconditional, code-free item/category offers. */
 export function offerPrice(s: Settings, m: MenuItem, variant: number): { now: number; was: number } | null {
-  const live = liveOffers(s);
-  for (const o of live.sort((a, b) => b.priority - a.priority)) {
-    const hit = o.scope.itemIds?.includes(m.id);
-    if (!hit) continue;
+  const live = liveOffers(s).filter((offer) => !offer.code && !offer.minOrder).sort((a, b) => b.priority - a.priority);
+  for (const offer of live) {
+    const inScope = offer.scope.whole || offer.scope.category === m.cat || offer.scope.itemIds?.includes(m.id);
+    if (!inScope) continue;
     const was = m.prices[variant]?.value ?? 0;
-    if (o.type === "override") return { now: o.value, was };
-    if (o.type === "percent") return { now: Math.round(was * (1 - o.value / 100) * 100) / 100, was };
+    if (offer.type === "override" && offer.scope.itemIds?.includes(m.id)) return { now: offer.value, was };
+    if (offer.type === "percent") return { now: Math.round(was * (1 - offer.value / 100) * 100) / 100, was };
   }
   return null;
 }

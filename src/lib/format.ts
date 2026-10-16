@@ -6,7 +6,13 @@ export function cx(...inputs: ClassValue[]) {
 
 /** Prices always use a decimal point: €10.50 — never a comma. */
 export function eur(n: number): string {
-  return "€" + n.toFixed(2);
+  return n.toFixed(2) + " €";
+}
+
+export function telHref(phone: string): string {
+  const number = phone.replace(/[^0-9+]/g, "");
+  if (!number) return "";
+  return `tel:${number.startsWith("0") ? `+358${number.slice(1)}` : number}`;
 }
 
 export function uid(prefix = ""): string {

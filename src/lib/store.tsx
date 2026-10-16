@@ -1,83 +1,46 @@
 "use client";
+/**
+ * Post-split ShopProvider. The backend owns settings, menu, orders, reservations,
+ * users and audit; this provider only fetches/caches them, keeps the cart locally,
+ * and routes every mutation through the typed API client. No business logic here:
+ * prices/availability/pre-order rules execute in /backend (src/logic.ts).
+ */
 import React, {
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
+  createContext, useCallback, useContext, useEffect, useMemo, useState,
 } from "react";
 import * as api from "./api";
 import { DEFAULT_SETTINGS } from "./hours";
 import { uid } from "./format";
-import { CATEGORIES as CATEGORIES_BASE, MENU as allItems } from "./menu";
-import { builderUnitPrice, isItemOff, optionOff, pizzaUnitPrice, validatePreorder } from "./v3";
+import { hydrateMenu } from "./menuStore";
+import { hydrateTranslations } from "./i18n";
+import { CATEGORIES as BASE_CATS, MENU as BASE_ITEMS } from "./menu";
+import { trDesc, trName } from "./v3";
 import type {
-  CartLine,
-  Category,
-  Lang,
-  MenuItem,
-  Order,
-  OrderStatus,
-  Overrides,
-  Reservation,
-  Settings,
-  User,
+  CartLine, Category, Lang, MenuItem, Order, OrderStatus, Overrides, Reservation, Settings, User,
 } from "./types";
 
-/* ── tiny localStorage-bound state hook with cross-tab + same-tab sync ── */
-function useStored<T>(key: string, initial: T): [T, (v: T | ((p: T) => T)) => void] {
-  const [v, setV] = useState<T>(() => api.db.read(key, initial));
-  useEffect(() => {
-    const local = (e: Event) => {
-      if ((e as CustomEvent).detail === key) setV(api.db.read(key, initial));
-    };
-    const remote = (e: StorageEvent) => {
-      if (e.key === key) setV(api.db.read(key, initial));
-    };
-    window.addEventListener("kb-local", local);
-    window.addEventListener("storage", remote);
-    return () => {
-      window.removeEventListener("kb-local", local);
-      window.removeEventListener("storage", remote);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
-  const set = useCallback(
-    (nv: T | ((p: T) => T)) => {
-      setV((prev) => {
-        const next = typeof nv === "function" ? (nv as (p: T) => T)(prev) : nv;
-        api.db.write(key, next);
-        return next;
-      });
-    },
-    [key]
-  );
-  return [v, set];
-}
-
-export interface Toast {
-  id: string;
-  msg: string;
-  kind: "ok" | "err";
-}
+export interface Toast { id: string; msg: string; kind: "ok" | "err" }
 
 interface ShopCtx {
   settings: Settings;
-  saveSettings: (s: Settings) => void;
-  overrides: Overrides;
-  patchItem: (id: string, patch: { soldOut?: boolean; name?: string; prices?: number[] }) => void;
-  moveItem: (cat: string, id: string, dir: -1 | 1) => void;
-  moveItemTo: (cat: string, dragId: string, overId: string) => void;
-  addItem: (cat: string, name: string, price: number, desc?: string, image?: import("./types").UploadedImg) => void;
-  removeAdded: (id: string) => void;
-  addCat: (title: string, en: string) => void;
-  setItemText: (lang: Lang, id: string, text: { name?: string; desc?: string }) => void;
+  saveSettings: (s: Settings) => Promise<boolean>;
+  overrides: Overrides; // compat shim — backend data is already effective
+  patchItem: (id: string, patch: Partial<MenuItem> & { soldOut?: boolean }) => Promise<boolean>;
+  moveItem: (cat: string, id: string, dir: -1 | 1) => Promise<boolean>;
+  moveItemTo: (cat: string, dragId: string, overId: string) => Promise<boolean>;
+  addItem: (item: MenuItem) => Promise<boolean>;
+  removeAdded: (id: string) => Promise<boolean>;
+  addCat: (title: string, en: string) => Promise<boolean>;
+  patchCategory: (id: string, patch: { title?: string; en?: string; archived?: boolean }) => Promise<boolean>;
+  archiveCategory: (id: string) => Promise<boolean>;
+  restoreCategory: (id: string) => Promise<boolean>;
+  setItemText: (lang: Lang, id: string, text: { name?: string; desc?: string }) => Promise<boolean>;
   effectiveMenu: (items: MenuItem[], lang?: Lang) => MenuItem[];
   categories: () => Category[];
 
   user: User | null;
-  /* True once the local session has been read after hydration. */
+  /* True once the first session probe finished — pages use it before
+     deciding whether "already logged in" redirects should fire. */
   authChecked: boolean;
   users: User[];
   register: (d: { name: string; email: string; pass: string; phone?: string }) => Promise<string | null>;
@@ -88,74 +51,105 @@ interface ShopCtx {
   favorites: string[];
   isFavorite: (itemId: string) => boolean;
   toggleFavorite: (itemId: string) => Promise<void>;
+  adminLogin: (u: string, p: string) => Promise<string | null>;
+  adminLogout: () => void;
+  staffRole: string | null;
 
   cart: CartLine[];
   addLine: (l: Omit<CartLine, "key">) => void;
   setQty: (key: string, qty: number) => void;
   removeLine: (key: string) => void;
   clearCart: () => void;
+  /* Guests never mutate cart/favorites: they get a login prompt instead. The
+     pending action is replayed automatically once they sign in. */
+  loginGate: boolean;
+  openLoginGate: () => void;
+  closeLoginGate: () => void;
   cartOpen: boolean;
   setCartOpen: (b: boolean) => void;
   cartCount: number;
   cartSubtotal: number;
   pulse: number;
+  priceCart: (type: "pickup" | "delivery", code?: string, address?: string, lang?: Lang) => Promise<void>;
+  serverPricing: { total: number; subtotal: number; deliveryFee: number; vat: number; discount?: { title: string; amount: number }; deliveryOffer?: { id: string; nameEn: string; nameFi: string }; distanceKm?: number; orderWeightKg?: number } | null;
 
   orders: Order[];
-  placeOrder: (o: Omit<Order, "id" | "createdAt" | "paymentId">) => Promise<Order>;
-  setOrderStatus: (id: string, s: OrderStatus) => Promise<void>;
-  refundOrder: (id: string) => Promise<void>;
+  refreshOrder: (id: string) => Promise<Order | null>;
+  startCheckout: (o: Omit<Order, "id" | "createdAt" | "paymentId" | "paymentStatus"> & { lang?: Lang; code?: string }) => Promise<{ mode: "stripe" | "demo"; url?: string; sessionId?: string; orderId?: string; order?: Order }>;
+  placeOrder: (o: Omit<Order, "id" | "createdAt" | "paymentId" | "paymentStatus">) => Promise<Order>;
+  setOrderStatus: (id: string, s: OrderStatus, readyInMinutes?: number, note?: string) => Promise<boolean>;
+  adjustOrderReadyTime: (id: string, body: { minutes?: number; addMinutes?: number; note?: string }) => Promise<boolean>;
+  refundOrder: (id: string) => Promise<boolean>;
   orderStatus: (o: Order) => OrderStatus;
 
   reservations: Reservation[];
   addReservation: (r: Omit<Reservation, "id" | "createdAt">) => Promise<Reservation>;
-  cancelReservation: (id: string) => Promise<void>;
-  setReservationStatus: (id: string, s: "accepted" | "declined") => Promise<void>;
+  cancelReservation: (id: string) => Promise<boolean>;
+  setReservationStatus: (id: string, s: "accepted" | "declined") => Promise<boolean>;
 
   toasts: Toast[];
   toast: (msg: string, kind?: "ok" | "err") => void;
   logAudit: (msg: string) => void;
+  refresh: () => Promise<void>;
 }
 
 const Ctx = createContext<ShopCtx | null>(null);
-
 export function useShop(): ShopCtx {
   const c = useContext(Ctx);
   if (!c) throw new Error("useShop outside provider");
   return c;
 }
 
-const EMPTY_OVERRIDES: Overrides = { items: {}, order: {} };
+const GUEST_FAVORITES_KEY = "kb_guest_favorites";
+const LEGACY_CART_KEY = "kb_cart";
+const PENDING_ACTION_KEY = "kb_pending_action";
+const readLS = <T,>(k: string, f: T): T => {
+  if (typeof window === "undefined") return f;
+  try { const r = localStorage.getItem(k); return r ? (JSON.parse(r) as T) : f; } catch { return f; }
+};
+
+/* A deterministic cart-line key: identical item+variant+options merge into one
+   server row no matter which device or session issued them. */
+const lineKeyOf = (l: Omit<CartLine, "key"> | CartLine): string =>
+  `${l.itemId}|${l.variantLabel}|${JSON.stringify(l.selections?.length ? l.selections : l.options ?? [])}`.slice(0, 100);
+
+type PendingAction =
+  | { kind: "cart"; line: Omit<CartLine, "key"> }
+  | { kind: "favorite"; itemId: string };
+const stashPending = (action: PendingAction) => {
+  try { sessionStorage.setItem(PENDING_ACTION_KEY, JSON.stringify(action)); } catch { /* quota: skip */ }
+};
+const readPending = (): PendingAction | null => {
+  if (typeof window === "undefined") return null;
+  try { const raw = sessionStorage.getItem(PENDING_ACTION_KEY); return raw ? (JSON.parse(raw) as PendingAction) : null; } catch { return null; }
+};
+const clearPending = () => { try { sessionStorage.removeItem(PENDING_ACTION_KEY); } catch { /* noop */ } };
 
 export function ShopProvider({ children }: { children: React.ReactNode }) {
-  const [rawSettings, setSettings] = useStored<Settings>("kb_settings", DEFAULT_SETTINGS);
-  const [overrides, setOverrides] = useStored<Overrides>("kb_overrides", EMPTY_OVERRIDES);
-  const [users, setUsers] = useStored<User[]>("kb_users", []);
-  /* Session read happens after hydration: persistent logins live in
-     localStorage, "don't remember me" logins in sessionStorage. */
-  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  /* Session identity comes from the HttpOnly cookie via /api/auth/session;
+     profile data is in memory only, not localStorage. */
+  const [user, setUser] = useState<User | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
-  useEffect(() => { setSessionId(api.readSession()); setAuthChecked(true); }, []);
-  const [cart, setCart] = useStored<CartLine[]>("kb_cart", []);
-  const [orders, setOrders] = useStored<Order[]>("kb_orders", []);
-  const [reservations, setReservations] = useStored<Reservation[]>("kb_reservations", []);
+  const [staffRole, setStaffRole] = useState<string | null>(null);
+  const [cart, setCart] = useState<CartLine[]>([]);
+
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [reservations, setReservations] = useState<Reservation[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
+  const [loginGate, setLoginGate] = useState(false);
   const [pulse, setPulse] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const [guestFavorites, setGuestFavorites] = useStored<string[]>(api.db.K.favorites, []);
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [serverPricing, setServerPricing] = useState<ShopCtx["serverPricing"]>(null);
+  const allItems = BASE_ITEMS; // live array, hydrated in place from the backend
+  const allCats = BASE_CATS;
 
-  /* merge defaults so older stored settings gain new fields (toppings, special…) */
-  const settings = useMemo<Settings>(
-    () => ({
-      ...DEFAULT_SETTINGS,
-      ...rawSettings,
-      hours: { ...DEFAULT_SETTINGS.hours, ...(rawSettings.hours ?? {}) },
-      toppings: rawSettings.toppings?.length ? rawSettings.toppings : DEFAULT_SETTINGS.toppings,
-      special: rawSettings.special ?? DEFAULT_SETTINGS.special,
-      blockedSlots: rawSettings.blockedSlots ?? [],
-      blockedDates: rawSettings.blockedDates ?? [],
-    }),
-    [rawSettings]
-  );
+  /* The authenticated user's cart & favorites always come from the server
+     (hydrateUser). Guests hold neither — only a legacy local copy imported
+     once on the next sign-in. Nothing user-related is read from this device
+     beyond session cookies. */
 
   const toast = useCallback((msg: string, kind: "ok" | "err" = "ok") => {
     const id = uid("t");
@@ -163,180 +157,352 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), 2800);
   }, []);
 
-  const user = useMemo(
-    () => users.find((u) => u.id === sessionId) ?? null,
-    [users, sessionId]
-  );
+  /* Pull the owner's private data after sign-in: favorites + server cart,
+     import any pre-login leftovers exactly once, then replay the action the
+     guest started (e.g. an Add-to-Cart that was gated behind login). Failures
+     here never break the session itself — each load degrades to empty. */
+  const hydrateUser = useCallback(async (u: User) => {
+    const [favoriteIds, cartLines] = await Promise.all([
+      api.apiListFavorites().catch(() => [] as string[]),
+      api.apiListCart().catch(() => [] as CartLine[]),
+    ]);
+    let favs = favoriteIds;
+    let cartLinesOut = cartLines;
+    const legacyFavs = readLS<string[]>(GUEST_FAVORITES_KEY, []);
+    const legacyCart = readLS<CartLine[]>(LEGACY_CART_KEY, []);
+    if (legacyFavs.length) {
+      try {
+        favs = (await api.apiMergeFavorites(legacyFavs)).favorites;
+      } catch { /* keep server list; legacy key still cleared below */ }
+    }
+    if (legacyCart.length) {
+      try {
+        cartLinesOut = await api.apiMergeCart(legacyCart.map((l) => ({ ...l, key: l.key || lineKeyOf(l) })));
+      } catch { /* keep server list */ }
+    }
+    try {
+      localStorage.removeItem(GUEST_FAVORITES_KEY);
+      localStorage.removeItem(LEGACY_CART_KEY);
+    } catch { /* noop */ }
+    setUser({ ...u, favorites: favs });
+    setFavorites(favs);
+    setCart(cartLinesOut);
 
-  /* auth */
+    const pending = readPending();
+    if (pending) {
+      clearPending();
+      if (pending.kind === "cart") {
+        try {
+          const line: CartLine = { ...pending.line, key: lineKeyOf(pending.line) };
+          cartLinesOut = await api.apiAddCartLine(line);
+          setCart(cartLinesOut);
+          setPulse((p) => p + 1);
+          setTimeout(() => toast("Added to cart ✔"), 0);
+        } catch { setTimeout(() => toast("Item could not be added — pick it again from the menu", "err"), 0); }
+      } else if (pending.kind === "favorite" && !favs.includes(pending.itemId)) {
+        try {
+          const updated = await api.apiAddFavorite(pending.itemId);
+          setFavorites(updated.favorites);
+          setUser((prev) => (prev ? { ...prev, favorites: updated.favorites } : prev));
+          setTimeout(() => toast("Added to favorites"), 0);
+        } catch { /* keep as-is */ }
+      }
+    }
+  }, [toast]);
+
+  /* ── boot: hydrate everything from the backend ── */
+  const refresh = useCallback(async () => {
+    try {
+      const staffSession = await api.apiStaffSession();
+      const [s, items, cats, tr, session] = await Promise.all([
+        api.fetchSettings(), api.fetchItems(Boolean(staffSession.role)), api.fetchCategories(Boolean(staffSession.role)),
+        api.fetchTranslations(), api.apiSession(),
+      ]);
+      setSettings(s);
+      hydrateMenu(items, cats);
+      hydrateTranslations(tr);
+      setStaffRole(staffSession.role);
+      const sessionUser = (session.user ?? null) as User | null;
+      if (sessionUser) {
+        await hydrateUser(sessionUser);
+      } else {
+        setUser(null);
+        setFavorites([]);
+        setCart([]);
+      }
+      if (staffSession.role) {
+        const [o, r] = await Promise.all([api.apiListOrders(), api.apiListReservations()]);
+        setOrders(o); setReservations(r);
+        api.apiCustomers().then((cs) =>
+          setUsers(cs.map((c) => ({ ...c, marketing: !!c.marketing, addresses: [], createdAt: c.created_at } as unknown as User)))
+        ).catch(() => {}); // kitchen role has no customer reads
+      } else if (session.user) {
+        api.apiAccountOrders().then(setOrders).catch(() => {});
+      } else {
+        setOrders([]);
+      }
+    } catch (e) {
+      // offline first-paint fallback (bundled data) stays in place
+      console.warn("backend unreachable, using bundled fallback", e);
+    } finally {
+      setAuthChecked(true);
+    }
+  }, [hydrateUser]);
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  /* ── auth: identity is maintained by HttpOnly cookies, never localStorage ── */
   const register: ShopCtx["register"] = async (d) => {
-    const email = d.email.trim().toLowerCase();
-    if (users.some((u) => u.email.toLowerCase() === email))
-      return "auth.emailInUse";
-    const u: User = {
-      id: uid("u"),
-      name: d.name.trim(),
-      email,
-      pass: d.pass,
-      phone: d.phone?.trim() || undefined,
-      addresses: [],
-      marketing: false,
-      createdAt: Date.now(),
-      favorites: Array.from(new Set(guestFavorites)),
-    };
-    await api.apiRegister(u);
-    setUsers((p) => [...p, { ...u, pass: undefined }]);
-    setGuestFavorites([]);
-    setSessionId(u.id);
-    return null;
+    try {
+      const result = await api.apiRegister(d);
+      if (result.devConfirmationToken) {
+        /* Only the local backend can return this helper; production requires
+           the SMTP confirmation link and never returns the token. */
+        await api.apiConfirmEmail(result.devConfirmationToken);
+        const u = await api.apiLogin(d.email, d.pass);
+        await hydrateUser(u as User);
+        void refresh();
+        return null;
+      }
+      void refresh();
+      return result.needsConfirmation ? "auth.confirmationSent" : null;
+    } catch (e) { return (e as Error).message; }
   };
   const login: ShopCtx["login"] = async (email, pass, remember = true) => {
     try {
       const u = await api.apiLogin(email, pass, remember);
-      const merged = Array.from(new Set([...(u.favorites ?? []), ...guestFavorites]));
-      const updated = merged.length !== (u.favorites ?? []).length ? await api.apiUpdateUser(u.id, { favorites: merged }) : u;
-      setUsers((p) => p.map((x) => x.id === u.id ? { ...x, ...(updated ?? u), favorites: merged } : x));
-      setGuestFavorites([]);
-      setSessionId(u.id);
+      await hydrateUser(u as User);
+      api.apiAccountOrders().then(setOrders).catch(() => {});
       return null;
-    } catch (e) {
-      return (e as Error).message;
-    }
+    } catch (e) { return (e as Error).message; }
   };
-  const logout = () => {
-    setGuestFavorites(favorites);
-    api.apiLogout();
-    setSessionId(null);
+  /* Signing out wipes every trace of the owner: no cart, no favorites, no
+     cached private data survives into the next session on this device. */
+  const logout = async () => {
+    try { await api.apiLogout(); } catch { /* backend down: still clear locally */ }
+    try {
+      localStorage.removeItem(GUEST_FAVORITES_KEY);
+      localStorage.removeItem(LEGACY_CART_KEY);
+    } catch { /* noop */ }
+    clearPending();
+    setUser(null);
+    setFavorites([]);
+    setCart([]);
+    setOrders([]);
+    setUsers([]);
+    setCartOpen(false);
+    setLoginGate(false);
+    setAuthChecked(true);
   };
   const updateUser: ShopCtx["updateUser"] = async (patch) => {
-    if (!user) return;
-    const updated = await api.apiUpdateUser(user.id, patch);
-    if (updated) setUsers((p) => p.map((x) => (x.id === updated.id ? updated : x)));
+    const u = await api.apiUpdateAccount(patch);
+    setUser({ ...user, ...u } as User);
   };
-
   const changePassword: ShopCtx["changePassword"] = async (current, next) => {
-    if (!user) return "auth.required";
-    return api.apiChangePassword(user.id, current, next);
+    try { await api.apiChangePassword(current, next); return null; }
+    catch (e) { return (e as Error).message; }
   };
-  const favorites = useMemo(() => Array.from(new Set(user?.favorites ?? guestFavorites)), [user?.favorites, guestFavorites]);
   const isFavorite = useCallback((itemId: string) => favorites.includes(itemId), [favorites]);
   const toggleFavorite: ShopCtx["toggleFavorite"] = async (itemId) => {
+    /* Guests never mutate favorites: stash the intent behind the login gate. */
+    if (!user) {
+      stashPending({ kind: "favorite", itemId });
+      setLoginGate(true);
+      return;
+    }
     const previous = favorites;
-    const next = previous.includes(itemId) ? previous.filter((id) => id !== itemId) : [...previous, itemId];
-    if (user) {
-      const updated = await api.apiUpdateUser(user.id, { favorites: next });
-      if (updated) setUsers((p) => p.map((x) => (x.id === updated.id ? updated : x)));
-      else { toast("Could not update favorites", "err"); throw new Error("favorites.updateFailed"); }
-    } else setGuestFavorites(next);
-    toast(previous.includes(itemId) ? "Removed from favorites" : "Added to favorites");
+    const adding = !previous.includes(itemId);
+    const next = adding ? [...previous, itemId] : previous.filter((id) => id !== itemId);
+    setFavorites(next);
+    setUser({ ...user, favorites: next });
+    try {
+      const res = adding ? await api.apiAddFavorite(itemId) : await api.apiRemoveFavorite(itemId);
+      setFavorites(res.favorites);
+      setUser((prev) => (prev ? { ...prev, favorites: res.favorites } : prev));
+      toast(adding ? "Added to favorites" : "Removed from favorites");
+    } catch (e) {
+      setFavorites(previous); setUser({ ...user, favorites: previous });
+      toast((e as Error).message || "Could not update favorites", "err");
+      throw e;
+    }
   };
+  const adminLogin: ShopCtx["adminLogin"] = async (u, p) => {
+    try {
+      const role = await api.apiAdminLogin(u, p);
+      setStaffRole(role);
+      void refresh();
+      return null;
+    } catch (e) { return (e as Error).message; }
+  };
+  const adminLogout = () => { void api.apiAdminLogout(); setStaffRole(null); setOrders([]); };
 
-  /* cart */
+  /* ── cart (server is the single source of truth for logged-in users;
+        totals always re-priced by the server at checkout) ── */
+  /* Re-sync from the server whenever a mutation failed or raced. */
+  const syncCart = () => { if (user) api.apiListCart().then(setCart).catch(() => {}); };
   const addLine: ShopCtx["addLine"] = (l) => {
+    /* Guests get the login prompt; the line is replayed after they sign in. */
+    if (!user) {
+      stashPending({ kind: "cart", line: l });
+      setLoginGate(true);
+      return;
+    }
+    const line: CartLine = { ...l, key: lineKeyOf(l) };
     setCart((p) => {
-      const same = p.find(
-        (x) =>
-          x.itemId === l.itemId &&
-          x.variantLabel === l.variantLabel &&
-          x.unitPrice === l.unitPrice &&
-          JSON.stringify(x.options) === JSON.stringify(l.options)
-      );
-      if (same)
-        return p.map((x) => (x.key === same.key ? { ...x, qty: x.qty + l.qty } : x));
-      return [...p, { ...l, key: uid("l") }];
+      const same = p.find((x) => x.key === line.key);
+      if (same) return p.map((x) => (x.key === line.key ? { ...x, qty: Math.min(x.qty + line.qty, 99) } : x));
+      return [...p, line];
     });
     setPulse((p) => p + 1);
+    api.apiAddCartLine(line).then(setCart).catch((e) => {
+      toast((e as Error).message || "Cart could not be updated", "err");
+      syncCart();
+    });
   };
-  const setQty = (key: string, qty: number) =>
-    setCart((p) =>
-      qty <= 0 ? p.filter((x) => x.key !== key) : p.map((x) => (x.key === key ? { ...x, qty } : x))
-    );
-  const removeLine = (key: string) => setCart((p) => p.filter((x) => x.key !== key));
-  const clearCart = () => setCart([]);
+  const setQty = (key: string, qty: number) => {
+    if (!user) return;
+    if (qty <= 0) { removeLine(key); return; }
+    setCart((p) => p.map((x) => (x.key === key ? { ...x, qty } : x)));
+    api.apiSetCartQty(key, qty).then(setCart).catch(syncCart);
+  };
+  const removeLine = (key: string) => {
+    if (!user) return;
+    setCart((p) => p.filter((x) => x.key !== key));
+    api.apiRemoveCartLine(key).then(setCart).catch(syncCart);
+  };
+  const clearCart = () => {
+    setCart([]);
+    if (user) api.apiClearCart().then(setCart).catch(syncCart);
+  };
   const cartCount = cart.reduce((a, l) => a + l.qty, 0);
   const cartSubtotal = cart.reduce((a, l) => a + l.qty * l.unitPrice, 0);
 
-  /* menu overrides */
-  const patchItem: ShopCtx["patchItem"] = (id, patch) =>
-    setOverrides((p) => ({
-      ...p,
-      items: { ...p.items, [id]: { ...p.items[id], ...patch } },
-    }));
-
-  const baseOrder = (cat: string) =>
-    overrides.order[cat] ?? allItems.filter((m) => m.cat === cat).map((m) => m.id);
-
-  const moveItem: ShopCtx["moveItem"] = (cat, id, dir) =>
-    setOverrides((p) => {
-      const list = [...(p.order[cat] ?? allItems.filter((m) => m.cat === cat).map((m) => m.id))];
-      const from = list.indexOf(id);
-      if (from < 0) return p;
-      const to = from + dir;
-      if (to < 0 || to >= list.length) return p;
-      [list[from], list[to]] = [list[to], list[from]];
-      return { ...p, order: { ...p.order, [cat]: list } };
-    });
-
-  const moveItemTo: ShopCtx["moveItemTo"] = (cat, dragId, overId) =>
-    setOverrides((p) => {
-      const list = [...(p.order[cat] ?? allItems.filter((m) => m.cat === cat).map((m) => m.id))];
-      // include custom items missing from stored order
-      for (const m of [...allItems, ...Object.values(p.added ?? {}).flat()]) {
-        if (m.cat === cat && !list.includes(m.id)) list.push(m.id);
-      }
-      const from = list.indexOf(dragId);
-      const to = list.indexOf(overId);
-      if (from < 0 || to < 0 || from === to) return p;
-      list.splice(from, 1);
-      list.splice(to, 0, dragId);
-      return { ...p, order: { ...p.order, [cat]: list } };
-    });
-
-  const addItem: ShopCtx["addItem"] = (cat, name, price, desc, image) => {
-    const id = "custom-" + uid().slice(0, 6);
-    setOverrides((p) => ({
-      ...p,
-      added: {
-        ...p.added,
-        [cat]: [
-          ...(p.added?.[cat] ?? []),
-          { id, cat, name, desc: desc?.trim() || undefined, imageUrl: image?.src, prices: [{ label: "", value: price }] },
-        ],
-      },
-    }));
-    if (image) setSettings((p) => ({ ...p, itemImages: { ...p.itemImages, [id]: image } }));
+  const priceCart: ShopCtx["priceCart"] = async (type, code, address, lang = "en") => {
+    if (!cart.length) return setServerPricing(null);
+    try {
+      const p = await api.apiPriceCart(cart, type, lang, code, address);
+      setServerPricing({ total: p.total, subtotal: p.subtotal, deliveryFee: p.deliveryFee, vat: p.vat, discount: p.discount, deliveryOffer: p.deliveryOffer, distanceKm: p.distanceKm, orderWeightKg: p.orderWeightKg });
+      // displayed line prices come from the server too (only touch state on real change,
+      // otherwise the [cart] effect dependency would re-trigger forever)
+      setCart((prev) => {
+        let changed = false;
+        const next = prev.map((l) => {
+          const s = p.lines.find((x) => x.key === l.key || (x.itemId === l.itemId && x.variantLabel === l.variantLabel));
+          if (s && s.unitPrice !== l.unitPrice) { changed = true; return { ...l, unitPrice: s.unitPrice }; }
+          return l;
+        });
+        return changed ? next : prev;
+      });
+    } catch (e) { toast((e as Error).message, "err"); }
   };
 
-  const removeAdded: ShopCtx["removeAdded"] = (id) =>
-    setOverrides((p) => {
-      const added: Record<string, MenuItem[]> = {};
-      for (const [c, list] of Object.entries(p.added ?? {}))
-        added[c] = list.filter((m) => m.id !== id);
-      const items = { ...p.items };
-      delete items[id];
-      return { ...p, added, items };
-    });
+  /* ── menu admin (backend CRUD) ── */
+  const patchItem: ShopCtx["patchItem"] = async (id, patch) => {
+    try {
+      const { soldOut, ...itemPatch } = patch;
+      if (soldOut !== undefined) {
+        const next = { ...settings, offItems: { ...settings.offItems, [id]: soldOut ? { off: true } : {} } };
+        const saved = await api.apiSaveSettings(next); setSettings(saved);
+      }
+      if (Object.keys(itemPatch).length) {
+        const m = allItems.find((x) => x.id === id);
+        if (!m) return false;
+        const upd: MenuItem = { ...m, ...itemPatch, id: m.id };
+        await api.apiPutItem(upd);
+      }
+      await refresh();
+      return true;
+    } catch (error) {
+      toast((error as Error).message || "Item could not be saved", "err");
+      return false;
+    }
+  };
 
-  const addCat: ShopCtx["addCat"] = (title, en) =>
-    setOverrides((p) => ({
-      ...p,
-      cats: [...(p.cats ?? []), { id: "cat-" + uid().slice(0, 5), title, en: en || title }],
-    }));
-
-  const setItemText: ShopCtx["setItemText"] = (lang, id, text) =>
-    setOverrides((p) => ({
-      ...p,
-      texts: {
-        ...p.texts,
-        [lang]: { ...(p.texts?.[lang] ?? {}), [id]: { ...(p.texts?.[lang]?.[id] ?? {}), ...text } },
-      },
-    }));
+  const orderListOf = (cat: string) => allItems.filter((m) => m.cat === cat).map((m) => m.id);
+  const moveItem: ShopCtx["moveItem"] = async (cat, id, dir) => {
+    try {
+      const list = orderListOf(cat);
+      const from = list.indexOf(id); const to = from + dir;
+      if (from < 0 || to < 0 || to >= list.length) return false;
+      [list[from], list[to]] = [list[to], list[from]];
+      await api.apiReorderItems(cat, list); await refresh();
+      return true;
+    } catch {
+      toast("Item order could not be saved", "err");
+      return false;
+    }
+  };
+  const moveItemTo: ShopCtx["moveItemTo"] = async (cat, dragId, overId) => {
+    try {
+      const list = orderListOf(cat);
+      const from = list.indexOf(dragId); const to = list.indexOf(overId);
+      if (from < 0 || to < 0 || from === to) return false;
+      list.splice(from, 1); list.splice(to, 0, dragId);
+      await api.apiReorderItems(cat, list); await refresh();
+      return true;
+    } catch {
+      toast("Item order could not be saved", "err");
+      return false;
+    }
+  };
+  const addItem: ShopCtx["addItem"] = async (item) => {
+    try {
+      await api.apiPostItem(item);
+      await refresh();
+      return true;
+    } catch (error) {
+      toast((error as Error).message || "Item could not be added", "err");
+      return false;
+    }
+  };
+  const removeAdded: ShopCtx["removeAdded"] = async (id) => {
+    try {
+      await api.apiDeleteItem(id); await refresh();
+      return true;
+    } catch {
+      toast("Item could not be deleted", "err");
+      return false;
+    }
+  };
+  const addCat: ShopCtx["addCat"] = async (title, en) => {
+    try {
+      await api.apiPostCategory(title, en || title); await refresh();
+      return true;
+    } catch (error) {
+      toast((error as Error).message || "Category could not be added", "err");
+      return false;
+    }
+  };
+  const patchCategory: ShopCtx["patchCategory"] = async (id, patch) => {
+    try { await api.apiPutCategory(id, patch); await refresh(); return true; }
+    catch (error) { toast((error as Error).message || "Category could not be saved", "err"); return false; }
+  };
+  const archiveCategory: ShopCtx["archiveCategory"] = async (id) => {
+    try { await api.apiDeleteCategory(id); await refresh(); return true; }
+    catch (error) { toast((error as Error).message || "Category could not be archived", "err"); return false; }
+  };
+  const restoreCategory: ShopCtx["restoreCategory"] = async (id) => {
+    try { await api.apiPutCategory(id, { archived: false }); await refresh(); return true; }
+    catch (error) { toast((error as Error).message || "Category could not be restored", "err"); return false; }
+  };
+  const setItemText: ShopCtx["setItemText"] = async (lang, id, text) => {
+    try {
+      const m = allItems.find((x) => x.id === id);
+      if (!m) return false;
+      const upd: MenuItem = {
+        ...m,
+        ...(lang === "fi" ? { nameFi: text.name ?? m.nameFi, descFi: text.desc ?? m.descFi }
+          : { name: text.name ?? m.name, desc: text.desc ?? m.desc }),
+      };
+      await api.apiPutItem(upd); await refresh();
+      return true;
+    } catch {
+      toast("Item text could not be saved", "err");
+      return false;
+    }
+  };
 
   const categories = (): Category[] => {
-    const base: Category[] = [...(overrides.cats ?? [])].length
-      ? [...CATEGORIES_BASE, ...(overrides.cats ?? [])]
-      : CATEGORIES_BASE;
-    const withNames = base.map((c) => {
+    const withNames = allCats.map((c) => {
       const meta = settings.catMeta[c.id];
       return { ...c, title: meta?.nameFi || c.title, en: meta?.nameEn ?? c.en };
     });
@@ -351,184 +517,143 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const effectiveMenu: ShopCtx["effectiveMenu"] = (items, lang = "en") =>
-    [...items, ...Object.values(overrides.added ?? {}).flat()]
-      .map((m) => {
-        const o = overrides.items[m.id];
-        const tx = overrides.texts?.[lang]?.[m.id];
-        let patched: MenuItem = {
-          ...m,
-          name: tx?.name ?? o?.name ?? m.name,
-          desc: tx?.desc ?? m.desc,
-          prices: o?.prices
-            ? m.prices.map((p, i) => ({ ...p, value: o.prices![i] ?? p.value }))
-            : m.prices,
-        };
-        // inject editable topping list into build-your-own groups
-        if (patched.mods?.some((g) => g.id === "top")) {
-          patched = {
-            ...patched,
-            mods: patched.mods.map((g) =>
-              g.id === "top"
-                ? { ...g, options: settings.toppings.map((t) => ({ label: t, price: 0 })) }
-                : g
-            ),
-          };
-        }
-        return patched;
-      })
-      .sort((a, b) => {
-        const list = overrides.order[a.cat];
-        if (!list) return 0;
-        const ia = list.indexOf(a.id);
-        const ib = list.indexOf(b.id);
-        if (ia < 0 && ib < 0) return 0;
-        if (ia < 0) return 1;
-        if (ib < 0) return -1;
-        return ia - ib;
-      });
-
-  const logAudit: ShopCtx["logAudit"] = (msg) =>
-    setSettings((p) => ({
-      ...p,
-      audit: [{ ts: Date.now(), who: "admin", msg }, ...(p.audit ?? [])].slice(0, 200),
+  const effectiveMenu: ShopCtx["effectiveMenu"] = useCallback((items: MenuItem[], lang: Lang = "en") => {
+    const toppingSlug = (value: string) => value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const activeToppings = new Map(settings.toppings.map((label) => [toppingSlug(label), label]));
+    return items.filter((m) => !m.archived).map((m) => ({
+      ...m,
+      name: lang === "fi" ? trName(lang, m) : m.name,
+      desc: lang === "fi" ? trDesc(lang, m) : m.desc,
+      mods: m.mods?.map((group) => group.id !== "product-toppings" ? group : {
+        ...group,
+        options: group.options.filter((option) => activeToppings.has(option.toppingId ?? option.label)).map((option) => {
+          const id = option.toppingId ?? option.label;
+          const label = activeToppings.get(id) ?? id;
+          const meta = settings.toppingMeta[label] ?? {};
+          const included = m.includedToppingIds?.includes(id) ?? false;
+          const prices = m.prices.map((_, index) => included ? 0 : index === 1 ? (meta.pricePerhe ?? option.price) : (meta.priceMed ?? option.price));
+          return { ...option, label: id, labelEn: meta.en ?? label, labelFi: meta.fi ?? label, price: prices[0] ?? option.price, priceByVariant: prices };
+        }),
+      }),
     }));
+  }, [settings]);
 
-  /* orders */
+  const saveSettings: ShopCtx["saveSettings"] = async (s) => {
+    const previous = settings;
+    setSettings(s);
+    try {
+      const next = await api.apiSaveSettings(s);
+      setSettings(next);
+      await refresh();
+      return true;
+    } catch {
+      setSettings(previous);
+      toast("Settings could not be saved / Asetuksia ei voitu tallentaa", "err");
+      return false;
+    }
+  };
+  const logAudit: ShopCtx["logAudit"] = () => { /* backend audit trail now; client no-op */ };
+
+  /* ── orders ─ */
+  const startCheckout: ShopCtx["startCheckout"] = async (o) => {
+    return api.apiCreateCheckoutSession({
+      type: o.type, customer: o.customer, address: o.address, note: o.note,
+      lines: o.lines, total: o.total, scheduled: o.scheduled, lang: o.lang, code: o.code,
+    });
+  };
   const placeOrder: ShopCtx["placeOrder"] = async (o) => {
-    // server-side re-validation (stub backend)
-    const preErr = validatePreorder(settings, o.lines, o.scheduled);
-    if (preErr) throw new Error(preErr);
-    if (o.lines.some((l) => isItemOff(settings, l.itemId)))
-      throw new Error("avail.unavailable");
-    // pizza sheet re-validation: never trust the browser total
-    {
-      const eff = effectiveMenu(allItems);
-      for (const l of o.lines) {
-        if (!l.pizza) continue;
-        const m = eff.find((x) => x.id === l.itemId);
-        if (!m) throw new Error("avail.unavailable");
-        const vi = m.prices.findIndex((p) => p.label === l.pizza!.sizeLabel);
-        if (vi < 0) throw new Error("order.priceChanged");
-        for (const e of l.pizza.extras)
-          if (optionOff(settings, "topping", e.label)) throw new Error("avail.unavailable");
-        const expected = l.pizza.builder
-          ? builderUnitPrice(m, vi, l.pizza.extras.reduce((a, e) => a + e.count, 0))
-          : pizzaUnitPrice(settings, m, vi, l.pizza.extras);
-        if (Math.abs(expected - l.unitPrice) > 0.02) throw new Error("order.priceChanged");
-      }
-    }
-    if (o.discount?.offerId) {
-      const oid = o.discount.offerId;
-      setSettings((p) => ({
-        ...p,
-        offers: p.offers.map((of) => (of.id === oid ? { ...of, uses: (of.uses ?? 0) + 1 } : of)),
-      }));
-    }
-    const order: Order = {
-      ...o,
-      id: api.newId("KB"),
-      createdAt: Date.now(),
-      paymentId: "pi_" + uid(),
-    };
-    const created = await api.apiCreateOrder(order);
+    const created = await api.apiCreateOrder({
+      type: o.type, customer: o.customer, address: o.address, note: o.note,
+      lines: o.lines, total: o.total, scheduled: o.scheduled,
+    });
     setOrders((p) => [created, ...p.filter((x) => x.id !== created.id)]);
     return created;
   };
-  const setOrderStatus: ShopCtx["setOrderStatus"] = async (id, s) => {
-    await api.apiPatchOrder(id, { statusOverride: s });
-    setOrders((p) => p.map((x) => (x.id === id ? { ...x, statusOverride: s } : x)));
+  const refreshOrder: ShopCtx["refreshOrder"] = useCallback(async (id) => {
+    try {
+      const latest = await api.apiGetOrder(id);
+      setOrders((current) => [latest, ...current.filter((order) => order.id !== id)]);
+      return latest;
+    } catch { return null; }
+  }, []);
+
+  const setOrderStatus: ShopCtx["setOrderStatus"] = async (id, s, readyInMinutes, note) => {
+    try {
+      const upd = await api.apiPatchOrderStatus(id, s, readyInMinutes, note);
+      setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
+      return true;
+    } catch (error) {
+      toast((error as Error).message || "Order status could not be updated", "err");
+      return false;
+    }
+  };
+  const adjustOrderReadyTime: ShopCtx["adjustOrderReadyTime"] = async (id, body) => {
+    try {
+      const upd = await api.apiPatchOrderReadyTime(id, body);
+      setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
+      return true;
+    } catch (error) {
+      toast((error as Error).message || "Order ready time could not be updated", "err");
+      return false;
+    }
   };
   const refundOrder: ShopCtx["refundOrder"] = async (id) => {
-    await api.apiPatchOrder(id, { refunded: true, statusOverride: "completed" });
-    setOrders((p) =>
-      p.map((x) => (x.id === id ? { ...x, refunded: true, statusOverride: "completed" } : x))
-    );
+    try {
+      const upd = await api.apiRefundOrder(id);
+      setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
+      return true;
+    } catch {
+      toast("Refund could not be completed", "err");
+      return false;
+    }
   };
+  const orderStatus = (o: Order): OrderStatus => o.statusOverride ?? "placed";
 
-  const orderStatus = (o: Order): OrderStatus => {
-    if (o.statusOverride) return o.statusOverride;
-    const el = (Date.now() - o.createdAt) / 1000;
-    if (el < 45) return "placed";
-    if (el < 120) return "accepted";
-    if (el < 300) return "preparing";
-    if (el < 720) return "ready";
-    return "completed";
-  };
-
-  /* reservations */
+  /* ── reservations ── */
   const addReservation: ShopCtx["addReservation"] = async (r) => {
-    const res: Reservation = { ...r, id: api.newId("R"), createdAt: Date.now(), status: "pending" };
-    const created = await api.apiCreateReservation(res);
+    const created = await api.apiCreateReservation(r);
     setReservations((p) => [created, ...p]);
     return created;
   };
   const cancelReservation: ShopCtx["cancelReservation"] = async (id) => {
-    await api.apiDeleteReservation(id);
-    setReservations((p) => p.filter((x) => x.id !== id));
+    try {
+      await api.apiDeleteReservation(id);
+      setReservations((p) => p.filter((x) => x.id !== id));
+      return true;
+    } catch {
+      toast("Reservation could not be cancelled", "err");
+      return false;
+    }
   };
   const setReservationStatus: ShopCtx["setReservationStatus"] = async (id, s) => {
-    setReservations((p) => {
-      const next = p.map((x) => (x.id === id ? { ...x, status: s } : x));
-      api.db.write(api.db.K.reservations, next);
-      return next;
-    });
-  };
-
-  const saveSettings = (s: Settings) => {
-    api.writeSettings(s);
-    setSettings(s);
+    try {
+      const upd = await api.apiPatchReservation(id, s);
+      setReservations((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
+      return true;
+    } catch {
+      toast("Reservation status could not be updated", "err");
+      return false;
+    }
   };
 
   const value: ShopCtx = {
-    settings,
-    saveSettings,
-    overrides,
-    patchItem,
-    moveItem,
-    moveItemTo,
-    addItem,
-    removeAdded,
-    addCat,
-    setItemText,
-    effectiveMenu,
-    categories,
-    user,
-    authChecked,
-    users,
-    register,
-    login,
-    logout,
-    updateUser, changePassword,
-    favorites, isFavorite, toggleFavorite,
-    cart,
-    addLine,
-    setQty,
-    removeLine,
-    clearCart,
-    cartOpen,
-    setCartOpen,
-    cartCount,
-    cartSubtotal,
-    pulse,
-    orders,
-    placeOrder,
-    setOrderStatus,
-    refundOrder,
-    orderStatus,
-    logAudit,
-    reservations,
-    addReservation,
-    cancelReservation,
-    setReservationStatus,
-    toasts,
-    toast,
+    settings, saveSettings,
+    overrides: { items: {}, order: {} },
+    patchItem, moveItem, moveItemTo, addItem, removeAdded, addCat, patchCategory, archiveCategory, restoreCategory, setItemText,
+    effectiveMenu, categories,
+    user, authChecked, users, register, login, logout, updateUser, changePassword, favorites, isFavorite, toggleFavorite, adminLogin, adminLogout, staffRole,
+    cart, addLine, setQty, removeLine, clearCart, loginGate,
+    openLoginGate: () => setLoginGate(true),
+    closeLoginGate: () => setLoginGate(false),
+    cartOpen, setCartOpen, cartCount, cartSubtotal,
+    pulse, priceCart, serverPricing,
+    orders, refreshOrder, startCheckout, placeOrder, setOrderStatus, adjustOrderReadyTime, refundOrder, orderStatus,
+    reservations, addReservation, cancelReservation, setReservationStatus,
+    toasts, toast, logAudit, refresh,
   };
-
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
-/* keep a live-updating status tick for tracking pages */
 export function useTick(ms = 2000): number {
   const [t, setT] = useState(0);
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { db } from "./supabase";
 import { orderStatus } from "./logic";
-import type { Order, OrderStatus } from "./lib/types";
+import type { CartLine, Order, OrderStatus } from "./lib/types";
 
 type OrderRow = {
   id: string;
@@ -22,6 +22,13 @@ type OrderRow = {
   address: string | null;
   note: string | null;
   scheduled_for: string | null;
+  ready_at: string | null;
+  ready_note: string | null;
+  delivery_rule_id: string | null;
+  delivery_offer_en: string | null;
+  delivery_offer_fi: string | null;
+  distance_km: number | null;
+  order_weight_kg: number;
   created_at: string;
   order_items: Array<{
     id: string;
@@ -30,6 +37,7 @@ type OrderRow = {
     variant_label: string;
     selected_toppings: { included?: string[]; extras?: { label: string; count: number }[]; builder?: boolean } | null;
     options: string[];
+    selected_options: CartLine["selections"];
     is_preorder: boolean;
     quantity: number;
     unit_price: number;
@@ -64,6 +72,7 @@ export function toApiOrder(row: OrderRow): Order {
       qty: item.quantity,
       unitPrice: Number(item.unit_price),
       options: item.options ?? [],
+      selections: item.selected_options ?? undefined,
       note: item.note ?? undefined,
       preorder: item.is_preorder && scheduled ? scheduled : undefined,
       pizza: item.selected_toppings ? {
@@ -80,6 +89,11 @@ export function toApiOrder(row: OrderRow): Order {
     vat: Number(row.vat),
     scheduled,
     statusOverride: row.status === "placed" ? undefined : row.status,
+    readyAt: row.ready_at ? Date.parse(row.ready_at) : undefined,
+    readyNote: row.ready_note ?? undefined,
+    deliveryOffer: row.delivery_rule_id ? { id: row.delivery_rule_id, nameEn: row.delivery_offer_en ?? "", nameFi: row.delivery_offer_fi ?? "" } : undefined,
+    distanceKm: row.distance_km === null ? undefined : Number(row.distance_km),
+    orderWeightKg: Number(row.order_weight_kg ?? 0),
     paymentStatus: row.payment_status === "paid" && paymentRef.startsWith("demo:") ? "demo_paid" : row.payment_status,
     paymentId: paymentRef.startsWith("pi_") ? paymentRef : undefined,
     checkoutSessionId: paymentRef.startsWith("cs_") ? paymentRef : undefined,

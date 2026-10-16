@@ -1,5 +1,5 @@
 "use client";
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useReducer, useState } from "react";
 import type { Lang } from "./types";
 
 type Dict = Record<string, string>;
@@ -22,6 +22,8 @@ const en: Dict = {
   "auth.noAccount": "New to Kuopio Bites?",
   "auth.login": "Sign in",
   "auth.signup": "Create account",
+  "auth.continueGoogle": "Continue with Google",
+  "auth.orEmail": "or with email",
   "open.now": "Open now · closes at",
   "open.closed": "Closed · opens at",
   "open.closedDay": "Closed · opens",
@@ -41,6 +43,19 @@ const en: Dict = {
   "nav.prev": "Previous",
   "nav.next": "Next",
   "order.priceChanged": "Prices changed — please review your cart before paying.",
+  "order.closed": "The kitchen is closed right now — schedule a pre-order or order when we open.",
+  "order.minOrder": "This delivery order is below the minimum order amount.",
+  "order.calculatingPrice": "Checking server price…",
+  "delivery.free": "Free",
+  "delivery.calculating": "Calculating delivery price…",
+  "delivery.addressHint": "Enter a Kuopio delivery address with a 70xxx postal code to calculate the delivery fee.",
+  "delivery.enterFullAddress": "Enter the full address so we can verify the delivery area and price.",
+  "delivery.postcodeHint": "We currently deliver to Kuopio postal codes beginning with 70.",
+  "delivery.outOfRange": "That address is outside our delivery area.",
+  "delivery.ruleBlocked": "Delivery is unavailable for this order at the moment.",
+  "delivery.addressNotFound": "We could not locate that address. Check the street and postal code.",
+  "delivery.geocoderUnavailable": "We could not verify the delivery address right now. Please try again.",
+  "payment.unavailable": "Online payment is unavailable right now. Please try again later.",
   "track.note": "Note:",
   "open.tomorrow": "tomorrow",
   "open.paused": "Online ordering paused",
@@ -82,6 +97,7 @@ const en: Dict = {
   "menu.from": "from",
   "menu.selectTopping": "SELECT TOPPING",
   "menu.size": "Size",
+  "menu.close": "Close item details",
   "menu.add": "Add",
   "menu.added": "added to cart",
   "menu.picked": "picked",
@@ -197,6 +213,7 @@ const en: Dict = {
   "pre.errSunday": "Halwa Puri can only be ordered for a Sunday.",
   "pre.errCutoff": "The cutoff for that Sunday has passed — please pick the next one.",
   "pre.errSlot": "Pick a Sunday pickup slot.",
+  "pre.errCapacity": "That Sunday pickup is full — please choose another slot.",
   "pre.chip": "Pre-order",
   "pre.scheduled": "Scheduled for",
   "avail.unavailable": "Unavailable",
@@ -211,7 +228,7 @@ const en: Dict = {
   "order.placed": "Payment accepted — order placed! 🎉",
   "order.promo": "Promo code",
   "order.promoPh": "e.g. WINGS10",
-  "order.secure": "Stripe-style hosted checkout (stubbed) · card details never touch our servers",
+  "order.secure": "Hosted checkout · card details never touch our servers",
   "banner.alt": "Kuopio Bites & Asian Cuisine wordmark",
   "admin.avail": "Available",
   "admin.untilOn": "until turned back on",
@@ -243,6 +260,8 @@ const fi: Dict = {
   "auth.noAccount": "Uusi asiakas?",
   "auth.login": "Kirjaudu",
   "auth.signup": "Luo tili",
+  "auth.continueGoogle": "Jatka Google-tilillä",
+  "auth.orEmail": "tai sähköpostilla",
   "open.now": "Avoinna · sulkee klo",
   "open.closed": "Suljettu · aukeamme klo",
   "open.closedDay": "Suljettu · aukeamme",
@@ -262,6 +281,19 @@ const fi: Dict = {
   "nav.prev": "Edellinen",
   "nav.next": "Seuraava",
   "order.priceChanged": "Hinnat muuttuivat — tarkista ostoskorisi ennen maksua.",
+  "order.closed": "Keittiö on nyt kiinni — tee ennakkotilaus tai tilaa, kun avaamme.",
+  "order.minOrder": "Tilaus alittaa kotiinkuljetuksen vähimmäistilauksen.",
+  "order.calculatingPrice": "Tarkistetaan hintaa palvelimelta…",
+  "delivery.free": "Maksuton",
+  "delivery.calculating": "Lasketaan toimitushintaa…",
+  "delivery.addressHint": "Anna Kuopion toimitusosoite, jonka postinumero alkaa 70, jotta toimitushinta voidaan laskea.",
+  "delivery.enterFullAddress": "Anna koko osoite, jotta voimme tarkistaa toimitusalueen ja hinnan.",
+  "delivery.postcodeHint": "Toimitamme tällä hetkellä Kuopion postinumeroalueille, jotka alkavat numerolla 70.",
+  "delivery.outOfRange": "Osoite on toimitusalueemme ulkopuolella.",
+  "delivery.ruleBlocked": "Toimitus ei ole tällä hetkellä saatavilla tälle tilaukselle.",
+  "delivery.addressNotFound": "Osoitetta ei löytynyt. Tarkista katuosoite ja postinumero.",
+  "delivery.geocoderUnavailable": "Toimitusosoitetta ei voitu vahvistaa juuri nyt. Yritä myöhemmin uudelleen.",
+  "payment.unavailable": "Verkkomaksu ei ole juuri nyt käytettävissä. Yritä myöhemmin uudelleen.",
   "track.note": "Huomio:",
   "open.tomorrow": "huomenna",
   "open.paused": "Verkkotilaukset väliaikaisesti tauolla",
@@ -303,6 +335,7 @@ const fi: Dict = {
   "menu.from": "alk.",
   "menu.selectTopping": "VALITSE TÄYTE",
   "menu.size": "Koko",
+  "menu.close": "Sulje tuotetiedot",
   "menu.add": "Lisää",
   "menu.added": "lisätty ostoskoriin",
   "menu.picked": "valittu",
@@ -418,6 +451,7 @@ const fi: Dict = {
   "pre.errSunday": "Halwa Purin voi tilata vain sunnuntaille.",
   "pre.errCutoff": "Tämän sunnuntain rajausaika on mennyt — valitse seuraava.",
   "pre.errSlot": "Valitse sunnuntain noutoaika.",
+  "pre.errCapacity": "Tämän sunnuntain nouto on täynnä — valitse toinen aika.",
   "pre.chip": "Ennakkotilaus",
   "pre.scheduled": "Sunnuntain nouto",
   "avail.unavailable": "Ei saatavilla",
@@ -432,7 +466,7 @@ const fi: Dict = {
   "order.placed": "Maksu vastaanotettu — tilaus vastaanotettu! 🎉",
   "order.promo": "Alennuskoodi",
   "order.promoPh": "esim. WINGS10",
-  "order.secure": "Stripe-tyylinen kassa (demo) · korttitiedot eivät kulje palvelintemme kautta",
+  "order.secure": "Hosted-kassa · korttitiedot eivät kulje palvelintemme kautta",
   "banner.alt": "Kuopio Bites & Asian Cuisine -tunnus",
   "admin.avail": "Saatavilla",
   "admin.untilOn": "kunnes palautan",
@@ -448,6 +482,22 @@ const fi: Dict = {
 
 const DICTS: Record<Lang, Dict> = { en, fi };
 export { DICTS };
+
+/* backend-owned translations override the bundled fallback once hydrated */
+let REMOTE: Record<Lang, Dict> = { en: {}, fi: {} };
+const trSubs = new Set<() => void>();
+export function hydrateTranslations(d: Record<string, Record<string, string>>) {
+  REMOTE = { en: { ...(d.en ?? {}) }, fi: { ...(d.fi ?? {}) } };
+  trSubs.forEach((f) => f());
+}
+function useTranslationsTick() {
+  const [, force] = useReducer((x: number) => x + 1, 0);
+  useEffect(() => {
+    const f = () => force();
+    trSubs.add(f);
+    return () => void trSubs.delete(f);
+  }, []);
+}
 
 export const DAYS: Record<Lang, string[]> = {
   en: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
@@ -470,6 +520,7 @@ export function useLang(): LangCtx {
 }
 
 export function LangProvider({ children }: { children: React.ReactNode }) {
+  useTranslationsTick();
   const [lang, setLangState] = useState<Lang>("en");
   useEffect(() => {
     const saved = localStorage.getItem("kb_lang");
@@ -479,7 +530,7 @@ export function LangProvider({ children }: { children: React.ReactNode }) {
     setLangState(l);
     localStorage.setItem("kb_lang", l);
   };
-  const t = (key: string) => DICTS[lang][key] ?? en[key] ?? key;
+  const t = (key: string) => REMOTE[lang][key] ?? DICTS[lang][key] ?? en[key] ?? key;
   const dayName = (idx: number) => DAYS[lang][idx];
   return <Ctx.Provider value={{ lang, setLang, t, dayName }}>{children}</Ctx.Provider>;
 }

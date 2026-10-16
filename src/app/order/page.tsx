@@ -2,20 +2,20 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import AuthForm from "@/components/AuthForm";
 import { LineThumb, QtyStepper } from "@/components/ui";
 import { cx, eur, fmtDate } from "@/lib/format";
-import { computeDiscount, etaLabel, isItemOff, validatePreorder } from "@/lib/v3";
+import { etaLabel, isItemOff, validatePreorder } from "@/lib/v3";
+import { apiPriceCart } from "@/lib/api";
 import { orderingInfo } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
-import { RESTAURANT } from "@/lib/menu";
 import { useShop } from "@/lib/store";
 
 export default function OrderPage() {
   const shop = useShop();
   const router = useRouter();
-  const { cart, cartSubtotal, settings, user, setQty, removeLine, clearCart, placeOrder, toast, updateUser } = shop;
+  const { cart, cartSubtotal, settings, user, setQty, removeLine, clearCart, startCheckout, toast, updateUser } = shop;
 
   const [type, setType] = useState<"pickup" | "delivery">("pickup");
   const [address, setAddress] = useState("");
@@ -24,6 +24,9 @@ export default function OrderPage() {
   const [paying, setPaying] = useState(false);
   const { t, dayName, lang } = useLang();
   const [code, setCode] = useState("");
+  const [serverPricing, setServerPricing] = useState<Awaited<ReturnType<typeof apiPriceCart>> | null>(null);
+  const [pricingLoading, setPricingLoading] = useState(false);
+  const [pricingError, setPricingError] = useState("");
 
   const open = orderingInfo(settings);
   const openLabel = open.paused
@@ -36,48 +39,82 @@ export default function OrderPage() {
   const scheduled = cart.find((l) => l.preorder)?.preorder;
   const unavailable = cart.filter((l) => isItemOff(settings, l.itemId));
   const preErr = validatePreorder(settings, cart, scheduled);
-  const disc = computeDiscount(settings, cart, cartSubtotal, lang, code);
-  const deliveryFee = type === "delivery" && !disc.freeDelivery ? settings.deliveryFee : 0;
-  const total = Math.round((cartSubtotal + deliveryFee - disc.amount) * 100) / 100;
-  const vat = Math.round((total * (settings.vatRate / (1 + settings.vatRate))) * 100) / 100;
 
   const postalOk = useMemo(() => {
     if (type !== "delivery") return true;
     const m = address.match(/\b(\d{5})\b/);
     return !!m && m[1].startsWith("70");
   }, [address, type]);
-  const minOk = type !== "delivery" || cartSubtotal >= settings.minOrder;
-  const canPay = (open.open || !!scheduled) && user && cart.length > 0 && postalOk && minOk && unavailable.length === 0 && !preErr && !paying;
+  const pricingAddress = type === "delivery" ? address.trim() : undefined;
+  useEffect(() => {
+    let live = true;
+    setServerPricing(null);
+    setPricingError("");
+    if (!cart.length || (type === "delivery" && !postalOk)) {
+      setPricingLoading(false);
+      return () => { live = false; };
+    }
+    setPricingLoading(true);
+    const timer = setTimeout(() => {
+      apiPriceCart(cart, type, lang, code.trim() || undefined, pricingAddress)
+        .then((result) => { if (live) setServerPricing(result); })
+        .catch((error: unknown) => { if (live) setPricingError(error instanceof Error ? error.message : "delivery.geocoderUnavailable"); })
+        .finally(() => { if (live) setPricingLoading(false); });
+    }, 450);
+    return () => { live = false; clearTimeout(timer); };
+  }, [cart, type, lang, code, pricingAddress, postalOk]);
+
+  const appliedDiscount = serverPricing?.discount;
+  const displayedLines = serverPricing?.lines ?? cart;
+  const subtotal = serverPricing?.subtotal ?? cartSubtotal;
+  const deliveryFee = serverPricing?.deliveryFee ?? 0;
+  const total = serverPricing?.total ?? cartSubtotal;
+  const vat = serverPricing?.vat ?? Math.round((total * settings.vatRate / (1 + settings.vatRate)) * 100) / 100;
+  const minOk = type !== "delivery" || subtotal >= settings.minOrder;
+  const pricingErrorMessage = pricingError ? t(pricingError.startsWith("delivery.") ? pricingError : "delivery.geocoderUnavailable") : "";
+  const pricingReady = !!serverPricing && !pricingLoading && !pricingError;
+  const canPay = (open.open || !!scheduled) && user && cart.length > 0 && postalOk && minOk && pricingReady && unavailable.length === 0 && !preErr && !paying;
 
   const pay = async () => {
-    if (!user) return;
+    if (!user || !pricingReady) return;
     setPaying(true);
-    // STUB → POST /api/checkout (Stripe hosted checkout session)
-    await new Promise((r) => setTimeout(r, 1200));
-    if (type === "delivery" && !user.addresses.includes(address)) {
-      await updateUser({ addresses: [...user.addresses, address] });
-    }
     try {
-      const order = await placeOrder({
+      if (type === "delivery" && !user.addresses.includes(address)) {
+        await updateUser({ addresses: [...user.addresses, address] });
+      }
+      const result = await startCheckout({
         type,
         customer: { name: user.name, email: user.email, phone: phone || user.phone || "" },
-        address: type === "delivery" ? address : RESTAURANT.address,
+        address: type === "delivery" ? address.trim() : settings.restaurant.address,
         note,
         lines: cart,
-        subtotal: cartSubtotal,
-        deliveryFee,
-        total,
-        vat,
+        subtotal: serverPricing.subtotal,
+        deliveryFee: serverPricing.deliveryFee,
+        total: serverPricing.total,
+        vat: serverPricing.vat,
         userId: user.id,
         scheduled,
-        discount: disc.amount > 0 ? { amount: disc.amount, title: disc.title, offerId: disc.offer?.id } : undefined,
+        lang,
+        code: code.trim() || undefined,
+        discount: appliedDiscount ? { title: appliedDiscount.title, amount: appliedDiscount.amount, offerId: appliedDiscount.offerId } : undefined,
+        deliveryOffer: serverPricing.deliveryOffer,
+        distanceKm: serverPricing.distanceKm,
+        orderWeightKg: serverPricing.orderWeightKg,
       });
-      clearCart();
-      toast(t("order.placed"));
-      router.push(`/track/${order.id}`);
-    } catch (e) {
-      toast(t((e as Error).message) ?? (e as Error).message, "err");
-    } finally {
+      if (result.mode === "stripe" && result.url) {
+        window.location.assign(result.url);
+        return;
+      }
+      if (result.mode === "demo" && result.order) {
+        clearCart();
+        toast(t("order.placed"));
+        router.push(`/track/${result.order.id}`);
+        return;
+      }
+      throw new Error("payment.unavailable");
+    } catch (error) {
+      const key = error instanceof Error ? error.message : "payment.unavailable";
+      toast(t(key) === key ? t("payment.unavailable") : t(key), "err");
       setPaying(false);
     }
   };
@@ -157,7 +194,7 @@ export default function OrderPage() {
             <div className="mt-4 rounded-3xl border border-cherry/10 bg-cream-deep p-5 shadow-card">
               {type === "pickup" ? (
                 <p className="text-sm font-bold text-cherry/80">
-                  {t("order.pickupAt")} <span className="text-cherry">{RESTAURANT.address}</span>. {t("order.pickupNote")}
+                  {t("order.pickupAt")} <span className="text-cherry">{settings.restaurant.address}</span>. {t("order.pickupNote")}
                 </p>
               ) : (
                 <div className="space-y-3">
@@ -178,14 +215,10 @@ export default function OrderPage() {
                     onChange={(e) => setAddress(e.target.value)}
                   />
                   {!postalOk && address.trim() !== "" && (
-                    <p className="text-xs font-bold text-cherry-bright">
-                      We deliver within ~{settings.radiusKm} km of Kuopio centre (postal codes 70xxx).
-                    </p>
+                    <p className="text-xs font-bold text-cherry-bright">{t("delivery.postcodeHint")}</p>
                   )}
                   {!minOk && (
-                    <p className="text-xs font-bold text-cherry-bright">
-                      Delivery minimum is {eur(settings.minOrder)} — add {eur(settings.minOrder - cartSubtotal)} more.
-                    </p>
+                    <p className="text-xs font-bold text-cherry-bright">{lang === "fi" ? `Kotiinkuljetuksen vähimmäissumma on ${eur(settings.minOrder)} — lisää ${eur(settings.minOrder - subtotal)}.` : `Delivery minimum is ${eur(settings.minOrder)} — add ${eur(settings.minOrder - subtotal)} more.`}</p>
                   )}
                   <input
                     className="min-h-[44px] w-full rounded-2xl border border-cherry/20 bg-cream px-4 text-sm font-bold"
@@ -210,7 +243,7 @@ export default function OrderPage() {
         <aside className="h-fit rounded-3xl border-2 border-gold/50 bg-cream-deep p-6 shadow-lift lg:sticky lg:top-28">
           <h2 className="font-display text-xl font-black text-cherry">{t("order.summary")}</h2>
           <ul className="mt-4 max-h-72 space-y-3 overflow-y-auto pr-1">
-            {cart.map((l) => (
+            {displayedLines.map((l) => (
               <li key={l.key} className="flex items-start justify-between gap-3 text-sm">
                 <div className="min-w-0">
                   <p className="font-black text-cherry">{l.name}</p>
@@ -225,13 +258,18 @@ export default function OrderPage() {
             ))}
           </ul>
           <dl className="mt-5 space-y-1.5 border-t-2 border-gold/40 pt-4 text-sm font-bold text-cherry/80">
-            <div className="flex justify-between"><dt>{t("cart.subtotal")}</dt><dd className="tabular-nums">{eur(cartSubtotal)}</dd></div>
-            <div className="flex justify-between"><dt>{t("order.fee")}</dt><dd className="tabular-nums">{type === "delivery" && settings.deliveryFee && !disc.freeDelivery ? eur(settings.deliveryFee) : "—"}</dd></div>
-            {disc.amount > 0 && (
-              <div className="flex justify-between text-[#2e7d32]"><dt>− {disc.title}</dt><dd className="tabular-nums">−{eur(disc.amount)}</dd></div>
+            <div className="flex justify-between"><dt>{t("cart.subtotal")}</dt><dd className="tabular-nums">{eur(subtotal)}</dd></div>
+            <div className="flex justify-between"><dt>{t("order.fee")}</dt><dd className="tabular-nums">{type !== "delivery" ? "—" : pricingReady ? deliveryFee > 0 ? eur(deliveryFee) : t("delivery.free") : pricingLoading ? t("delivery.calculating") : "—"}</dd></div>
+            {appliedDiscount && (appliedDiscount.amount > 0 || (type === "delivery" && deliveryFee === 0)) && (
+              <div className="flex justify-between text-[#2e7d32]"><dt>{appliedDiscount.amount > 0 ? `− ${appliedDiscount.title}` : appliedDiscount.title}</dt><dd className="tabular-nums">{appliedDiscount.amount > 0 ? `−${eur(appliedDiscount.amount)}` : t("delivery.free")}</dd></div>
             )}
+            {serverPricing?.deliveryOffer && <p className="text-right text-[11px] font-bold text-cherry/60">{lang === "fi" ? serverPricing.deliveryOffer.nameFi : serverPricing.deliveryOffer.nameEn}{serverPricing.distanceKm != null ? ` · ${serverPricing.distanceKm.toFixed(2)} km` : ""}{serverPricing.orderWeightKg > 0 ? ` · ${serverPricing.orderWeightKg.toFixed(2)} kg` : ""}</p>}
             <div className="flex justify-between text-xs text-cherry/60"><dt>{t("order.vat")} {Math.round(settings.vatRate * 100)}%</dt><dd className="tabular-nums">{eur(vat)}</dd></div>
-            <div className="flex justify-between pt-2 font-display text-xl font-black text-cherry"><dt>{t("order.total")}</dt><dd className="tabular-nums">{eur(total)}</dd></div>
+            <div className="flex justify-between pt-2 font-display text-xl font-black text-cherry"><dt>{t("order.total")}</dt><dd className="tabular-nums">{pricingReady ? eur(total) : "—"}</dd></div>
+            {pricingLoading && <p role="status" className="text-right text-xs font-bold text-cherry/55">{t("delivery.calculating")}</p>}
+            {pricingErrorMessage && <p role="alert" className="text-xs font-bold text-brick">{pricingErrorMessage}</p>}
+            {type === "delivery" && !postalOk && <p className="text-xs text-cherry/55">{t("delivery.addressHint")}</p>}
+            {type === "delivery" && postalOk && !pricingReady && !pricingLoading && !pricingErrorMessage && <p className="text-xs text-cherry/55">{t("delivery.enterFullAddress")}</p>}
           </dl>
           <div className="mt-3 space-y-2">
             <label className="block text-xs font-black uppercase text-cherry/60">{t("order.promo")}</label>
@@ -241,7 +279,7 @@ export default function OrderPage() {
               placeholder={t("order.promoPh")}
               className="min-h-[44px] w-full rounded-full border border-cherry/20 bg-cream-deep px-4 text-sm font-bold uppercase placeholder:normal-case placeholder:text-cherry/40"
             />
-            {disc.offer?.code && <p className="text-xs font-black text-[#2e7d32]">✓ {disc.title}</p>}
+            {code.trim() && appliedDiscount?.offerId && <p className="text-xs font-black text-[#2e7d32]">✓ {appliedDiscount.title}</p>}
           </div>
           <dl className="mt-4 space-y-1 border-t border-cherry/10 pt-3 text-sm">
             {scheduled ? (
@@ -271,7 +309,7 @@ export default function OrderPage() {
               canPay ? "bg-cherry-bright shadow-lift hover:-translate-y-0.5 hover:bg-cherry active:scale-[0.98]" : "cursor-not-allowed bg-cherry/25"
             )}
           >
-            {paying ? `${t("order.paying")} 🔒` : `${t("order.pay")} · ${eur(total)}`}
+            {paying ? `${t("order.paying")} 🔒` : pricingReady ? `${t("order.pay")} · ${eur(total)}` : type === "delivery" && !postalOk ? t("delivery.addressHint") : t("order.calculatingPrice")}
           </button>
           <p className="mt-2 text-center text-[11px] text-cherry/50">
             {t("order.secure")}

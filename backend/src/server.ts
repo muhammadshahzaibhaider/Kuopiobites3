@@ -7,9 +7,11 @@ import { createHmac, randomBytes, timingSafeEqual, createHash } from "node:crypt
 import Stripe from "stripe";
 import { CFG } from "./config";
 import { authClient, codeFlowAuthClient, db as supabaseDb, logActivity } from "./supabase";
-import { getItem, listCategories, listItems, toDatabaseItem } from "./supabase-menu";
-import { getOrder, listCustomerOrders, listOrders } from "./supabase-orders";
+import { getItem, listCategories, listItems, syncItemConfiguration, toDatabaseItem } from "./supabase-menu";
+import { getOrder, listCustomerOrders, listOrders, toApiOrder } from "./supabase-orders";
 import { saveSettings } from "./supabase-settings";
+import { changedSettings, forbiddenSettingsChanges } from "./settings-roles";
+import { deliveryEvaluation, evaluateDeliveryRules } from "./delivery";
 import {
   clearSessionCookies, currentAuth, customerRow, ensureCsrfCookie, ensureCustomerRow, issueCustomerSession, issueStaffSession,
   readAuth, requireCustomer, requireStaff, staffById, staffRow, csrfCookie,
@@ -17,22 +19,24 @@ import {
 } from "./auth";
 import { effectiveItems, loadSettings, orderStatus, priceCart, validateOrder } from "./logic";
 import { openInfo } from "./lib/hours";
-import type { CartLine, MenuItem, Order, Reservation, Settings, User } from "./lib/types";
+import type { CartLine, DeliveryRule, MenuItem, Offer, Order, Reservation, Settings, User } from "./lib/types";
 import {
-  accountPatchSchema, cartLineSchema, cartMergeSchema, cartQtySchema, cartSchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema,
+  accountPatchSchema, availabilityPatchSchema, cartLineSchema, cartMergeSchema, cartQtySchema, cartSchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema,
+  deliveryPreviewSchema, deliveryRuleInputSchema, readyTimeSchema,
   customerOrderSchema, favoriteAddSchema, favoriteMergeSchema, passwordChangeSchema,
   forgotPasswordSchema, loginSchema, menuItemSchema, paramId, promotionPatchSchema, registerSchema, reorderSchema, reservationSchema,
-  resetPasswordSchema, settingsSchema, specialPatchSchema, staffLoginSchema, statusSchema, translationSchema, newsletterSchema,
+  resetPasswordSchema, settingsSchema, specialPatchSchema, staffCreateSchema, staffLoginSchema, staffPatchSchema, statusSchema, translationSchema, newsletterSchema,
 } from "./schemas";
 import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
 import { addFavorite, listFavorites, mergeFavorites, removeFavorite, safeListFavorites } from "./supabase-favorites";
 import { addCartLine, clearCart, listCart, mergeCartLines, removeCartLine, safeListCart, setCartLineQty } from "./supabase-cart";
+import { isRevenueEligible } from "../../src/lib/revenue";
 
 const app = express();
 export default app;
 app.set("trust proxy", CFG.isProduction || Boolean(process.env.VERCEL) ? 1 : false);
 
-const bareApiPrefix = /^\/(?:health|categories|items|settings|translations|todays-special|newsletter|auth|cart|uploads|checkout|orders|reservations|account|favorites|promotions|admin|customers|analytics|webhooks)(?:\/|\?|$)/;
+const bareApiPrefix = /^\/(?:health|categories|items|settings|translations|todays-special|newsletter|auth|cart|uploads|checkout|orders|reservations|account|favorites|promotions|delivery-rules|toppings|admin|customers|analytics|webhooks)(?:\/|\?|$)/;
 app.use((req, _res, next) => {
   if (bareApiPrefix.test(req.url)) {
     req.url = `/api${req.url}`;
@@ -135,6 +139,20 @@ const wrap =
   };
 
 const uid = (prefix: string) => `${prefix}-${randomBytes(9).toString("base64url")}`;
+
+async function promotionScopeExists(offer: Pick<Offer, "type" | "scope">): Promise<boolean> {
+  if (offer.scope.whole) return true;
+  if (offer.scope.category) {
+    const categories = await listCategories();
+    return categories.some((category) => category.id === offer.scope.category && !category.archived);
+  }
+  const ids = offer.scope.itemIds ?? [];
+  if (!ids.length) return false;
+  const items = await listItems();
+  const activeIds = new Set(items.map((item) => item.id));
+  return ids.every((id) => activeIds.has(id));
+}
+
 const publicUser = (row: any, favorites: string[] = []): Omit<User, "pass"> => ({
   id: row.id,
   name: row.name,
@@ -179,9 +197,14 @@ app.get("/api/health", wrap(async (_req, res) => {
 }));
 
 app.get("/api/categories", wrap(async (_req, res) => ok(res, await listCategories())));
+app.get("/api/admin/categories", requireStaff("kitchen"), wrap(async (_req, res) => ok(res, await listCategories(true))));
 app.get("/api/items", wrap(async (req, res) => {
   const query = z.object({ cat: z.string().max(40).optional() }).strict().parse(req.query);
   ok(res, await listItems(query.cat));
+}));
+app.get("/api/admin/items", requireStaff("kitchen"), wrap(async (req, res) => {
+  const query = z.object({ cat: z.string().max(40).optional() }).strict().parse(req.query);
+  ok(res, await listItems(query.cat, true));
 }));
 
 app.get("/api/items/:id", wrap(async (req, res) => {
@@ -408,7 +431,7 @@ app.post("/api/auth/logout", wrap(async (req, res) => {
 /* ── server-side pricing ───────────────────────────────────────────────── */
 app.post("/api/cart/price", wrap(async (req, res) => {
   const b = cartSchema.parse(req.body);
-  ok(res, await priceCart(await loadSettings(), b.lines as CartLine[], b.type, b.lang, b.code));
+  ok(res, await priceCart(await loadSettings(), b.lines as CartLine[], b.type, b.lang, b.code, undefined, b.address));
 }));
 
 /* ── upload boundary ───────────────────────────────────────────────────── */
@@ -473,7 +496,7 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
   if (!auth || !customer) throw new Error("auth.required");
   validateDeliveryAddress(body.type, body.address);
   const settings = await loadSettings();
-  const priced = await validateOrder(settings, { type: body.type, lines: body.lines as CartLine[], scheduled: body.scheduled, lang: body.lang, code: body.code });
+  const priced = await validateOrder(settings, { type: body.type, lines: body.lines as CartLine[], address: body.address, scheduled: body.scheduled, lang: body.lang, code: body.code });
   if (body.scheduled && settings.preorder.capacity) {
     const start = helsinkiIso(body.scheduled.date, "00:00");
     const end = helsinkiIso(nextDate(body.scheduled.date), "00:00");
@@ -486,7 +509,6 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
     if (reserved + requested > settings.preorder.capacity) throw new Error("pre.errCapacity");
   }
   if (!body.scheduled && !openInfo(settings.hours).open) throw new Error("order.closed");
-  if (body.type === "delivery" && priced.total < settings.minOrder) throw new Error("order.minOrder");
   if (priced.total <= 0) throw new Error("payment.amountInvalid");
 
   const order: Order = {
@@ -495,6 +517,7 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
     address: body.type === "delivery" ? body.address : undefined, note: body.note,
     lines: priced.lines, subtotal: priced.subtotal, deliveryFee: priced.deliveryFee, discount: priced.discount,
     total: priced.total, vat: priced.vat, scheduled: body.scheduled, paymentStatus: "pending", userId: auth.sub,
+    deliveryOffer: priced.deliveryOffer, distanceKm: priced.distanceKm, orderWeightKg: priced.orderWeightKg,
   } as Order;
   const { error } = await supabaseDb.rpc("create_order", {
     p_order: {
@@ -522,6 +545,7 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
       item_name_snapshot: line.name,
       variant_label: line.variantLabel,
       selected_toppings: line.pizza ? { included: line.pizza.included, extras: line.pizza.extras, builder: !!line.pizza.builder } : null,
+      selected_options: line.selections ?? [],
       options: line.options,
       is_preorder: !!line.preorder,
       quantity: line.qty,
@@ -534,6 +558,14 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
     if (error.message.includes("order.promoUnavailable")) throw new Error("promo.unavailable");
     throw error;
   }
+  const { error: deliveryMetadataError } = await supabaseDb.from("orders").update({
+    delivery_rule_id: priced.deliveryOffer?.id ?? null,
+    delivery_offer_en: priced.deliveryOffer?.nameEn ?? null,
+    delivery_offer_fi: priced.deliveryOffer?.nameFi ?? null,
+    distance_km: priced.distanceKm ?? null,
+    order_weight_kg: priced.orderWeightKg,
+  }).eq("id", order.id);
+  if (deliveryMetadataError) throw deliveryMetadataError;
   return { order, settings };
 }
 
@@ -608,7 +640,7 @@ function withStatus(order: Order) {
 app.get("/api/orders", requireStaff("kitchen"), wrap(async (_req, res) => {
   const orders = await listOrders(300);
   ok(res, orders
-    .filter((order) => order.paymentStatus === "paid" || order.paymentStatus === "demo_paid")
+    .filter(isRevenueEligible)
     .map((order) => ({ ...order, status: orderStatus(order) })));
 }));
 
@@ -629,12 +661,37 @@ app.patch("/api/orders/:id/status", requireStaff("kitchen"), wrap(async (req, re
   const order = await getOrder(id);
   if (!order) return fail(res, 404, "order.notFound");
   if (order.paymentStatus !== "paid" && order.paymentStatus !== "demo_paid") return fail(res, 400, "payment.notPaid");
-  const { error } = await supabaseDb.from("orders").update({ status: b.status }).eq("id", id);
+  const patch: Record<string, unknown> = { status: b.status };
+  if (b.readyInMinutes !== undefined) patch.ready_at = new Date(Date.now() + b.readyInMinutes * 60_000).toISOString();
+  if (b.note !== undefined) patch.ready_note = b.note.trim() || null;
+  const { error } = await supabaseDb.from("orders").update(patch).eq("id", id);
   if (error) throw error;
-  order.statusOverride = b.status;
+  const updated = await getOrder(id);
+  if (!updated) return fail(res, 404, "order.notFound");
   const staff = authStaff(req);
-  logActivity(staff.username, staff.role, `order ${id} -> ${b.status}`);
-  ok(res, { ...order, status: b.status });
+  logActivity(staff.username, staff.role, `order ${id} -> ${b.status}${b.readyInMinutes ? ` (ready in ${b.readyInMinutes}m)` : ""}`);
+  ok(res, withStatus(updated));
+}));
+
+app.patch("/api/orders/:id/ready-time", requireStaff("kitchen"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const body = readyTimeSchema.parse(req.body);
+  const order = await getOrder(id);
+  if (!order) return fail(res, 404, "order.notFound");
+  if (order.paymentStatus !== "paid" && order.paymentStatus !== "demo_paid") return fail(res, 400, "payment.notPaid");
+  if (body.addMinutes !== undefined && order.readyAt === undefined) return fail(res, 400, "order.readyTimeNotSet");
+  const readyAt = body.minutes !== undefined
+    ? Date.now() + body.minutes * 60_000
+    : (order.readyAt ?? Date.now()) + (body.addMinutes ?? 0) * 60_000;
+  const patch: Record<string, unknown> = { ready_at: new Date(readyAt).toISOString() };
+  if (body.note !== undefined) patch.ready_note = body.note.trim() || null;
+  const { error } = await supabaseDb.from("orders").update(patch).eq("id", id);
+  if (error) throw error;
+  const updated = await getOrder(id);
+  if (!updated) return fail(res, 404, "order.notFound");
+  const staff = authStaff(req);
+  logActivity(staff.username, staff.role, `order ${id} ready time adjusted`);
+  ok(res, withStatus(updated));
 }));
 
 app.post("/api/orders/:id/refund", requireStaff("manager"), wrap(async (req, res) => {
@@ -826,7 +883,7 @@ app.post("/api/cart/lines", requireCustomer, wrap(async (req, res) => {
      not send one, so direct API callers get the same idempotent stacking. */
   const rawBody = (req.body ?? {}) as Record<string, unknown>;
   if (typeof rawBody.key !== "string" || !rawBody.key.length)
-    rawBody.key = `${rawBody.itemId ?? ""}|${rawBody.variantLabel ?? ""}|${JSON.stringify(rawBody.options ?? [])}`.slice(0, 100);
+    rawBody.key = `${rawBody.itemId ?? ""}|${rawBody.variantLabel ?? ""}|${JSON.stringify(rawBody.selections ?? rawBody.options ?? [])}`.slice(0, 100);
   const line = cartLineSchema.parse(rawBody) as unknown as CartLine;
   const added = await addCartLine(currentAuth(req)!.sub, line);
   if (!added) return fail(res, 404, "item.notFound");
@@ -858,7 +915,7 @@ app.put("/api/cart", requireCustomer, wrap(async (req, res) => {
   const rawBody = (req.body ?? {}) as { lines?: Record<string, unknown>[] };
   for (const line of rawBody.lines ?? []) {
     if (typeof line.key !== "string" || !line.key.length)
-      line.key = `${line.itemId ?? ""}|${line.variantLabel ?? ""}|${JSON.stringify(line.options ?? [])}`.slice(0, 100);
+      line.key = `${line.itemId ?? ""}|${line.variantLabel ?? ""}|${JSON.stringify(line.selections ?? line.options ?? [])}`.slice(0, 100);
   }
   const body = cartMergeSchema.parse(rawBody);
   const lines = await mergeCartLines((req as any).requestId || "unknown", currentAuth(req)!.sub, body.lines as unknown as CartLine[]);
@@ -899,8 +956,61 @@ app.delete("/api/account", requireCustomer, wrap(async (req, res) => {
   ok(res, { ok: true });
 }));
 
+/* ── server-owned delivery pricing rules ──────────────────────────────── */
+app.get("/api/delivery-rules", requireStaff("manager"), wrap(async (_req, res) => {
+  const settings = await loadSettings();
+  ok(res, settings.deliveryRules);
+}));
+app.get("/api/admin/delivery-rules", requireStaff("manager"), wrap(async (_req, res) => {
+  const settings = await loadSettings();
+  ok(res, settings.deliveryRules);
+}));
+app.post("/api/delivery-rules", requireStaff("manager"), wrap(async (req, res) => {
+  const input = deliveryRuleInputSchema.parse(req.body);
+  const current = await loadSettings();
+  const rule: DeliveryRule = { ...input, id: uid("dr") };
+  const next = settingsSchema.parse({ ...current, deliveryRules: [...current.deliveryRules, rule] }) as Settings;
+  await saveSettings(next);
+  const staff = authStaff(req);
+  logActivity(staff.username, staff.role, `delivery rule + ${rule.id}`);
+  ok(res, rule, 201);
+}));
+app.put("/api/delivery-rules/:id", requireStaff("manager"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const input = deliveryRuleInputSchema.parse(req.body);
+  const current = await loadSettings();
+  if (!current.deliveryRules.some((rule) => rule.id === id)) return fail(res, 404, "delivery.ruleNotFound");
+  const rule: DeliveryRule = { ...input, id };
+  const next = settingsSchema.parse({ ...current, deliveryRules: current.deliveryRules.map((entry) => entry.id === id ? rule : entry) }) as Settings;
+  await saveSettings(next);
+  const staff = authStaff(req);
+  logActivity(staff.username, staff.role, `delivery rule ~ ${id}`);
+  ok(res, rule);
+}));
+app.delete("/api/delivery-rules/:id", requireStaff("manager"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const current = await loadSettings();
+  if (!current.deliveryRules.some((rule) => rule.id === id)) return fail(res, 404, "delivery.ruleNotFound");
+  const updated = current.deliveryRules.map((rule) => rule.id === id ? { ...rule, active: false } : rule);
+  const next = settingsSchema.parse({ ...current, deliveryRules: updated }) as Settings;
+  await saveSettings(next);
+  const staff = authStaff(req);
+  logActivity(staff.username, staff.role, `delivery rule archived ${id}`);
+  ok(res, { ok: true, archived: true });
+}));
+app.post("/api/delivery-rules/preview", requireStaff("manager"), wrap(async (req, res) => {
+  const input = deliveryPreviewSchema.parse(req.body);
+  const settings = await loadSettings();
+  const result = evaluateDeliveryRules(settings, {
+    distanceKm: input.distanceKm,
+    weightKg: input.weightKg,
+    subtotalEur: input.subtotalEur,
+  });
+  ok(res, result);
+}));
+
 /* ── admin menu/settings/content ───────────────────────────────────────── */
-app.post("/api/categories", requireStaff("manager"), wrap(async (req, res) => {
+app.post("/api/categories",  requireStaff("manager"), wrap(async (req, res) => {
   const b = categoryCreateSchema.parse(req.body);
   const id = uid("cat");
   const { data: last, error: readError } = await supabaseDb.from("categories").select("sort_order").order("sort_order", { ascending: false }).limit(1).maybeSingle();
@@ -914,7 +1024,11 @@ app.post("/api/categories", requireStaff("manager"), wrap(async (req, res) => {
 
 app.put("/api/categories/:id", requireStaff("manager"), wrap(async (req, res) => {
   const id = paramId.parse(req.params.id); const b = categoryPatchSchema.parse(req.body);
-  const patch = { ...(b.title !== undefined ? { name_fi: b.title } : {}), ...(b.en !== undefined ? { name_en: b.en } : {}) };
+  const patch = {
+    ...(b.title !== undefined ? { name_fi: b.title } : {}),
+    ...(b.en !== undefined ? { name_en: b.en } : {}),
+    ...(b.archived !== undefined ? { visible: !b.archived, archived_at: b.archived ? new Date().toISOString() : null } : {}),
+  };
   const { data, error } = await supabaseDb.from("categories").update(patch).eq("id", id).select("id").maybeSingle();
   if (error) throw error;
   if (!data) return fail(res, 404, "item.notFound");
@@ -923,10 +1037,24 @@ app.put("/api/categories/:id", requireStaff("manager"), wrap(async (req, res) =>
 
 app.delete("/api/categories/:id", requireStaff("manager"), wrap(async (req, res) => {
   const id = paramId.parse(req.params.id);
-  const { data, error } = await supabaseDb.from("categories").delete().eq("id", id).select("id").maybeSingle();
+  const { data, error } = await supabaseDb.from("categories")
+    .update({ visible: false, archived_at: new Date().toISOString() }).eq("id", id).is("archived_at", null)
+    .select("id").maybeSingle();
   if (error) throw error;
   if (!data) return fail(res, 404, "item.notFound");
-  const staff = authStaff(req); logActivity(staff.username, staff.role, `category - ${id}`); ok(res, { ok: true });
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `category archived ${id}`); ok(res, { ok: true, archived: true });
+}));
+
+app.patch("/api/items/:id/availability", requireStaff("kitchen"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const { off } = availabilityPatchSchema.parse(req.body);
+  const item = await getItem(id);
+  if (!item || item.archived) return fail(res, 404, "item.notFound");
+  const { error: itemError } = await supabaseDb.from("menu_items")
+    .update({ available: !off, sold_out_on: null }).eq("id", id).is("archived_at", null);
+  if (itemError) throw itemError;
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `item availability ${id} -> ${off ? "off" : "on"}`);
+  ok(res, { id, available: !off });
 }));
 
 app.post("/api/items", requireStaff("manager"), wrap(async (req, res) => {
@@ -936,6 +1064,7 @@ app.post("/api/items", requireStaff("manager"), wrap(async (req, res) => {
   const { error } = await supabaseDb.from("menu_items").insert(toDatabaseItem(m, (last?.sort_order ?? -1) + 1));
   if (error?.code === "23505") return fail(res, 409, "item.exists");
   if (error) throw error;
+  await syncItemConfiguration(m);
   const staff = authStaff(req); logActivity(staff.username, staff.role, `item + ${m.id}`); ok(res, m, 201);
 }));
 
@@ -946,15 +1075,18 @@ app.put("/api/items/:id", requireStaff("manager"), wrap(async (req, res) => {
   if (!row) return fail(res, 404, "item.notFound");
   const { error } = await supabaseDb.from("menu_items").update(toDatabaseItem(m, row.sort_order)).eq("id", id);
   if (error) throw error;
+  await syncItemConfiguration(m);
   const staff = authStaff(req); logActivity(staff.username, staff.role, `item ~ ${id}`); ok(res, m);
 }));
 
 app.delete("/api/items/:id", requireStaff("manager"), wrap(async (req, res) => {
   const id = paramId.parse(req.params.id);
-  const { data, error } = await supabaseDb.from("menu_items").delete().eq("id", id).select("id").maybeSingle();
+  const { data, error } = await supabaseDb.from("menu_items")
+    .update({ available: false, archived_at: new Date().toISOString() }).eq("id", id).is("archived_at", null)
+    .select("id").maybeSingle();
   if (error) throw error;
   if (!data) return fail(res, 404, "item.notFound");
-  const staff = authStaff(req); logActivity(staff.username, staff.role, `item - ${id}`); ok(res, { ok: true });
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `item archived ${id}`); ok(res, { ok: true, archived: true });
 }));
 
 app.patch("/api/items/reorder", requireStaff("manager"), wrap(async (req, res) => {
@@ -966,11 +1098,18 @@ app.patch("/api/items/reorder", requireStaff("manager"), wrap(async (req, res) =
   const staff = authStaff(req); logActivity(staff.username, staff.role, `items reordered in ${b.cat}`); ok(res, { ok: true });
 }));
 
-app.put("/api/settings", requireStaff("manager"), wrap(async (req, res) => {
+app.put("/api/settings", requireStaff("kitchen"), wrap(async (req, res) => {
   const current = await loadSettings();
-  const next = settingsSchema.parse({ ...current, ...req.body, audit: current.audit }) as Settings;
-  await saveSettings(next);
-  const staff = authStaff(req); logActivity(staff.username, staff.role, "settings updated"); ok(res, next);
+  const staff = authStaff(req);
+  const submitted = settingsSchema.parse({ ...current, ...req.body, audit: current.audit }) as Settings;
+  const changed = changedSettings(current, submitted);
+  const forbidden = forbiddenSettingsChanges(staff.role, changed);
+  if (forbidden.length) return fail(res, 403, "auth.role");
+  const next = { ...current, ...Object.fromEntries(changed.map((field) => [field, submitted[field]])) } as Settings;
+  const validated = settingsSchema.parse({ ...next, audit: current.audit }) as Settings;
+  await saveSettings(validated);
+  logActivity(staff.username, staff.role, `settings updated (${changed.join(", ") || "no changes"})`);
+  ok(res, validated);
 }));
 
 app.put("/api/todays-special", requireStaff("manager"), wrap(async (req, res) => {
@@ -985,22 +1124,32 @@ app.get("/api/promotions", wrap(async (_req, res) => ok(res, (await loadSettings
 app.post("/api/promotions", requireStaff("manager"), wrap(async (req, res) => {
   const current = await loadSettings();
   const patch = promotionPatchSchema.parse(req.body);
-  const offer = { ...patch, id: uid("of") };
+  if (!await promotionScopeExists(patch)) return fail(res, 400, "promo.scopeInvalid");
+  const normalizedCode = patch.code?.trim().toUpperCase();
+  if (normalizedCode && current.offers.some((offer) => offer.code?.trim().toUpperCase() === normalizedCode)) return fail(res, 409, "promo.codeExists");
+  const offer = { ...patch, id: uid("of"), uses: 0 };
   const next = settingsSchema.parse({ ...current, offers: [...current.offers, offer] }) as Settings;
   await saveSettings(next); const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion + ${offer.id}`); ok(res, offer, 201);
 }));
 app.put("/api/promotions/:id", requireStaff("manager"), wrap(async (req, res) => {
   const id = paramId.parse(req.params.id); const current = await loadSettings();
   const patch = promotionPatchSchema.parse(req.body);
-  if (!current.offers.some((offer) => offer.id === id)) return fail(res, 404, "promo.notFound");
-  const offers = current.offers.map((offer) => offer.id === id ? { ...patch, id, uses: offer.uses } : offer);
+  const existing = current.offers.find((offer) => offer.id === id);
+  if (!existing) return fail(res, 404, "promo.notFound");
+  if (!await promotionScopeExists(patch)) return fail(res, 400, "promo.scopeInvalid");
+  if (patch.maxUses !== undefined && patch.maxUses < (existing.uses ?? 0)) return fail(res, 409, "promo.limitBelowUsage");
+  const normalizedCode = patch.code?.trim().toUpperCase();
+  if (normalizedCode && current.offers.some((offer) => offer.id !== id && offer.code?.trim().toUpperCase() === normalizedCode)) return fail(res, 409, "promo.codeExists");
+  const offers = current.offers.map((offer) => offer.id === id ? { ...patch, id, uses: existing.uses ?? 0 } : offer);
   const next = settingsSchema.parse({ ...current, offers }) as Settings; await saveSettings(next);
   const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion ~ ${id}`); ok(res, offers.find((offer) => offer.id === id));
 }));
 app.delete("/api/promotions/:id", requireStaff("manager"), wrap(async (req, res) => {
   const id = paramId.parse(req.params.id); const current = await loadSettings();
-  const next = settingsSchema.parse({ ...current, offers: current.offers.filter((offer) => offer.id !== id) }) as Settings;
-  await saveSettings(next); const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion - ${id}`); ok(res, { ok: true });
+  if (!current.offers.some((offer) => offer.id === id)) return fail(res, 404, "promo.notFound");
+  const offers = current.offers.map((offer) => offer.id === id ? { ...offer, active: false } : offer);
+  const next = settingsSchema.parse({ ...current, offers }) as Settings;
+  await saveSettings(next); const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion deactivated ${id}`); ok(res, { ok: true, archived: true });
 }));
 
 app.put("/api/translations", requireStaff("manager"), wrap(async (req, res) => {
@@ -1049,14 +1198,171 @@ app.delete("/api/customers/:id", requireStaff("owner"), wrap(async (req, res) =>
 }));
 app.get("/api/analytics/summary", requireStaff("manager"), wrap(async (_req, res) => {
   const orders = await listOrders(10000);
-  const revenue = orders.filter((order) => !order.refunded && ["paid", "demo_paid"].includes(String(order.paymentStatus))).reduce((sum, order) => sum + order.total, 0);
+  const paid = orders.filter(isRevenueEligible);
+  const revenue = paid.reduce((sum, order) => sum + order.total, 0);
   const byItem = new Map<string, number>();
-  for (const order of orders) for (const line of order.lines) byItem.set(line.name, (byItem.get(line.name) ?? 0) + line.qty);
+  for (const order of paid) for (const line of order.lines) byItem.set(line.name, (byItem.get(line.name) ?? 0) + line.qty);
   const { data: reservations, error } = await supabaseDb.from("reservations").select("status").eq("status", "pending").limit(10000);
   if (error) throw error;
   const pendingReservations = reservations?.length ?? 0;
-  ok(res, { orders: orders.length, revenue: Math.round(revenue * 100) / 100, refunded: orders.filter((order) => order.refunded).length, topItems: [...byItem.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10), pendingReservations });
+  ok(res, { orders: paid.length, revenue: Math.round(revenue * 100) / 100, refunded: orders.filter((order) => order.refunded).length, topItems: [...byItem.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10), pendingReservations });
 }));
+
+app.get("/api/analytics/reports", requireStaff("manager"), wrap(async (req, res) => {
+  const query = z.object({
+    from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  }).strict().refine((range) => {
+    const valid = (value: string) => {
+      const [year, month, day] = value.split("-").map(Number);
+      const date = new Date(Date.UTC(year, month - 1, day));
+      return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+    };
+    return valid(range.from) && valid(range.to) && range.from <= range.to && (Date.parse(`${range.to}T00:00:00Z`) - Date.parse(`${range.from}T00:00:00Z`)) / 86400000 <= 3650;
+  }).parse(req.query);
+  const endExclusive = nextDate(query.to);
+  const { data, error } = await supabaseDb.from("orders").select("*, order_items(*)")
+    .gte("created_at", helsinkiIso(query.from, "00:00"))
+    .lt("created_at", helsinkiIso(endExclusive, "00:00"))
+    .order("created_at", { ascending: true }).limit(20000);
+  if (error) throw error;
+  const orders = (data ?? []).map((row) => toApiOrder(row as any));
+  const paid = orders.filter(isRevenueEligible);
+  const dayKey = (timestamp: number) => {
+    const parts = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Helsinki", year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(new Date(timestamp));
+    const value = (name: string) => parts.find((part) => part.type === name)?.value ?? "00";
+    return `${value("year")}-${value("month")}-${value("day")}`;
+  };
+  const weekdayOf = (timestamp: number) => {
+    const label = new Intl.DateTimeFormat("en-US", { timeZone: "Europe/Helsinki", weekday: "short" }).format(new Date(timestamp));
+    return ({ Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 } as Record<string, number>)[label] ?? 0;
+  };
+  const hourOf = (timestamp: number) => {
+    const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/Helsinki", hour: "2-digit", hourCycle: "h23" }).formatToParts(new Date(timestamp));
+    return Number(parts.find((part) => part.type === "hour")?.value ?? 0) % 24;
+  };
+  const dailyRevenue = new Map<string, { revenue: number; orders: number }>();
+  const byItem = new Map<string, { itemId: string; name: string; quantity: number; revenue: number }>();
+  const byCategory = new Map<string, { categoryId: string; name: string; quantity: number; revenue: number }>();
+  const statuses: Record<string, number> = {};
+  const byHour = Array.from({ length: 24 }, (_, hour) => ({ hour, orders: 0 }));
+  const byWeekday = Array.from({ length: 7 }, (_, weekday) => ({ weekday, label: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][weekday], orders: 0 }));
+  for (const order of paid) {
+    const key = dayKey(order.createdAt);
+    const daily = dailyRevenue.get(key) ?? { revenue: 0, orders: 0 };
+    daily.revenue += order.total; daily.orders += 1; dailyRevenue.set(key, daily);
+    const hour = hourOf(order.createdAt); byHour[hour].orders += 1;
+    byWeekday[weekdayOf(order.createdAt)].orders += 1;
+    const status = orderStatus(order); statuses[status] = (statuses[status] ?? 0) + 1;
+  }
+  const [categoryResult, itemResult] = await Promise.all([
+    supabaseDb.from("categories").select("id, name_en, name_fi"),
+    supabaseDb.from("menu_items").select("id, category_id, name_en, name_fi"),
+  ]);
+  if (categoryResult.error) throw categoryResult.error;
+  if (itemResult.error) throw itemResult.error;
+  const categoryNames = new Map((categoryResult.data ?? []).map((row) => [row.id, row.name_en || row.name_fi || row.id]));
+  const itemCategories = new Map((itemResult.data ?? []).map((row) => [row.id, { categoryId: row.category_id, name: row.name_en || row.name_fi }]));
+  for (const order of paid) for (const line of order.lines) {
+    const item = byItem.get(line.itemId) ?? { itemId: line.itemId, name: line.name, quantity: 0, revenue: 0 };
+    item.quantity += line.qty; item.revenue += line.qty * line.unitPrice; byItem.set(line.itemId, item);
+    const categoryId = itemCategories.get(line.itemId)?.categoryId ?? "archived-or-unknown";
+    const category = byCategory.get(categoryId) ?? { categoryId, name: categoryNames.get(categoryId) ?? "Archived / unknown", quantity: 0, revenue: 0 };
+    category.quantity += line.qty; category.revenue += line.qty * line.unitPrice; byCategory.set(categoryId, category);
+  }
+  const daily: { date: string; label: string; revenue: number; orders: number }[] = [];
+  for (let stamp = Date.parse(`${query.from}T00:00:00Z`), end = Date.parse(`${query.to}T00:00:00Z`); stamp <= end; stamp += 86400000) {
+    const date = new Date(stamp).toISOString().slice(0, 10);
+    const totals = dailyRevenue.get(date) ?? { revenue: 0, orders: 0 };
+    daily.push({ date, label: date.slice(5), revenue: Math.round(totals.revenue * 100) / 100, orders: totals.orders });
+  }
+  const revenue = paid.reduce((sum, order) => sum + order.total, 0);
+  ok(res, {
+    from: query.from, to: query.to,
+    revenue: Math.round(revenue * 100) / 100,
+    orderCount: paid.length,
+    averageOrderValue: paid.length ? Math.round((revenue / paid.length) * 100) / 100 : 0,
+    refundedCount: orders.filter((order) => order.refunded).length,
+    statuses, daily,
+    topItems: [...byItem.values()].sort((a, b) => b.revenue - a.revenue).slice(0, 100),
+    topCategories: [...byCategory.values()].sort((a, b) => b.revenue - a.revenue).slice(0, 100),
+    byHour, byWeekday,
+    fulfillment: { delivery: paid.filter((order) => order.type === "delivery").length, pickup: paid.filter((order) => order.type === "pickup").length },
+  });
+}));
+app.get("/api/admin/staff", requireStaff("owner"), wrap(async (_req, res) => {
+  const { data, error } = await supabaseDb.from("staff_users").select("id, username, name, role, active, created_at").order("created_at", { ascending: true }).limit(500);
+  if (error) throw error;
+  const staff = await Promise.all((data ?? []).map(async (row) => {
+    const { data: authData } = await supabaseDb.auth.admin.getUserById(row.id);
+    return { id: row.id, username: row.username, name: row.name, role: row.role, active: row.active, createdAt: Date.parse(row.created_at), email: authData.user?.email ?? "" };
+  }));
+  ok(res, staff);
+}));
+
+app.post("/api/admin/staff", requireStaff("owner"), wrap(async (req, res) => {
+  const input = staffCreateSchema.parse(req.body);
+  const username = input.username.toLowerCase();
+  const email = input.email.toLowerCase();
+  const { data: created, error: createError } = await supabaseDb.auth.admin.createUser({
+    email, password: input.password, email_confirm: true,
+    app_metadata: { kb_staff: true }, user_metadata: { name: input.name },
+  });
+  if (createError || !created.user) return fail(res, 409, createError?.message.includes("email") ? "auth.emailUnavailable" : "staff.createFailed");
+  const { error } = await supabaseDb.from("staff_users").insert({
+    id: created.user.id, username, name: input.name, role: input.role, active: true,
+  });
+  if (error) {
+    await supabaseDb.auth.admin.deleteUser(created.user.id).catch(() => {});
+    if (error.code === "23505") return fail(res, 409, "staff.usernameUnavailable");
+    throw error;
+  }
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `staff + ${username} (${input.role})`);
+  ok(res, { id: created.user.id, username, name: input.name, role: input.role, active: true, createdAt: Date.now(), email }, 201);
+}));
+
+app.patch("/api/admin/staff/:id", requireStaff("owner"), wrap(async (req, res) => {
+  const id = z.string().uuid().parse(req.params.id);
+  const input = staffPatchSchema.parse(req.body);
+  const { data: current, error: readError } = await supabaseDb.from("staff_users").select("id, username, name, role, active, created_at").eq("id", id).maybeSingle();
+  if (readError) throw readError;
+  if (!current) return fail(res, 404, "staff.notFound");
+  const updatingSelf = currentAuth(req)?.sub === id;
+  const nextRole = input.role ?? current.role;
+  const nextActive = input.active ?? current.active;
+  if (updatingSelf && (!nextActive || nextRole !== "owner")) return fail(res, 400, "staff.cannotRemoveSelf");
+  if (current.role === "owner" && current.active && (nextRole !== "owner" || !nextActive)) {
+    const { count, error } = await supabaseDb.from("staff_users").select("id", { count: "exact", head: true }).eq("role", "owner").eq("active", true);
+    if (error) throw error;
+    if ((count ?? 0) <= 1) return fail(res, 400, "staff.lastOwner");
+  }
+  let previousEmail: string | undefined;
+  if (input.email !== undefined) {
+    const { data: authData, error: authReadError } = await supabaseDb.auth.admin.getUserById(id);
+    if (authReadError || !authData.user) return fail(res, 404, "staff.notFound");
+    previousEmail = authData.user.email ?? undefined;
+    const appMetadata = { ...(authData.user.app_metadata ?? {}), kb_staff: true };
+    const { error } = await supabaseDb.auth.admin.updateUserById(id, { email: input.email.toLowerCase(), email_confirm: true, app_metadata: appMetadata, user_metadata: { ...(authData.user.user_metadata ?? {}), name: input.name ?? current.name } });
+    if (error) return fail(res, 409, error.message.includes("email") ? "auth.emailUnavailable" : "staff.updateFailed");
+  }
+  const patch = {
+    ...(input.username !== undefined ? { username: input.username.toLowerCase() } : {}),
+    ...(input.name !== undefined ? { name: input.name } : {}),
+    ...(input.role !== undefined ? { role: input.role } : {}),
+    ...(input.active !== undefined ? { active: input.active } : {}),
+  };
+  const { data: updated, error: updateError } = await supabaseDb.from("staff_users").update(patch).eq("id", id).select("id, username, name, role, active, created_at").maybeSingle();
+  if (updateError) {
+    if (previousEmail) await supabaseDb.auth.admin.updateUserById(id, { email: previousEmail, email_confirm: true }).catch(() => {});
+    if (updateError.code === "23505") return fail(res, 409, "staff.usernameUnavailable");
+    throw updateError;
+  }
+  if (!updated) return fail(res, 404, "staff.notFound");
+  const { data: authData } = await supabaseDb.auth.admin.getUserById(id);
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `staff ~ ${updated.username}`);
+  ok(res, { id: updated.id, username: updated.username, name: updated.name, role: updated.role, active: updated.active, createdAt: Date.parse(updated.created_at), email: authData.user?.email ?? "" });
+}));
+
 app.get("/api/admin/activity", requireStaff("manager"), wrap(async (_req, res) => {
   const { data, error } = await supabaseDb.from("activity_log").select("created_at, actor_name, actor_role, action, details").order("created_at", { ascending: false }).limit(200);
   if (error) throw error;

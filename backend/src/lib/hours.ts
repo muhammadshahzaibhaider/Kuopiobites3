@@ -24,6 +24,19 @@ export const DEFAULT_SETTINGS: Settings = {
   deliveryFee: 2.5,
   minOrder: 15,
   radiusKm: 6,
+  deliveryRules: [],
+  restaurant: {
+    name: "Kuopio Bites",
+    taglineEn: "& Asian cuisine",
+    taglineFi: "& aasialaista ruokaa",
+    address: "Jalkasenkatu 7, 70820 Kuopio, Finland",
+    phone: "044 981 6223",
+    email: "hello@kuopiobites.fi",
+    instagram: "https://www.instagram.com/kuopio.bites?rpxt=N2ZqdjFudWFuczA4",
+    facebook: "https://www.facebook.com/share/1Cc27jbJMm/?mibextid=wwXIfr",
+    mapLink: "https://www.google.com/maps?q=Jalkasenkatu+7,+70820+Kuopio",
+    mapEmbed: "https://www.google.com/maps?q=Jalkasenkatu%207%2C%2070820%20Kuopio%2C%20Finland&output=embed",
+  },
   vatRate: 0.135, // FI restaurant/takeaway food VAT since 1.1.2026 (was 0.14)
   toppings: DEFAULT_TOPPINGS,
   special: { itemId: "specials-3", active: true }, // Karachi Biryani
@@ -73,7 +86,7 @@ export const DEFAULT_SETTINGS: Settings = {
   catMeta: {},
   catOrder: [],
   audit: [],
-  announcement: { enabled: false, text: "" },
+  announcement: { enabled: false, text: "", textEn: "", textFi: "" },
   pauseMessage: "Keitti\u00f6mme pit\u00e4\u00e4 lyhyen tauon \u2014 palaamme pian!",
 };
 

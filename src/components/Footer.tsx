@@ -3,13 +3,13 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import { useState } from "react";
 import { useLang } from "@/lib/i18n";
-import { RESTAURANT } from "@/lib/menu";
+import { telHref } from "@/lib/format";
 import { useShop } from "@/lib/store";
 import SocialLinks from "./SocialLinks";
 
 export default function Footer() {
   const { settings, toast } = useShop();
-  const { t, dayName } = useLang();
+  const { t, dayName, lang } = useLang();
   const [email, setEmail] = useState("");
   const [done, setDone] = useState(false);
 
@@ -20,8 +20,8 @@ export default function Footer() {
         <div>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo.png" alt="" className="h-16 w-16 rounded-full border-2 border-gold object-cover" />
-          <p className="mt-3 font-display text-2xl font-black">Kuopio Bites</p>
-          <p className="font-script text-xl text-gold-soft">& Asian cuisine</p>
+          <p className="mt-3 font-display text-2xl font-black">{settings.restaurant.name}</p>
+          <p className="font-script text-xl text-gold-soft">{lang === "fi" ? settings.restaurant.taglineFi : settings.restaurant.taglineEn}</p>
           <p className="mt-3 text-sm text-cream/80">
             Grilli · Pizzeria · South Asian & Asian kitchen — made fresh in Kuopio.
           </p>
@@ -45,14 +45,14 @@ export default function Footer() {
         <div>
           <h3 className="font-display text-lg font-black text-gold-soft">{t("footer.find")}</h3>
           <address className="mt-3 not-italic text-sm text-cream/85">
-            {RESTAURANT.address}
+{settings.restaurant.address}
             <br />
             Finland
           </address>
-          <a href={RESTAURANT.phoneHref} className="mt-2 block text-lg font-black text-gold-soft hover:text-gold">
-            {RESTAURANT.phone}
+          <a href={telHref(settings.restaurant.phone)} className="mt-2 block text-lg font-black text-gold-soft hover:text-gold">
+            {settings.restaurant.phone}
           </a>
-          <a href={RESTAURANT.mapLink} target="_blank" rel="noreferrer" className="mt-1 inline-block text-sm underline decoration-gold underline-offset-4 hover:text-gold">
+          <a href={settings.restaurant.mapLink} target="_blank" rel="noreferrer" className="mt-1 inline-block text-sm underline decoration-gold underline-offset-4 hover:text-gold">
             {t("home.dirs")}
           </a>
           {(settings.platforms.wolt || settings.platforms.uberEats) && (
@@ -120,7 +120,7 @@ export default function Footer() {
         </div>
       </div>
       <div className="border-t border-cream/15 py-5 text-center text-xs text-cream/60">
-        © {new Date().getFullYear()} Kuopio Bites · {RESTAURANT.address} · {t("footer.vat")}
+        © {new Date().getFullYear()} {settings.restaurant.name} · {settings.restaurant.address} · {t("footer.vat")}
       </div>
     </footer>
   );

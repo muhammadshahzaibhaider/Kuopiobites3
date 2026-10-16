@@ -88,19 +88,20 @@ export function EmptyState({ icon = "search", title, sub }: { icon?: string; tit
 }
 
 /* ── buttons ── */
-export function PrimaryBtn({ children, onClick, icon = "plus" }: { children: React.ReactNode; onClick?: () => void; icon?: string }) {
+export function PrimaryBtn({ children, onClick, icon = "plus", disabled = false }: { children: React.ReactNode; onClick?: () => void; icon?: string; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-gold px-4 text-sm font-black text-cherry-dark shadow-card transition hover:bg-gold-deep hover:text-cream active:scale-[0.97]"
+      disabled={disabled}
+      className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-gold px-4 text-sm font-black text-cherry-dark shadow-card transition hover:bg-gold-deep hover:text-cream active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-55"
     >
       <Ic n={icon} size={16} /> {children}
     </button>
   );
 }
-export function GhostBtn({ children, onClick, className }: { children: React.ReactNode; onClick?: () => void; className?: string }) {
+export function GhostBtn({ children, onClick, className, disabled = false }: { children: React.ReactNode; onClick?: () => void; className?: string; disabled?: boolean }) {
   return (
-    <button onClick={onClick} className={cx("inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-cherry/20 px-3 text-xs font-black text-cherry transition hover:border-cherry hover:bg-cherry hover:text-cream", className)}>
+    <button onClick={onClick} disabled={disabled} className={cx("inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-cherry/20 px-3 text-xs font-black text-cherry transition hover:border-cherry hover:bg-cherry hover:text-cream disabled:cursor-not-allowed disabled:opacity-50", className)}>
       {children}
     </button>
   );

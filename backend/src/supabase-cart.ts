@@ -16,6 +16,7 @@ const toLine = (row: any): CartLine => ({
   qty: row.qty,
   unitPrice: row.unit_price ?? 0,
   options: (row.options ?? []) as string[],
+  selections: (row.selections ?? []) as CartLine["selections"],
   img: row.img ?? undefined,
   note: row.note ?? undefined,
   pizza: row.pizza ?? undefined,
@@ -59,7 +60,7 @@ export async function addCartLine(customerId: string, line: CartLine): Promise<{
     const { error } = await db.from("cart_items").insert({
       customer_id: customerId, line_key: line.key, item_id: line.itemId,
       name_snap: (line.name || "").slice(0, 160) || null, variant_label: (line.variantLabel || "").slice(0, 40),
-      qty: Math.max(1, line.qty), options: line.options ?? [], note: (line.note || "").slice(0, 400) || null,
+      qty: Math.max(1, line.qty), options: line.options ?? [], selections: line.selections ?? [], note: (line.note || "").slice(0, 400) || null,
       pizza: line.pizza ?? null, preorder: line.preorder ?? null, img: line.img ?? null, unit_price: line.unitPrice ?? null,
     });
     if (error && !/duplicate|23505/i.test(error.message)) throw new Error(error.message);

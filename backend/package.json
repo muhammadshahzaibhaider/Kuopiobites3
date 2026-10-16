@@ -6,7 +6,8 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "seed": "tsx src/seed.ts",
-    "security-check": "node scripts/security-check.mjs"
+    "security-check": "node scripts/security-check.mjs",
+    "test": "node --require ./test/setup.cjs --import tsx --test ./test/*.test.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
