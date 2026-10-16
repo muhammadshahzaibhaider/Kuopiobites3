@@ -1,12 +1,25 @@
-import { db, must } from "./supabase";
+import { db } from "./supabase";
 import { DEFAULT_SETTINGS } from "./lib/hours";
 import type { CatMeta, Offer, Settings, SpecialItem, ToppingMeta, UploadedImg } from "./lib/types";
 
 const slug = (value: string) => value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
-async function check(result: PromiseLike<{ error: { message: string } | null }>): Promise<void> {
+async function check(result: PromiseLike<{ error: { message: string } | null }>, operation: string): Promise<void> {
   const { error } = await result;
-  if (error) throw new Error(error.message);
+  // Keep database details out of client errors/logs; the operation code is enough
+  // for the owner to identify the failing persistence step without exposing row data.
+  if (error) throw new Error(`settings.persist.${operation}`);
+}
+
+function settingsRead<T>(result: { data: T | null; error: { message: string } | null }, operation: string): T {
+  if (result.error || result.data === null) throw new Error(`settings.load.${operation}`);
+  return result.data;
+}
+
+async function settingsPersistRead<T>(result: PromiseLike<{ data: T | null; error: { message: string } | null }>, operation: string): Promise<T> {
+  const { data, error } = await result;
+  if (error || data === null) throw new Error(`settings.persist.${operation}`);
+  return data;
 }
 
 type SettingsRow = {
@@ -34,26 +47,26 @@ export async function loadSettings(): Promise<Settings> {
     db.from("todays_special").select("*").order("sort_order"),
   ]);
 
-  const row = must(settingsResult) as SettingsRow;
-  const categories = must(categoryResult) as Array<{
+  const row = settingsRead(settingsResult, "shop_settings") as SettingsRow;
+  const categories = settingsRead(categoryResult, "categories") as Array<{
     id: string; name_fi: string; name_en: string; photo_url: string | null;
     photo_alt_fi: string | null; photo_alt_en: string | null; sort_order: number; visible: boolean;
   }>;
-  const items = must(itemResult) as Array<{
+  const items = settingsRead(itemResult, "menu_items") as Array<{
     id: string; available: boolean; sold_out_on: string | null; photo_url: string | null;
     photo_alt_fi: string | null; photo_alt_en: string | null;
   }>;
-  const toppings = must(toppingResult) as Array<{
+  const toppings = settingsRead(toppingResult, "toppings") as Array<{
     name_fi: string; name_en: string | null; surcharge_med: number; surcharge_perhe: number; active: boolean;
   }>;
-  const promotions = must(offerResult) as Array<{
+  const promotions = settingsRead(offerResult, "promotions") as Array<{
     id: string; code: string | null; discount_type: Offer["type"]; discount_value: number;
     scope: Offer["scope"]; min_order: number | null; days: number[] | null; starts_at: string | null;
     expires_at: string | null; usage_limit: number | null; used_count: number; title_fi: string; title_en: string;
     description_fi: string | null; description_en: string | null; badge_fi: string | null; badge_en: string | null;
     banner_url: string | null; priority: number; active: boolean;
   }>;
-  const specials = must(specialResult) as Array<{
+  const specials = settingsRead(specialResult, "todays_special") as Array<{
     id: string; menu_item_id: string; discount_type: "percent" | "fixed_price" | null; discount_value: number | null;
     photo_override_url: string | null; label_fi: string | null; label_en: string | null;
     sort_order: number; active: boolean; active_from: string | null; active_to: string | null;
@@ -84,12 +97,14 @@ export async function loadSettings(): Promise<Settings> {
     }
   }
 
-  const toppingMeta: Record<string, ToppingMeta> = { ...DEFAULT_SETTINGS.toppingMeta };
+  const persistedToppingMeta = (extra.toppingMeta as Record<string, ToppingMeta> | undefined) ?? {};
+  const toppingMeta: Record<string, ToppingMeta> = { ...DEFAULT_SETTINGS.toppingMeta, ...persistedToppingMeta };
   const disabledToppings: string[] = [];
   for (const topping of toppings) {
     toppingMeta[topping.name_fi] = {
-      fi: topping.name_fi,
-      en: topping.name_en ?? undefined,
+      ...toppingMeta[topping.name_fi],
+      fi: toppingMeta[topping.name_fi]?.fi ?? topping.name_fi,
+      en: topping.name_en ?? toppingMeta[topping.name_fi]?.en,
       priceMed: Number(topping.surcharge_med),
       pricePerhe: Number(topping.surcharge_perhe),
     };
@@ -141,6 +156,8 @@ export async function loadSettings(): Promise<Settings> {
     deliveryFee: Number(row.delivery_fee),
     minOrder: Number(row.min_order),
     radiusKm: Number(row.radius_km),
+    readyTimeMinutes: Number((extra.readyTimeMinutes as number | undefined) ?? DEFAULT_SETTINGS.readyTimeMinutes),
+    deliveryRules: (extra.deliveryRules as Settings["deliveryRules"] | undefined) ?? DEFAULT_SETTINGS.deliveryRules,
     vatRate: Number(row.vat_rate),
     preorder: row.preorder,
     blockedDates: row.blocked_dates ?? [],
@@ -152,9 +169,13 @@ export async function loadSettings(): Promise<Settings> {
     special: (extra.special as Settings["special"] | undefined) ?? DEFAULT_SETTINGS.special,
     offers,
     todaysSpecials,
-    toppings: toppings.map((topping) => topping.name_fi),
+    toppings: (extra.toppingList as string[] | undefined) ?? toppings.map((topping) => topping.name_fi),
     toppingMeta,
-    offOptions: { ...DEFAULT_SETTINGS.offOptions, ...(extra.offOptions as Settings["offOptions"] | undefined), topping: disabledToppings },
+    offOptions: {
+      ...DEFAULT_SETTINGS.offOptions,
+      ...(extra.offOptions as Settings["offOptions"] | undefined),
+      topping: [...new Set([...(extra.offOptions as Settings["offOptions"] | undefined)?.topping ?? [], ...disabledToppings])],
+    },
     catMeta,
     catOrder: categories.map((category) => category.id),
     itemImages,
@@ -175,8 +196,12 @@ export async function saveSettings(settings: Settings): Promise<void> {
     offCats: settings.offCats,
     offOptions: settings.offOptions,
     toppingMeta: settings.toppingMeta,
+    deliveryRules: settings.deliveryRules,
+    readyTimeMinutes: settings.readyTimeMinutes,
+    toppingList: settings.toppings,
   };
-  await check(db.from("shop_settings").update({
+  await check(db.from("shop_settings").upsert({
+    id: true,
     paused: settings.paused,
     pause_message: settings.pauseMessage,
     hours: settings.hours,
@@ -189,9 +214,9 @@ export async function saveSettings(settings: Settings): Promise<void> {
     blocked_slots: settings.blockedSlots,
     announcement: settings.announcement,
     extra,
-  }).eq("id", true));
+  }, { onConflict: "id" }), "shop_settings");
 
-  const categories = await must(await db.from("categories").select("id"));
+  const categories = await settingsPersistRead(db.from("categories").select("id"), "categories_read");
   for (const category of categories) {
     const meta = settings.catMeta[category.id] ?? {};
     const sortOrder = settings.catOrder.indexOf(category.id);
@@ -203,10 +228,10 @@ export async function saveSettings(settings: Settings): Promise<void> {
       photo_alt_en: meta.altEn ?? null,
       visible: !meta.hidden,
       ...(sortOrder >= 0 ? { sort_order: sortOrder } : {}),
-    }).eq("id", category.id));
+    }).eq("id", category.id), "category");
   }
 
-  const items = await must(await db.from("menu_items").select("id"));
+  const items = await settingsPersistRead(db.from("menu_items").select("id"), "menu_items_read");
   for (const item of items) {
     const availability = settings.offItems[item.id];
     const image = settings.itemImages[item.id];
@@ -216,7 +241,7 @@ export async function saveSettings(settings: Settings): Promise<void> {
       photo_url: image?.src ?? null,
       photo_alt_fi: image?.altFi ?? null,
       photo_alt_en: image?.altEn ?? null,
-    }).eq("id", item.id));
+    }).eq("id", item.id), "menu_item");
   }
 
   const activeToppings = new Set(settings.toppings);
@@ -224,23 +249,24 @@ export async function saveSettings(settings: Settings): Promise<void> {
     const meta: ToppingMeta = settings.toppingMeta[label] ?? {};
     await check(db.from("toppings").upsert({
       id: slug(label),
-      name_fi: meta.fi ?? label,
+      // Keep the stored option label stable; bilingual display names belong in metadata.
+      name_fi: label,
       name_en: meta.en ?? null,
       surcharge_med: meta.priceMed ?? 1,
       surcharge_perhe: meta.pricePerhe ?? 2,
       active: !settings.offOptions.topping?.includes(label),
       sort_order: sortOrder,
-    }));
+    }), "topping");
   }
-  const currentToppings = await must(await db.from("toppings").select("id, name_fi"));
+  const currentToppings = await settingsPersistRead(db.from("toppings").select("id, name_fi"), "toppings_read");
   for (const topping of currentToppings) {
-    if (!activeToppings.has(topping.name_fi)) await check(db.from("toppings").update({ active: false }).eq("id", topping.id));
+    if (!activeToppings.has(topping.name_fi)) await check(db.from("toppings").update({ active: false }).eq("id", topping.id), "topping_archive");
   }
 
-  const currentOffers = await must(await db.from("promotions").select("id"));
+  const currentOffers = await settingsPersistRead(db.from("promotions").select("id"), "promotions_read");
   const nextOfferIds = new Set(settings.offers.map((offer) => offer.id));
   for (const id of currentOffers.map((offer) => offer.id)) {
-    if (!nextOfferIds.has(id)) await check(db.from("promotions").delete().eq("id", id));
+    if (!nextOfferIds.has(id)) await check(db.from("promotions").delete().eq("id", id), "promotion_delete");
   }
   for (const offer of settings.offers) {
     await check(db.from("promotions").upsert({
@@ -264,13 +290,13 @@ export async function saveSettings(settings: Settings): Promise<void> {
       banner_url: offer.banner?.src ?? null,
       priority: offer.priority,
       active: offer.active,
-    }));
+    }), "promotion");
   }
 
-  const currentSpecials = await must(await db.from("todays_special").select("id"));
+  const currentSpecials = await settingsPersistRead(db.from("todays_special").select("id"), "todays_special_read");
   const nextSpecialIds = new Set(settings.todaysSpecials.map((special) => special.id));
   for (const id of currentSpecials.map((special) => special.id)) {
-    if (!nextSpecialIds.has(id)) await check(db.from("todays_special").delete().eq("id", id));
+    if (!nextSpecialIds.has(id)) await check(db.from("todays_special").delete().eq("id", id), "special_delete");
   }
   for (const special of settings.todaysSpecials) {
     const discountType = special.discount != null ? "percent" : special.overridePrice != null ? "fixed_price" : null;
@@ -286,6 +312,6 @@ export async function saveSettings(settings: Settings): Promise<void> {
       active: special.active,
       active_from: special.start ?? null,
       active_to: special.end ?? null,
-    }));
+    }), "special");
   }
 }

@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { eur, cx } from "@/lib/format";
+import { eur } from "@/lib/format";
 import { todayStrHelsinki } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
-import { MENU, RESTAURANT } from "@/lib/menu";
+import { RESTAURANT } from "@/lib/menu";
 import { useShop } from "@/lib/store";
 import { AuditTab, Switch } from "@/app/admin/v3tabs";
+import { apiAnalyticsReport, type AnalyticsReport } from "@/lib/api";
 import { Ic } from "./icons";
-import { Bars, DataTable, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, downloadCSV, fmtDT, inputCls, useDelayedReady, type Col } from "./ui";
+import { Bars, DataTable, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, downloadCSV, inputCls, useDelayedReady, type Col } from "./ui";
 
 /* ══ CUSTOMERS ══ */
 export function CustomersView() {
@@ -16,7 +17,7 @@ export function CustomersView() {
   type Row = { id: string; name: string; email: string; phone?: string; orders: number; spend: number; marketing: boolean; createdAt: number };
   const rows: Row[] = users.map((u) => {
     const mine = orders.filter((o) => o.userId === u.id);
-    return { id: u.id, name: u.name, email: u.email, phone: u.phone, orders: mine.length, spend: mine.reduce((a, o) => a + o.total, 0), marketing: u.marketing, createdAt: u.createdAt };
+    return { id: u.id, name: u.name, email: u.email, phone: u.phone, orders: u.orderCount ?? mine.length, spend: u.lifetimeSpend ?? mine.filter((order) => !order.refunded).reduce((sum, order) => sum + order.total, 0), marketing: u.marketing, createdAt: u.createdAt };
   });
   const cols: Col<Row>[] = [
     { key: "name", label: "Name", sort: (r) => r.name, render: (r) => <span className="font-black text-cherry">{r.name}</span> },
@@ -42,64 +43,59 @@ export function CustomersView() {
 
 /* ══ ANALYTICS ══ */
 export function AnalyticsView({ mode }: { mode: "sales" | "items" | "peaks" }) {
-  const { orders, orderStatus } = useShop();
-  const live = orders.filter((o) => !o.refunded);
-  const [range, setRange] = useState(7);
-  const since = Date.now() - range * 86400000;
-  const inRange = live.filter((o) => o.createdAt >= since);
+  const [range, setRange] = useState<7 | 14 | 30>(7);
+  const [report, setReport] = useState<AnalyticsReport | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
 
-  const days = useMemo(
-    () =>
-      Array.from({ length: range }).map((_, i) => {
-        const d = new Date(Date.now() - (range - 1 - i) * 86400000);
-        const key = d.toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" });
-        return { label: d.toLocaleDateString("en-GB", { weekday: "short", timeZone: "Europe/Helsinki" }), value: Math.round(inRange.filter((o) => new Date(o.createdAt).toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" }) === key).reduce((a, o) => a + o.total, 0)) };
-      }),
-    [inRange, range]
-  );
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setError(false);
+    apiAnalyticsReport(range).then((value) => { if (active) setReport(value); }).catch(() => { if (active) { setReport(null); setError(true); } }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [range]);
 
-  const items = useMemo(() => {
-    const m: Record<string, { qty: number; rev: number }> = {};
-    inRange.forEach((o) => o.lines.forEach((l) => { const e = (m[l.name] ??= { qty: 0, rev: 0 }); e.qty += l.qty; e.rev += l.qty * l.unitPrice; }));
-    return Object.entries(m).sort((a, b) => b[1].rev - a[1].rev);
-  }, [inRange]);
-
-  const hours = useMemo(() => {
-    const h = Array.from({ length: 24 }, (_, i) => ({ label: String(i), value: 0 }));
-    inRange.forEach((o) => { const hr = new Date(o.createdAt).toLocaleString("en-GB", { hour: "2-digit", timeZone: "Europe/Helsinki", hour12: false }); h[parseInt(hr) % 24].value += 1; });
-    return h;
-  }, [inRange]);
-
-  const aov = inRange.length ? inRange.reduce((a, o) => a + o.total, 0) / inRange.length : 0;
-  const deliveryShare = inRange.length ? Math.round((inRange.filter((o) => o.type === "delivery").length / inRange.length) * 100) : 0;
-  const refundCount = orders.filter((o) => o.refunded && o.createdAt >= since).length;
+  const days = useMemo(() => (report?.revenueByDay ?? []).map((day) => ({
+    label: new Date(`${day.date}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", timeZone: "Europe/Helsinki" }),
+    value: day.revenue,
+  })), [report]);
+  const items = report?.items ?? [];
+  const hours = (report?.ordersByHour ?? []).map((item) => ({ label: String(item.hour).padStart(2, "0"), value: item.orders }));
+  const aov = report?.averageOrderValue ?? 0;
+  const totalOrders = report?.orders ?? 0;
+  const deliveryShare = totalOrders ? Math.round(((report?.delivery ?? 0) / totalOrders) * 100) : 0;
+  const refundCount = report?.refunded ?? 0;
 
   const rangeBtns = (
     <div className="flex gap-1">
-      {[7, 14, 30].map((r) => (
-        <button key={r} onClick={() => setRange(r)} className={r === range ? "rounded-lg bg-cherry px-2.5 py-1 text-[11px] font-black text-cream" : "rounded-lg px-2.5 py-1 text-[11px] font-black text-cherry/50"}>{r}d</button>
+      {([7, 14, 30] as const).map((value) => (
+        <button key={value} onClick={() => setRange(value)} aria-pressed={value === range} className={value === range ? "rounded-lg bg-cherry px-2.5 py-1 text-[11px] font-black text-cream" : "rounded-lg px-2.5 py-1 text-[11px] font-black text-cherry/50"}>{value}d</button>
       ))}
     </div>
   );
 
+  if (loading && !report) return <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-8 text-center text-sm font-bold text-cherry/60">Loading database-backed analytics…</div>;
+  if (error && !report) return <div role="alert" className="rounded-2xl border border-brick/20 bg-brick/10 p-5 text-sm font-bold text-brick">Analytics could not be loaded from the server. Refresh or check that this staff account has manager access.</div>;
+
   if (mode === "items")
     return (
       <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
-        <div className="flex items-center justify-between border-b border-cherry/10 px-4 py-3">
-          <p className="text-sm font-black text-cherry">Item performance · {range}d</p>
-          <span className="flex items-center gap-3">{rangeBtns}<GhostBtn onClick={() => downloadCSV("item-perf.csv", [["item", "qty", "revenue"], ...items.map(([n, v]) => [n, v.qty, v.rev.toFixed(2)])])}><Ic n="csv" size={13} /> CSV</GhostBtn></span>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-cherry/10 px-4 py-3">
+          <p className="text-sm font-black text-cherry">Item performance · {range}d · paid orders</p>
+          <span className="flex items-center gap-3">{rangeBtns}<GhostBtn onClick={() => downloadCSV("item-perf.csv", [["item", "qty", "revenue"], ...items.map((item) => [item.name, item.quantity, item.revenue.toFixed(2)])])}><Ic n="csv" size={13} /> CSV</GhostBtn></span>
         </div>
         <DataTable
-          rows={items.map(([name, v], i) => ({ rank: i + 1, name, ...v }))}
-          id={(r) => r.name}
-          search={(r, q) => r.name.toLowerCase().includes(q)}
+          rows={items.map((item, index) => ({ rank: index + 1, ...item }))}
+          id={(row) => row.itemId}
+          loading={loading}
+          search={(row, query) => row.name.toLowerCase().includes(query)}
           cols={[
-            { key: "rank", label: "#", render: (r) => <span className="font-black text-cherry/40">{r.rank}</span> },
-            { key: "name", label: "Item", sort: (r) => r.name, render: (r) => <span className="font-bold">{r.name}</span> },
-            { key: "qty", label: "Qty", sort: (r) => r.qty, render: (r) => <span className="tabular-nums">×{r.qty}</span> },
-            { key: "rev", label: "Revenue", sort: (r) => r.rev, render: (r) => <span className="font-black tabular-nums">{eur(r.rev)}</span> },
+            { key: "rank", label: "#", render: (row) => <span className="font-black text-cherry/40">{row.rank}</span> },
+            { key: "name", label: "Item", sort: (row) => row.name, render: (row) => <span className="font-bold">{row.name}</span> },
+            { key: "qty", label: "Qty", sort: (row) => row.quantity, render: (row) => <span className="tabular-nums">×{row.quantity}</span> },
+            { key: "rev", label: "Revenue", sort: (row) => row.revenue, render: (row) => <span className="font-black tabular-nums">{eur(row.revenue)}</span> },
           ]}
-          empty={<EmptyState icon="analytics" title="No sales in range" />}
+          empty={<EmptyState icon="analytics" title="No paid sales in range" />}
         />
       </div>
     );
@@ -107,10 +103,7 @@ export function AnalyticsView({ mode }: { mode: "sales" | "items" | "peaks" }) {
   if (mode === "peaks")
     return (
       <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-black text-cherry">Order volume by hour (Helsinki) · {range}d</p>
-          {rangeBtns}
-        </div>
+        <div className="flex items-center justify-between"><p className="text-sm font-black text-cherry">Paid order volume by hour (Helsinki) · {range}d</p>{rangeBtns}</div>
         <div className="mt-4"><Bars data={hours} height={160} /></div>
         <p className="mt-2 text-xs text-cherry/60">Use peaks to staff the kitchen and time pre-order push notifications.</p>
       </div>
@@ -119,34 +112,24 @@ export function AnalyticsView({ mode }: { mode: "sales" | "items" | "peaks" }) {
   return (
     <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-4">
-        <StatCard label={`Revenue ${range}d`} value={eur(inRange.reduce((a, o) => a + o.total, 0))} icon="analytics" tone="green" />
-        <StatCard label="Orders" value={inRange.length} icon="orders" />
+        <StatCard label={`Paid revenue ${range}d`} value={eur(report?.revenue ?? 0)} icon="analytics" tone="green" />
+        <StatCard label="Paid orders" value={totalOrders} icon="orders" />
         <StatCard label="Avg order value" value={eur(aov)} icon="cash" tone="gold" />
-        <StatCard label="Refunds" value={refundCount} icon="trash" tone={refundCount ? "red" : "gray"} />
+        <StatCard label="Refunded orders" value={refundCount} icon="trash" tone={refundCount ? "red" : "gray"} />
       </div>
       <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
-        <div className="flex items-center justify-between">
-          <p className="text-sm font-black text-cherry">Revenue trend</p>
-          <span className="flex items-center gap-3">{rangeBtns}<GhostBtn onClick={() => downloadCSV("sales.csv", [["day", "revenue"], ...days.map((d) => [d.label, d.value])])}><Ic n="csv" size={13} /> CSV</GhostBtn></span>
-        </div>
-        <div className="mt-3"><Bars data={days} height={150} /></div>
+        <div className="flex items-center justify-between"><p className="text-sm font-black text-cherry">Revenue trend · paid orders</p><span className="flex items-center gap-3">{rangeBtns}<GhostBtn onClick={() => downloadCSV("sales.csv", [["date", "orders", "revenue"], ...(report?.revenueByDay ?? []).map((day) => [day.date, day.orders, day.revenue.toFixed(2)])])}><Ic n="csv" size={13} /> CSV</GhostBtn></span></div>
+        <div className="mt-3"><Bars data={days} height={150} formatValue={eur} /></div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
           <p className="text-[11px] font-black uppercase text-cherry/50">Delivery vs pickup</p>
-          <div className="mt-3 flex h-4 overflow-hidden rounded-full">
-            <span className="bg-cherry-bright" style={{ width: `${deliveryShare}%` }} />
-            <span className="flex-1 bg-gold" />
-          </div>
+          <div className="mt-3 flex h-4 overflow-hidden rounded-full"><span className="bg-cherry-bright" style={{ width: `${deliveryShare}%` }} /><span className="flex-1 bg-gold" /></div>
           <p className="mt-2 text-xs font-bold text-cherry/70">{deliveryShare}% delivery · {100 - deliveryShare}% pickup</p>
         </div>
         <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
-          <p className="text-[11px] font-black uppercase text-cherry/50">Status mix (all time)</p>
-          <ul className="mt-2 space-y-1 text-xs font-bold text-cherry/70">
-            {["completed", "ready", "preparing", "accepted", "placed"].map((s) => (
-              <li key={s} className="flex justify-between"><span className="capitalize">{s}</span><span className="tabular-nums">{orders.filter((o) => orderStatus(o) === s).length}</span></li>
-            ))}
-          </ul>
+          <p className="text-[11px] font-black uppercase text-cherry/50">Paid order status mix · {range}d</p>
+          <ul className="mt-2 space-y-1 text-xs font-bold text-cherry/70">{(["completed", "ready", "preparing", "accepted", "placed"] as const).map((status) => <li key={status} className="flex justify-between"><span className="capitalize">{status}</span><span className="tabular-nums">{report?.statusCounts[status] ?? 0}</span></li>)}</ul>
         </div>
       </div>
     </div>
@@ -202,7 +185,7 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
         <Field label="Pause message (shown when ordering is paused)">
           <textarea rows={2} value={s.pauseMessage} onChange={(e) => setS({ ...s, pauseMessage: e.target.value })} className={inputCls} />
         </Field>
-        <PrimaryBtn icon="save" onClick={() => { saveSettings(s); logAudit("restaurant info / announcement updated"); toast("Saved"); }}>Save</PrimaryBtn>
+        <PrimaryBtn icon="save" onClick={async () => { const ok = await saveSettings(s); if (ok) { logAudit("restaurant info / announcement updated"); toast("Saved and reloaded from the database"); } }}>Save</PrimaryBtn>
       </div>
     );
 
@@ -216,11 +199,13 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
         <Switch
           on={s.paused}
           ariaLabel="pause ordering"
-          onChange={() => {
-            setS({ ...s, paused: !s.paused });
-            saveSettings({ ...s, paused: !s.paused });
-            logAudit(`ordering ${s.paused ? "resumed" : "paused"}`);
-            toast(s.paused ? "Ordering resumed" : "Ordering paused", s.paused ? "ok" : "err");
+          onChange={async () => {
+            const next = { ...s, paused: !s.paused };
+            setS(next);
+            if (await saveSettings(next)) {
+              logAudit(`ordering ${next.paused ? "paused" : "resumed"}`);
+              toast(next.paused ? "Ordering paused" : "Ordering resumed", next.paused ? "err" : "ok");
+            }
           }}
         />
       </div>
@@ -245,6 +230,14 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
             </div>
           ))}
         </div>
+      </div>
+
+      <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
+        <h3 className="text-sm font-black text-cherry">Default order-ready estimate</h3>
+        <p className="mt-1 text-xs text-cherry/60">New customer orders receive this kitchen estimate. Staff can set a different timer for an individual order in the live queue.</p>
+        <Field label="Minutes from order acceptance (5–240)">
+          <input type="number" min="5" max="240" step="5" value={s.readyTimeMinutes} onChange={(e) => setS({ ...s, readyTimeMinutes: Math.max(5, Math.min(240, Number(e.target.value) || 5)) })} className={inputCls + " max-w-[180px]"} />
+        </Field>
       </div>
 
       <div className="grid gap-3 rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4 sm:grid-cols-3">
@@ -272,10 +265,10 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
 
       <div className="flex items-center justify-between rounded-2xl border border-cherry/10 bg-cream-deep/40 px-4 py-3 text-sm">
         <span className="font-black text-cherry">Today ({today}) — quick availability</span>
-        <GhostBtn onClick={() => { const map = { ...s.offItems }; for (const k of Object.keys(map)) if (map[k].offToday === today) delete map[k]; setS({ ...s, offItems: map }); saveSettings({ ...s, offItems: map }); toast("Today's sold-outs reset"); }}>Reset today's sold-outs</GhostBtn>
+        <GhostBtn onClick={async () => { const map = { ...s.offItems }; for (const k of Object.keys(map)) if (map[k].offToday === today) delete map[k]; const next = { ...s, offItems: map }; setS(next); if (await saveSettings(next)) toast("Today's sold-outs reset"); }}>Reset today's sold-outs</GhostBtn>
       </div>
 
-      <PrimaryBtn icon="save" onClick={() => { saveSettings(s); toast("Settings saved"); }}>Save settings</PrimaryBtn>
+      <PrimaryBtn icon="save" onClick={async () => { if (await saveSettings(s)) toast("Settings saved and reloaded from the database"); }}>Save settings</PrimaryBtn>
     </div>
   );
 }

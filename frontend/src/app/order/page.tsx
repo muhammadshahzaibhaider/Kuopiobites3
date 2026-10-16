@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import AuthForm from "@/components/AuthForm";
 import { LineThumb, QtyStepper } from "@/components/ui";
 import { cx, eur, fmtDate, vatPct } from "@/lib/format";
-import { computeDiscount, etaLabel, isItemOff, validatePreorder } from "@/lib/v3";
+import { cartOptionLabel, computeDiscount, etaLabel, isItemOff, validatePreorder } from "@/lib/v3";
 import { orderingInfo } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
 import { RESTAURANT } from "@/lib/menu";
@@ -37,9 +37,11 @@ export default function OrderPage() {
   const unavailable = cart.filter((l) => isItemOff(settings, l.itemId));
   const preErr = validatePreorder(settings, cart, scheduled);
   const disc = computeDiscount(settings, cart, cartSubtotal, lang, code);
-  const deliveryFee = type === "delivery" && !disc.freeDelivery ? settings.deliveryFee : 0;
-  /* local math is display fallback only — the backend is the price authority */
-  const localTotal = Math.round((cartSubtotal + deliveryFee - disc.amount) * 100) / 100;
+  const serverDiscount = serverPricing?.discount;
+  const activeDiscount = serverDiscount ?? disc;
+  const deliveryFee = serverPricing?.deliveryFee ?? (type === "delivery" && !activeDiscount.freeDelivery ? settings.deliveryFee : 0);
+  /* local math is a first-paint fallback only — checkout and the live quote use server pricing */
+  const localTotal = Math.round((cartSubtotal + deliveryFee - activeDiscount.amount) * 100) / 100;
   const total = serverPricing?.total ?? localTotal;
   const vat = serverPricing?.vat ?? Math.round((total * (settings.vatRate / (1 + settings.vatRate))) * 100) / 100;
 
@@ -47,7 +49,10 @@ export default function OrderPage() {
     setPhone(user?.phone ?? "");
   }, [user?.phone]);
 
-  useEffect(() => { void priceCart(type, code || undefined); /* server-side reprice on every cart change */ }, [cart, type, code]);
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void priceCart(type, code || undefined, address || undefined, lang); }, 350);
+    return () => window.clearTimeout(timer);
+  }, [cart, type, code, address, lang, priceCart]);
 
   const postalOk = useMemo(() => {
     if (type !== "delivery") return true;
@@ -55,8 +60,9 @@ export default function OrderPage() {
     return !!m && m[1].startsWith("70");
   }, [address, type]);
   const minOk = type !== "delivery" || cartSubtotal >= settings.minOrder;
+  const tooFar = type === "delivery" && serverPricing?.deliveryDistanceKm !== undefined && settings.radiusKm > 0 && serverPricing.deliveryDistanceKm > settings.radiusKm;
   const phoneOk = phone.trim().length >= 3;
-  const canPay = (open.open || !!scheduled) && user && cart.length > 0 && phoneOk && postalOk && minOk && unavailable.length === 0 && !preErr && !paying;
+  const canPay = (open.open || !!scheduled) && user && cart.length > 0 && phoneOk && postalOk && minOk && !tooFar && unavailable.length === 0 && !preErr && !paying;
 
   const pay = async () => {
     if (!user) return;
@@ -198,6 +204,10 @@ export default function OrderPage() {
                       We deliver within ~{settings.radiusKm} km of Kuopio centre (postal codes 70xxx).
                     </p>
                   )}
+                  {serverPricing?.deliveryDistanceKm !== undefined && (
+                    <p className="text-xs font-bold text-cherry/60">{t("order.drivingDistance")}: {serverPricing.deliveryDistanceKm.toFixed(1)} km</p>
+                  )}
+                  {tooFar && <p className="text-xs font-black text-cherry-bright">{t("order.deliveryRadius")}</p>}
                   {!minOk && (
                     <p className="text-xs font-bold text-cherry-bright">
                       Delivery minimum is {eur(settings.minOrder)} — add {eur(settings.minOrder - cartSubtotal)} more.
@@ -230,7 +240,7 @@ export default function OrderPage() {
               <li key={l.key} className="flex items-start justify-between gap-3 text-sm">
                 <div className="min-w-0">
                   <p className="font-black text-cherry">{l.name}</p>
-                  <p className="text-xs text-cherry/60">{l.variantLabel}{l.options.length ? ` · ${l.options.join(" · ")}` : ""}</p>
+                  <p className="text-xs text-cherry/60">{l.variantLabel}{l.options.length ? ` · ${l.options.map((option) => cartOptionLabel(shop.adminItems.find((item) => item.id === l.itemId), settings, lang, option)).join(" · ")}` : ""}</p>
                   <div className="mt-1.5 flex items-center gap-3">
                     <QtyStepper small qty={l.qty} onChange={(q) => setQty(l.key, q)} />
                     <button onClick={() => removeLine(l.key)} className="text-xs font-bold text-cherry/50 underline hover:text-cherry-bright">{t("cart.remove")}</button>
@@ -242,9 +252,9 @@ export default function OrderPage() {
           </ul>
           <dl className="mt-5 space-y-1.5 border-t-2 border-gold/40 pt-4 text-sm font-bold text-cherry/80">
             <div className="flex justify-between"><dt>{t("cart.subtotal")}</dt><dd className="tabular-nums">{eur(cartSubtotal)}</dd></div>
-            <div className="flex justify-between"><dt>{t("order.fee")}</dt><dd className="tabular-nums">{type === "delivery" && settings.deliveryFee && !disc.freeDelivery ? eur(settings.deliveryFee) : "—"}</dd></div>
-            {disc.amount > 0 && (
-              <div className="flex justify-between text-[#2e7d32]"><dt>− {disc.title}</dt><dd className="tabular-nums">−{eur(disc.amount)}</dd></div>
+            <div className="flex justify-between"><dt>{t("order.fee")}</dt><dd className="tabular-nums">{type === "delivery" ? (activeDiscount.freeDelivery ? t("order.free") : eur(deliveryFee)) : "—"}</dd></div>
+            {activeDiscount.amount > 0 && (
+              <div className="flex justify-between text-[#2e7d32]"><dt>− {activeDiscount.title}</dt><dd className="tabular-nums">−{eur(activeDiscount.amount)}</dd></div>
             )}
             <div className="flex justify-between text-xs text-cherry/60"><dt>{t("order.vat")} {vatPct(settings.vatRate)}</dt><dd className="tabular-nums">{eur(vat)}</dd></div>
             <div className="flex justify-between pt-2 font-display text-xl font-black text-cherry"><dt>{t("order.total")}</dt><dd className="tabular-nums">{eur(total)}</dd></div>

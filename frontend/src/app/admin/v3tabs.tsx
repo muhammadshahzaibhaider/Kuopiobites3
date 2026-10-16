@@ -8,6 +8,7 @@ import { useLang } from "@/lib/i18n"
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
 import { apiActivity } from "@/lib/api";
+import { inputCls, PrimaryBtn } from "@/admin/ui";
 import { nextPreorderSundays } from "@/lib/v3";
 import type { MenuItem, SpecialItem, ToppingMeta } from "@/lib/types";
 
@@ -37,11 +38,11 @@ export function ItemAvailSwitch({ id, name }: { id: string; name: string }) {
   const st = settings.offItems[id];
   const off = !!st && (st.off === true || st.offToday === TODAY());
 
-  const set = (mode: "until" | "today" | "on") => {
+  const set = async (mode: "until" | "today" | "on") => {
     const map = { ...settings.offItems };
     if (mode === "on") delete map[id];
     else map[id] = mode === "until" ? { off: true } : { offToday: TODAY() };
-    saveSettings({ ...settings, offItems: map });
+    if (!await saveSettings({ ...settings, offItems: map })) return;
     logAudit(`${mode === "on" ? "ON" : mode === "until" ? "OFF (until on)" : "OFF (today)"} item ${name}`);
     toast(mode === "on" ? `${name} back on menu` : `${name} ${mode === "until" ? t("admin.untilOn") : t("admin.todayOnly")}`, mode === "on" ? "ok" : "err");
   };
@@ -63,16 +64,17 @@ export function ItemAvailSwitch({ id, name }: { id: string; name: string }) {
 }
 
 export function CatAvailSwitch({ id, title }: { id: string; title: string }) {
-  const { settings, saveSettings, logAudit } = useShop();
+  const { settings, saveSettings, logAudit, toast } = useShop();
   const { t } = useLang();
   const st = settings.offCats[id];
   const off = !!st && (st.off === true || st.offToday === TODAY());
-  const set = (mode: "until" | "today" | "on") => {
+  const set = async (mode: "until" | "today" | "on") => {
     const map = { ...settings.offCats };
     if (mode === "on") delete map[id];
     else map[id] = mode === "until" ? { off: true } : { offToday: TODAY() };
-    saveSettings({ ...settings, offCats: map });
+    if (!await saveSettings({ ...settings, offCats: map })) return;
     logAudit(`${mode === "on" ? "ON" : "OFF"} category ${title} (${mode})`);
+    toast(mode === "on" ? `${title} back on menu` : `${title} marked unavailable`, mode === "on" ? "ok" : "err");
   };
   return (
     <span className="flex items-center gap-1">
@@ -89,17 +91,18 @@ export function CatAvailSwitch({ id, title }: { id: string; title: string }) {
 }
 
 export function BulkAvail({ ids }: { ids: string[] }) {
-  const { settings, saveSettings, logAudit } = useShop();
+  const { settings, saveSettings, logAudit, toast } = useShop();
   const { t } = useLang();
   if (!ids.length) return null;
-  const apply = (mode: "until" | "today" | "on") => {
+  const apply = async (mode: "until" | "today" | "on") => {
     const map = { ...settings.offItems };
     for (const id of ids) {
       if (mode === "on") delete map[id];
       else map[id] = mode === "until" ? { off: true } : { offToday: TODAY() };
     }
-    saveSettings({ ...settings, offItems: map });
+    if (!await saveSettings({ ...settings, offItems: map })) return;
     logAudit(`bulk ${mode} ×${ids.length} items`);
+    toast(mode === "on" ? `${ids.length} items back on menu` : `${ids.length} items marked sold out`, mode === "on" ? "ok" : "err");
   };
   return (
     <div className="flex flex-wrap items-center gap-2 rounded-lg border border-gold/60 bg-gold/10 px-3 py-2 text-xs font-black text-cherry">
@@ -112,15 +115,16 @@ export function BulkAvail({ ids }: { ids: string[] }) {
 }
 
 function OptionChip({ optKey, label }: { optKey: string; label: string }) {
-  const { settings, saveSettings, logAudit } = useShop();
+  const { settings, saveSettings, logAudit, toast } = useShop();
   const off = (settings.offOptions[optKey] ?? []).includes(label);
   return (
     <button
-      onClick={() => {
+      onClick={async () => {
         const arr = settings.offOptions[optKey] ?? [];
         const next = off ? arr.filter((x) => x !== label) : [...arr, label];
-        saveSettings({ ...settings, offOptions: { ...settings.offOptions, [optKey]: next } });
+        if (!await saveSettings({ ...settings, offOptions: { ...settings.offOptions, [optKey]: next } })) return;
         logAudit(`${off ? "ON" : "OFF"} option ${optKey}:${label}`);
+        toast(off ? `${label} is available again` : `${label} marked unavailable`, off ? "ok" : "err");
       }}
       className={cx("min-h-[30px] rounded-full border px-2.5 text-xs font-bold", off ? "border-brick bg-brick/15 text-brick line-through" : "border-cherry/20 bg-cream text-cherry")}
     >
@@ -168,66 +172,55 @@ export function OptionAvailPanel() {
 export function PreorderPanel() {
   const { settings, saveSettings, orders, toast, logAudit } = useShop();
   const { t, dayName } = useLang();
-  const pre = settings.preorder;
-  const sunday = nextPreorderSundays(settings, 1)[0] ?? "";
+  const [draft, setDraft] = useState(settings.preorder);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => setDraft(settings.preorder), [settings.preorder]);
+  const pre = draft;
+  const sunday = nextPreorderSundays({ ...settings, preorder: pre }, 1)[0] ?? "";
   const preOrders = orders.filter((o) => o.scheduled?.date === sunday && !o.refunded);
   const portions = preOrders.reduce((a, o) => a + o.lines.reduce((x, l) => x + l.qty, 0), 0);
+  const update = (patch: Partial<typeof pre>) => setDraft((current) => ({ ...current, ...patch }));
+  const save = async () => {
+    setSaving(true);
+    const ok = await saveSettings({ ...settings, preorder: draft });
+    setSaving(false);
+    if (ok) { logAudit("pre-order settings updated"); toast("Pre-order settings saved and reloaded from the database"); }
+  };
 
   return (
     <div className="rounded-xl border border-gold/60 bg-cream-deep p-4">
       <div className="flex items-center justify-between">
         <p className="text-[11px] font-black uppercase text-gold-deep">{t("admin.pre")}</p>
-        <Switch
-          on={pre.enabled}
-          ariaLabel={t("admin.pre")}
-          onChange={() => {
-            saveSettings({ ...settings, preorder: { ...pre, enabled: !pre.enabled } });
-            logAudit(`pre-order ${pre.enabled ? "disabled" : "enabled"}`);
-          }}
-        />
+        <Switch on={pre.enabled} ariaLabel={t("admin.pre")} onChange={() => update({ enabled: !pre.enabled })} />
       </div>
 
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
         <label className="text-xs font-black text-cherry/60">Cutoff day
-          <select
-            value={pre.cutoffDay}
-            onChange={(e) => saveSettings({ ...settings, preorder: { ...pre, cutoffDay: parseInt(e.target.value) } })}
-            className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold"
-          >
+          <select value={pre.cutoffDay} onChange={(e) => update({ cutoffDay: parseInt(e.target.value) })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold">
             {[0, 1, 2, 3, 4, 5, 6].map((d) => <option key={d} value={d}>{dayName(d)}</option>)}
           </select>
         </label>
         <label className="text-xs font-black text-cherry/60">Cutoff time
-          <input type="time" value={pre.cutoffTime} onChange={(e) => saveSettings({ ...settings, preorder: { ...pre, cutoffTime: e.target.value } })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
+          <input type="time" value={pre.cutoffTime} onChange={(e) => update({ cutoffTime: e.target.value })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
         </label>
         <label className="text-xs font-black text-cherry/60">Sunday pickup slots (comma-separated HH:MM)
-          <input
-            value={pre.slots.join(", ")}
-            onChange={(e) => saveSettings({ ...settings, preorder: { ...pre, slots: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } })}
-            className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold"
-          />
+          <input value={pre.slots.join(", ")} onChange={(e) => update({ slots: e.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
         </label>
         <label className="text-xs font-black text-cherry/60">Capacity per Sunday (optional)
-          <input type="number" value={pre.capacity ?? ""} onChange={(e) => saveSettings({ ...settings, preorder: { ...pre, capacity: parseInt(e.target.value) || undefined } })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold tabular-nums" />
+          <input type="number" min="1" value={pre.capacity ?? ""} onChange={(e) => update({ capacity: parseInt(e.target.value) || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold tabular-nums" />
         </label>
       </div>
       <div className="mt-2 grid gap-2 sm:grid-cols-2">
-        <input value={pre.noteEn} onChange={(e) => saveSettings({ ...settings, preorder: { ...pre, noteEn: e.target.value } })} placeholder="Note EN" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-        <input value={pre.noteFi} onChange={(e) => saveSettings({ ...settings, preorder: { ...pre, noteFi: e.target.value } })} placeholder="Huomautus FI" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
+        <input value={pre.noteEn} onChange={(e) => update({ noteEn: e.target.value })} placeholder="Note EN" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
+        <input value={pre.noteFi} onChange={(e) => update({ noteFi: e.target.value })} placeholder="Huomautus FI" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
       </div>
 
       <div className="mt-3 rounded-lg border border-cherry/15 bg-cream p-3 text-xs">
         <p className="font-black text-cherry">{t("admin.sundayPre")} — {sunday && fmtDate(sunday)}</p>
-        <p className="mt-1 text-cherry/70">
-          {preOrders.length} {t("admin.orders").toLowerCase()} · <b className="text-gold-deep">{portions} {t("admin.portions")}</b>
-          {pre.capacity ? ` / ${pre.capacity}` : ""}
-        </p>
-        <ul className="mt-1 space-y-0.5 text-cherry/60">
-          {preOrders.map((o) => (
-            <li key={o.id}>· {o.id} — {o.scheduled?.time} — {o.lines.reduce((x, l) => x + l.qty, 0)}× ({o.customer.name})</li>
-          ))}
-        </ul>
+        <p className="mt-1 text-cherry/70">{preOrders.length} {t("admin.orders").toLowerCase()} · <b className="text-gold-deep">{portions} {t("admin.portions")}</b>{pre.capacity ? ` / ${pre.capacity}` : ""}</p>
+        <ul className="mt-1 space-y-0.5 text-cherry/60">{preOrders.map((o) => <li key={o.id}>· {o.id} — {o.scheduled?.time} — {o.lines.reduce((x, l) => x + l.qty, 0)}× ({o.customer.name})</li>)}</ul>
       </div>
+      <div className="mt-3 flex justify-end"><PrimaryBtn icon="save" disabled={saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save pre-order settings"}</PrimaryBtn></div>
     </div>
   );
 }
@@ -235,118 +228,96 @@ export function PreorderPanel() {
 /* ── today's specials (carousel list) ────────────────── */
 
 export function SpecialsPanel() {
-  const { settings, saveSettings, effectiveMenu, toast, logAudit } = useShop();
+  const { settings, saveSettings, adminItems, effectiveMenu, toast, logAudit } = useShop();
   const { lang } = useLang();
-  const menu = effectiveMenu(MENU, lang);
-  const list = [...(settings.todaysSpecials ?? [])].sort((a, b) => a.sortOrder - b.sortOrder);
+  const menu = effectiveMenu(adminItems.length ? adminItems.filter((item) => !item.archived) : MENU, lang);
+  const [draft, setDraft] = useState<SpecialItem[]>(settings.todaysSpecials ?? []);
+  const [saving, setSaving] = useState(false);
+  useEffect(() => setDraft(settings.todaysSpecials ?? []), [settings.todaysSpecials]);
+  const list = [...draft].sort((a, b) => a.sortOrder - b.sortOrder);
 
-  const save = (next: SpecialItem[]) => {
-    void (async () => {
-      try {
-        await saveSettings({ ...settings, todaysSpecials: next });
-      } catch {
-        toast("Special could not be saved", "err");
-      }
-    })();
+  const save = async () => {
+    setSaving(true);
+    const next = list.map((special, index) => ({ ...special, sortOrder: index }));
+    const ok = await saveSettings({ ...settings, todaysSpecials: next });
+    setSaving(false);
+    if (ok) { logAudit("today's specials updated"); toast("Specials saved and reloaded from the database"); }
   };
-  const patch = (id: string, p: Partial<SpecialItem>) => {
-    save(list.map((sp) => (sp.id === id ? { ...sp, ...p } : sp)));
-  };
-  const move = (i: number, dir: -1 | 1) => {
-    const j = i + dir;
-    if (j < 0 || j >= list.length) return;
-    const next = [...list];
-    [next[i], next[j]] = [next[j], next[i]];
-    save(next.map((sp, k) => ({ ...sp, sortOrder: k })));
-    logAudit("specials reordered");
-  };
+  const patch = (id: string, patchValue: Partial<SpecialItem>) =>
+    setDraft((current) => current.map((special) => special.id === id ? { ...special, ...patchValue } : special));
+  const move = (index: number, direction: -1 | 1) => setDraft((current) => {
+    const next = [...current].sort((a, b) => a.sortOrder - b.sortOrder);
+    const target = index + direction;
+    if (target < 0 || target >= next.length) return current;
+    [next[index], next[target]] = [next[target], next[index]];
+    return next.map((special, sortOrder) => ({ ...special, sortOrder }));
+  });
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center justify-between">
-        <p className="text-xs text-cherry/60">Today's Special is a scrollable carousel on Home. Each card links to /menu?item=&lt;id&gt; (scroll + pulse + sheet).</p>
-        <button
-          onClick={() => {
-            if (!menu.length) {
-              toast("Add a menu item before creating a special", "err");
-              return;
-            }
-            const sp: SpecialItem = { id: `ts-${Date.now()}`, itemId: menu[0].id, sortOrder: list.length, active: true, textEn: "Today's Special", textFi: "Päivän annos" };
-            save([...list, sp]);
-            logAudit(`special created ${sp.id}`);
-          }}
-          className="min-h-[40px] rounded-lg bg-cherry px-4 text-xs font-black text-cream"
-        >
-          + Add special
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="max-w-2xl text-xs text-cherry/60">Today's Special is a scrollable carousel on Home. Each card links to /menu?item=&lt;id&gt; (scroll + pulse + sheet). Changes stay in this draft until saved.</p>
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={() => {
+            if (!menu.length) { toast("Add a menu item before creating a special", "err"); return; }
+            const special: SpecialItem = { id: `ts-${Date.now()}`, itemId: menu[0].id, sortOrder: list.length, active: true, textEn: "Today's Special", textFi: "Päivän annos" };
+            setDraft((current) => [...current, special]);
+          }} className="min-h-[40px] rounded-lg border border-cherry/20 px-4 text-xs font-black text-cherry">+ Add special</button>
+          <PrimaryBtn icon="save" disabled={saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save specials"}</PrimaryBtn>
+        </div>
       </div>
       {list.length === 0 && <p className="rounded-xl bg-cream-deep p-8 text-center text-sm font-bold text-cherry/60">No specials — the carousel is hidden.</p>}
-      {list.map((sp, i) => {
-        const item = menu.find((m) => m.id === sp.itemId);
-        const base = item ? Math.min(...item.prices.map((p) => p.value)) : 0;
-        const now = sp.overridePrice ?? (sp.discount ? Math.round(base * (1 - sp.discount / 100) * 100) / 100 : base);
+      {list.map((special, index) => {
+        const item = menu.find((entry) => entry.id === special.itemId);
+        const base = item ? Math.min(...item.prices.map((price) => price.value)) : 0;
+        const now = special.overridePrice ?? (special.discount !== undefined ? Math.round(base * (1 - special.discount / 100) * 100) / 100 : base);
         return (
-          <div key={sp.id} className="rounded-xl border border-cherry/15 bg-cream-deep p-4">
+          <div key={special.id} className="rounded-xl border border-cherry/15 bg-cream-deep p-4">
             <div className="flex flex-wrap items-center gap-3">
               <span className="flex gap-1">
-                <button onClick={() => move(i, -1)} disabled={i === 0} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry disabled:opacity-30">↑</button>
-                <button onClick={() => move(i, 1)} disabled={i === list.length - 1} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry disabled:opacity-30">↓</button>
+                <button type="button" onClick={() => move(index, -1)} disabled={index === 0} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry disabled:opacity-30">↑</button>
+                <button type="button" onClick={() => move(index, 1)} disabled={index === list.length - 1} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry disabled:opacity-30">↓</button>
               </span>
-              <span className="text-sm font-black text-cherry">{item?.name ?? sp.itemId}</span>
+              <span className="text-sm font-black text-cherry">{item?.name ?? special.itemId}</span>
               <span className="text-xs text-cherry/60">
-                {sp.overridePrice != null ? `override ${eur(sp.overridePrice)}` : sp.discount ? `−${sp.discount}%` : "list price"}{" "}
+                {special.overridePrice != null ? `override ${eur(special.overridePrice)}` : special.discount != null ? `−${special.discount}%` : "list price"}{" "}
                 {now < base && <s className="text-cherry/40">{eur(base)}</s>} <b className="text-gold-deep">{eur(now)}</b>
               </span>
               <span className="ml-auto flex items-center gap-2">
-                <Switch on={sp.active} ariaLabel={`${item?.name ?? ""} active`} onChange={() => { patch(sp.id, { active: !sp.active }); logAudit(`special ${sp.active ? "paused" : "activated"} ${sp.id}`); }} />
-                <button
-                  onClick={() => { save([...list, { ...sp, id: `ts-${Date.now()}`, active: false, sortOrder: list.length }]); toast("Special duplicated"); }}
-                  className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry"
-                >
-                  dup
-                </button>
-                <button
-                  onClick={() => { save(list.filter((x) => x.id !== sp.id)); logAudit(`special deleted ${sp.id}`); }}
-                  className="min-h-[32px] rounded-lg border border-brick/50 px-2 text-xs font-black text-brick"
-                >
-                  del
-                </button>
+                <Switch on={special.active} ariaLabel={`${item?.name ?? ""} active`} onChange={() => patch(special.id, { active: !special.active })} />
+                <button type="button" onClick={() => { setDraft((current) => [...current, { ...special, id: `ts-${Date.now()}`, active: false, sortOrder: current.length }]); toast("Special duplicated — save to publish"); }} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry">Duplicate</button>
+                <button type="button" onClick={() => setDraft((current) => current.filter((entry) => entry.id !== special.id))} className="min-h-[32px] rounded-lg border border-brick/50 px-2 text-xs font-black text-brick">Remove</button>
               </span>
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-3">
               <label className="text-xs font-black text-cherry/60">Dish
-                <select value={sp.itemId} onChange={(e) => patch(sp.id, { itemId: e.target.value })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold">
-                  {menu.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                <select value={special.itemId} onChange={(e) => patch(special.id, { itemId: e.target.value })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold">
+                  {menu.map((entry) => <option key={entry.id} value={entry.id}>{entry.name}</option>)}
                 </select>
               </label>
               <label className="text-xs font-black text-cherry/60">Override price (€)
-                <input type="number" step="0.1" value={sp.overridePrice ?? ""} onChange={(e) => patch(sp.id, { overridePrice: parseFloat(e.target.value) || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold tabular-nums" />
+                <input type="number" min="0" step="0.1" value={special.overridePrice ?? ""} onChange={(e) => patch(special.id, { overridePrice: e.target.value === "" ? undefined : Number(e.target.value), discount: undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold tabular-nums" />
               </label>
               <label className="text-xs font-black text-cherry/60">…or discount (%)
-                <input type="number" step="1" value={sp.discount ?? ""} onChange={(e) => patch(sp.id, { discount: parseFloat(e.target.value) || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold tabular-nums" />
+                <input type="number" min="0" max="100" step="1" value={special.discount ?? ""} onChange={(e) => patch(special.id, { discount: e.target.value === "" ? undefined : Number(e.target.value), overridePrice: undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold tabular-nums" />
               </label>
-              <input value={sp.textEn ?? ""} onChange={(e) => patch(sp.id, { textEn: e.target.value })} placeholder="Badge EN" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-              <input value={sp.textFi ?? ""} onChange={(e) => patch(sp.id, { textFi: e.target.value })} placeholder="Kyltti FI" className={cx("min-h-[36px] rounded-lg border bg-cream px-2 text-xs font-bold", sp.textFi ? "border-cherry/20" : "border-brick")} />
-              <span className="self-center text-[10px] font-black text-brick">{!sp.textFi && "Missing Finnish translation"}</span>
+              <input value={special.textEn ?? ""} onChange={(e) => patch(special.id, { textEn: e.target.value })} placeholder="Badge EN" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
+              <input value={special.textFi ?? ""} onChange={(e) => patch(special.id, { textFi: e.target.value })} placeholder="Kyltti FI" className={cx("min-h-[36px] rounded-lg border bg-cream px-2 text-xs font-bold", special.textFi ? "border-cherry/20" : "border-brick")} />
+              <span className="self-center text-[10px] font-black text-brick">{!special.textFi && "Missing Finnish translation"}</span>
               <label className="text-xs font-black text-cherry/60">From
-                <input type="date" value={sp.start ?? ""} onChange={(e) => patch(sp.id, { start: e.target.value || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
+                <input type="date" value={special.start ?? ""} onChange={(e) => patch(special.id, { start: e.target.value || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
               </label>
               <label className="text-xs font-black text-cherry/60">To
-                <input type="date" value={sp.end ?? ""} onChange={(e) => patch(sp.id, { end: e.target.value || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
+                <input type="date" value={special.end ?? ""} onChange={(e) => patch(special.id, { end: e.target.value || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
               </label>
               <div className="text-xs font-black text-cherry/60">Card image (optional, overrides category photo)
-                <div className="mt-1">
-                  <ImageUploader
-                    preset="1:1"
-                    value={sp.imageUrl ? { src: sp.imageUrl, altEn: item?.name ?? "", altFi: item?.name ?? "" } : undefined}
-                    onChange={(v) => { patch(sp.id, { imageUrl: v?.src }); logAudit(`special ${sp.id} image ${v ? "set" : "cleared"}`); }}
-                  />
-                </div>
+                <div className="mt-1"><ImageUploader preset="1:1" value={special.imageUrl ? { src: special.imageUrl, altEn: item?.name ?? "", altFi: item?.name ?? "" } : undefined} onChange={(value) => patch(special.id, { imageUrl: value?.src })} /></div>
               </div>
             </div>
           </div>
         );
       })}
+      {list.length > 0 && <div className="flex justify-end"><PrimaryBtn icon="save" disabled={saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save specials"}</PrimaryBtn></div>}
     </div>
   );
 }
@@ -400,47 +371,86 @@ export function ToppingsMetaPanel() {
 /* ── categories manager ──────────────────────────────── */
 
 export function CatsTab() {
-  const { settings, saveSettings, categories, overrides, toast, logAudit } = useShop();
+  const { settings, saveSettings, categories, adminItems, addCat, deleteCat, toast, logAudit } = useShop();
+  const [newFi, setNewFi] = useState("");
+  const [newEn, setNewEn] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [savingNames, setSavingNames] = useState<string | null>(null);
+  const [nameDrafts, setNameDrafts] = useState<Record<string, { fi: string; en: string }>>({});
   const cats = categories();
-  const move = (id: string, dir: -1 | 1) => {
+  const move = async (id: string, dir: -1 | 1) => {
     const order = settings.catOrder?.length ? settings.catOrder : cats.map((c) => c.id);
     const i = order.indexOf(id);
     const j = i + dir;
     if (i < 0 || j < 0 || j >= order.length) return;
     const next = [...order];
     [next[i], next[j]] = [next[j], next[i]];
-    saveSettings({ ...settings, catOrder: next });
-    logAudit(`category ${id} moved`);
+    if (await saveSettings({ ...settings, catOrder: next })) {
+      logAudit(`category ${id} moved`);
+      toast("Category order saved");
+    }
   };
   const meta = (id: string) => settings.catMeta[id] ?? {};
-  const setMeta = (id: string, patch: Partial<(typeof settings.catMeta)[string]>) => {
-    saveSettings({ ...settings, catMeta: { ...settings.catMeta, [id]: { ...meta(id), ...patch } } });
+  const updateNameDraft = (id: string, patch: Partial<{ fi: string; en: string }>) => {
+    setNameDrafts((current) => ({
+      ...current,
+      [id]: { fi: current[id]?.fi ?? meta(id).nameFi ?? "", en: current[id]?.en ?? meta(id).nameEn ?? "", ...patch },
+    }));
+  };
+  const saveMeta = async (id: string, patch: Partial<(typeof settings.catMeta)[string]>) => {
+    const saved = await saveSettings({ ...settings, catMeta: { ...settings.catMeta, [id]: { ...meta(id), ...patch } } });
+    if (saved) {
+      logAudit(`category ${id} settings updated`);
+      toast("Category settings saved and reloaded from the database");
+    }
+    return saved;
+  };
+  const saveNames = async (id: string) => {
+    const draft = nameDrafts[id];
+    if (!draft) return;
+    if (!draft.fi.trim() || !draft.en.trim()) { toast("Enter both Finnish and English category names", "err"); return; }
+    setSavingNames(id);
+    const saved = await saveMeta(id, { nameFi: draft.fi.trim(), nameEn: draft.en.trim() });
+    setSavingNames(null);
+    if (saved) setNameDrafts((current) => { const next = { ...current }; delete next[id]; return next; });
   };
   return (
     <div className="space-y-3">
       <p className="text-xs text-cherry/60">Uploads feed the Home circles instantly (≤5 MB, cropped 1:1, WebP). Drag order = circle order. No image → branded placeholder.</p>
+      <form className="grid gap-2 rounded-xl border border-gold/50 bg-gold/10 p-3 sm:grid-cols-[1fr_1fr_auto]" onSubmit={async (event) => {
+        event.preventDefault();
+        if (!newFi.trim() || !newEn.trim()) { toast("Enter both Finnish and English category names", "err"); return; }
+        setAdding(true); const ok = await addCat(newFi.trim(), newEn.trim()); setAdding(false);
+        if (ok) { setNewFi(""); setNewEn(""); toast("Category created"); }
+      }}>
+        <input value={newFi} onChange={(event) => setNewFi(event.target.value)} maxLength={60} required placeholder="Category name (Finnish)" className={inputCls} />
+        <input value={newEn} onChange={(event) => setNewEn(event.target.value)} maxLength={60} required placeholder="Category name (English)" className={inputCls} />
+        <PrimaryBtn icon="plus" disabled={adding}>{adding ? "Adding…" : "Add category"}</PrimaryBtn>
+      </form>
       {cats.map((c, idx) => {
         const m = meta(c.id);
-        const n = MENU.filter((x) => x.cat === c.id).length + (overrides.added?.[c.id]?.length ?? 0);
+        const n = adminItems.filter((x) => x.cat === c.id).length;
         return (
           <div key={c.id} className="flex flex-wrap items-start gap-4 rounded-xl border border-cherry/15 bg-cream-deep p-4">
             <ImageUploader
               preset="1:1"
               value={m.img ? { src: resolveImageSrc(m.img) ?? m.img, altEn: m.altEn ?? "", altFi: m.altFi ?? "" } : undefined}
-              onChange={(v) => { setMeta(c.id, { img: v?.src, altEn: v?.altEn, altFi: v?.altFi }); logAudit(`category ${c.id} image ${v ? "uploaded" : "removed"}`); }}
+              onChange={(v) => { void saveMeta(c.id, { img: v?.src, altEn: v?.altEn, altFi: v?.altFi }); }}
             />
             <div className="min-w-[220px] flex-1 space-y-2">
               <p className="text-xs font-black text-cherry">{c.title} <span className="text-cherry/40">· {n} items · {c.id}</span></p>
               <div className="flex flex-wrap gap-2">
-                <input defaultValue={m.nameFi ?? ""} placeholder="Nimi FI (oletus: alkuperäinen)" onBlur={(e) => setMeta(c.id, { nameFi: e.target.value || undefined })} className="min-h-[36px] w-44 rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-                <input defaultValue={m.nameEn ?? ""} placeholder="Name EN" onBlur={(e) => setMeta(c.id, { nameEn: e.target.value || undefined })} className="min-h-[36px] w-44 rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
+                <input value={nameDrafts[c.id]?.fi ?? m.nameFi ?? ""} placeholder="Nimi FI (oletus: alkuperäinen)" onChange={(e) => updateNameDraft(c.id, { fi: e.target.value })} className="min-h-[36px] w-44 rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
+                <input value={nameDrafts[c.id]?.en ?? m.nameEn ?? ""} placeholder="Name EN" onChange={(e) => updateNameDraft(c.id, { en: e.target.value })} className="min-h-[36px] w-44 rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
+                {nameDrafts[c.id] && <PrimaryBtn disabled={savingNames === c.id} onClick={() => { void saveNames(c.id); }}>{savingNames === c.id ? "Saving…" : "Save names"}</PrimaryBtn>}
               </div>
               <div className="flex flex-wrap items-center gap-3">
                 <label className="flex items-center gap-2 text-xs font-black text-cherry/60">
                   Show on site
-                  <Switch on={!m.hidden} ariaLabel={`${c.title} visible`} onChange={() => setMeta(c.id, { hidden: !m.hidden })} />
+                  <Switch on={!m.hidden} ariaLabel={`${c.title} visible`} onChange={() => { void saveMeta(c.id, { hidden: !m.hidden }); }} />
                 </label>
                 <CatAvailSwitch id={c.id} title={c.title} />
+                {n === 0 && <button onClick={async () => { if (window.confirm(`Delete empty category “${c.title}”?`)) { if (await deleteCat(c.id)) toast("Category deleted", "ok"); } }} className="min-h-[32px] rounded-lg border border-brick/30 px-2 text-[11px] font-black text-brick">Delete empty category</button>}
                 <span className="ml-auto flex gap-1">
                   <button onClick={() => move(c.id, -1)} disabled={idx === 0} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry disabled:opacity-30">↑</button>
                   <button onClick={() => move(c.id, 1)} disabled={idx === cats.length - 1} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry disabled:opacity-30">↓</button>
@@ -450,7 +460,6 @@ export function CatsTab() {
           </div>
         );
       })}
-      <button onClick={() => toast("Category order saved")} className="min-h-[40px] rounded-lg bg-cherry px-4 text-xs font-black text-cream">Done</button>
     </div>
   );
 }

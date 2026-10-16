@@ -1,11 +1,14 @@
 "use client";
 import { motion } from "framer-motion";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { cx, eur, fmtTime, fmtDate } from "@/lib/format";
 import { RESTAURANT } from "@/lib/menu";
 import { useLang } from "@/lib/i18n";
+import { cartOptionLabel } from "@/lib/v3";
 import { useShop, useTick } from "@/lib/store";
-import type { OrderStatus } from "@/lib/types";
+import { apiGetOrder } from "@/lib/api";
+import type { Order, OrderStatus } from "@/lib/types";
 
 const STEPS: { id: OrderStatus; icon: string }[] = [
   { id: "placed", icon: "🧾" },
@@ -17,11 +20,32 @@ const STEPS: { id: OrderStatus; icon: string }[] = [
 
 /** Order tracking timeline + receipt. Shared by /track/[id] and /track?id=. */
 export default function TrackView({ id }: { id: string }) {
-  const { orders, orderStatus } = useShop();
-  const { t } = useLang();
+  const { orders, orderStatus, adminItems, settings } = useShop();
+  const { t, lang } = useLang();
+  const [remoteOrder, setRemoteOrder] = useState<Order | null>(null);
+  const [loading, setLoading] = useState(true);
   useTick(2000); // re-derive time-based status
 
-  const order = orders.find((o) => o.id === id);
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      try {
+        const latest = await apiGetOrder(id);
+        if (active) setRemoteOrder(latest);
+      } catch {
+        // An order already present in the authenticated account store is a safe fallback.
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+    setLoading(true);
+    void load();
+    const timer = window.setInterval(() => { void load(); }, 10_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [id]);
+
+  const order = orders.find((o) => o.id === id) ?? remoteOrder;
+  if (!order && loading) return <div className="container-x pt-32 text-center text-sm font-bold text-cherry/60">Loading your order…</div>;
   if (!order)
     return (
       <div className="container-x pt-32 text-center">
@@ -54,6 +78,14 @@ export default function TrackView({ id }: { id: string }) {
           Placed {fmtTime(order.createdAt)} · {order.type === "delivery" ? `Delivery to ${order.address}` : `Pickup at ${RESTAURANT.address}`}
         </p>
       </motion.div>
+
+      {order.estimatedReadyAt && orderStatus(order) !== "completed" && (
+        <div className="mt-5 rounded-2xl border border-gold/60 bg-gold/10 px-4 py-3">
+          <p className="text-xs font-black uppercase tracking-wide text-cherry/60">{t("track.readyAt")}</p>
+          <p className="mt-1 font-display text-xl font-black text-cherry">{new Intl.DateTimeFormat(lang === "fi" ? "fi-FI" : "en-FI", { timeZone: "Europe/Helsinki", hour: "2-digit", minute: "2-digit" }).format(order.estimatedReadyAt)}</p>
+          <p className="text-xs text-cherry/60">{t("track.readySoon")}</p>
+        </div>
+      )}
 
       <div className="mt-8 rounded-3xl border-2 border-gold/50 bg-cream-deep p-6 sm:p-8 shadow-lift">
         <ol className="relative space-y-7">
@@ -108,7 +140,7 @@ export default function TrackView({ id }: { id: string }) {
             <li key={i} className="flex justify-between gap-4">
               <span className="font-bold text-cherry/80">
                 {l.qty}× {l.name}
-                {l.options.length > 0 && <span className="block text-xs text-cherry/50">{l.options.join(" · ")}</span>}
+                {l.options.length > 0 && <span className="block text-xs text-cherry/50">{l.options.map((option) => cartOptionLabel(adminItems.find((item) => item.id === l.itemId), settings, lang, option)).join(" · ")}</span>}
               </span>
               <span className="font-black tabular-nums">{eur(l.unitPrice * l.qty)}</span>
             </li>
@@ -116,7 +148,7 @@ export default function TrackView({ id }: { id: string }) {
         </ul>
         <dl className="mt-4 space-y-1 border-t-2 border-gold/40 pt-3 text-sm font-bold text-cherry/80">
           <div className="flex justify-between"><dt>{t("cart.subtotal")}</dt><dd>{eur(order.subtotal)}</dd></div>
-          <div className="flex justify-between"><dt>{t("order.fee")}</dt><dd>{order.deliveryFee ? eur(order.deliveryFee) : "—"}</dd></div>
+          <div className="flex justify-between"><dt>{t("order.fee")}</dt><dd>{order.deliveryFee ? eur(order.deliveryFee) : order.discount?.freeDelivery ? t("order.free") : "—"}</dd></div>
           {order.discount && order.discount.amount > 0 && (
             <div className="flex justify-between text-[#2e7d32]"><dt>− {order.discount.title}</dt><dd>−{eur(order.discount.amount)}</dd></div>
           )}

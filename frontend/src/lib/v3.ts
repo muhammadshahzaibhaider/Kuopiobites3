@@ -1,6 +1,6 @@
 import { helsinkiNow, todayStrHelsinki, toMin } from "./hours";
 import { MENU } from "./menu";
-import type { CartLine, Lang, MenuItem, Offer, Settings } from "./types";
+import type { CartLine, Lang, MenuItem, ModGroup, ModOption, Offer, Settings } from "./types";
 
 /* ── ingredient glossary (fi key → en) ── */
 export const ING: Record<string, string> = {
@@ -75,8 +75,8 @@ export const NAME_EN: Record<string, string> = {
 
 /* size/variant labels per language */
 const VLABEL: Record<Lang, Record<string, string>> = {
-  en: { Med: "Medium", Perhe: "Family", Pelkkä: "Single", Ateria: "Meal", "3pc": "3 pc", "6pc": "6 pc", "1pc": "1 pc", "2pc": "2 pc", Large: "Large" },
-  fi: { Med: "Med", Perhe: "Perhe", Pelkkä: "Pelkkä", Ateria: "Ateria", "3pc": "3 kpl", "6pc": "6 kpl", "1pc": "1 kpl", "2pc": "2 kpl", Large: "Large" },
+  en: { Med: "Medium", Perhe: "Family", Pelkkä: "Single", Ateria: "Meal", Half: "Half plate", Full: "Full plate", Meal: "Meal", "3pc": "3 pc", "6pc": "6 pc", "1pc": "1 pc", "2pc": "2 pc", Large: "Large" },
+  fi: { Med: "Med", Perhe: "Perhe", Pelkkä: "Pelkkä", Ateria: "Ateria", Half: "Puolikas", Full: "Kokonainen", Meal: "Ateria", "3pc": "3 kpl", "6pc": "6 kpl", "1pc": "1 kpl", "2pc": "2 kpl", Large: "Large" },
 };
 
 export function trLabel(lang: Lang, label: string): string {
@@ -219,7 +219,7 @@ export function computeDiscount(
     }
     let amount = 0;
     if (o.type === "percent") amount = (scopedTotal * o.value) / 100;
-    if (o.type === "fixed") amount = Math.min(o.value, subtotal);
+    if (o.type === "fixed") amount = Math.min(o.value, scopedTotal);
     if (o.type === "override") {
       const l = lines.find((x) => (o.scope.itemIds ?? []).includes(x.itemId));
       if (l) amount = Math.max(0, (l.unitPrice - o.value) * l.qty);
@@ -298,6 +298,21 @@ export function pizzaIncluded(m: MenuItem): string[] {
     .map((s) => s.trim().toLowerCase())
     .filter(Boolean)
     .map((s) => TOP_ALIAS[s] ?? s);
+}
+
+/** Localized display for a modifier, while the cart/API retain its canonical raw label. */
+export function modOptionLabel(lang: Lang, group: Pick<ModGroup, "id">, option: ModOption, settings: Settings): string {
+  if (group.id === "topping") return toppingLabel(settings, lang, option.label);
+  return (lang === "fi" ? option.labelFi : option.labelEn)?.trim() || trIng(lang, option.label);
+}
+
+/** Translate a raw CartLine option for customer display without changing its stored value. */
+export function cartOptionLabel(item: MenuItem | undefined, settings: Settings, lang: Lang, rawLabel: string): string {
+  for (const group of item?.mods ?? []) {
+    const option = group.options.find((candidate) => candidate.label === rawLabel);
+    if (option) return modOptionLabel(lang, group, option, settings);
+  }
+  return trIng(lang, rawLabel);
 }
 
 /** admin-editable topping label in the current language */

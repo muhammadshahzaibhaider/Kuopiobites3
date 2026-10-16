@@ -7,13 +7,18 @@ export interface PriceVariant {
 }
 
 export interface ModOption {
+  /** Canonical raw label sent in CartLine.options and validated by the API. */
   label: string;
+  labelFi?: string;
+  labelEn?: string;
   price: number;
 }
 
 export interface ModGroup {
   id: string;
   name: string;
+  nameFi?: string;
+  nameEn?: string;
   type: "single" | "multi";
   required?: boolean;
   min?: number;
@@ -46,6 +51,10 @@ export interface MenuItem {
   imageKey?: string;
   /** optional persisted image reference for custom/live menu items */
   imageUrl?: string;
+  /** Estimated raw weight of one sellable unit, used by server-side delivery rules. */
+  weightKg?: number;
+  /** Manager-only catalog flag. Public menu reads omit archived rows. */
+  archived?: boolean;
 }
 
 export interface Category {
@@ -90,7 +99,7 @@ export interface Order {
   lines: CartLine[];
   subtotal: number;
   deliveryFee: number;
-  discount?: { title: string; amount: number; offerId?: string };
+  discount?: { title: string; amount: number; offerId?: string; freeDelivery?: boolean };
   total: number;
   vat: number;
   scheduled?: { date: string; time: string };
@@ -99,6 +108,8 @@ export interface Order {
   paymentStatus?: "pending" | "paid" | "failed" | "refunded" | "demo_paid";
   paymentId?: string;
   checkoutSessionId?: string;
+  /** Server-stored estimated ready time in epoch milliseconds. */
+  estimatedReadyAt?: number;
   userId: string;
 }
 
@@ -140,7 +151,10 @@ export interface Offer {
   id: string;
   type: "percent" | "fixed" | "override" | "bundle" | "freeItem" | "freeDelivery";
   value: number;
-  scope: { itemIds?: string[]; category?: string; whole?: boolean };
+  scope: {
+    itemIds?: string[]; category?: string; whole?: boolean; deliveryOnly?: boolean;
+    minDistanceKm?: number; maxDistanceKm?: number; minWeightKg?: number; maxWeightKg?: number;
+  };
   minOrder?: number;
   days?: number[];
   start?: string;
@@ -210,12 +224,27 @@ export interface CatMeta {
   hidden?: boolean;
 }
 
+export interface DeliveryRule {
+  id: string;
+  name: string;
+  minDistanceKm?: number;
+  maxDistanceKm?: number;
+  minWeightKg?: number;
+  maxWeightKg?: number;
+  fee: number;
+  active: boolean;
+}
+
 export interface Settings {
   paused: boolean;
   hours: Hours;
   deliveryFee: number;
   minOrder: number;
   radiusKm: number;
+  /** Fallback estimate for newly created, non-scheduled orders; admin can override per order. */
+  readyTimeMinutes: number;
+  /** First matching active distance/weight tier wins; empty list uses deliveryFee. */
+  deliveryRules: DeliveryRule[];
   vatRate: number;
   toppings: string[];
   special: SpecialCfg;
