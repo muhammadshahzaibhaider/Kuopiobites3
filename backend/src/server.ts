@@ -30,7 +30,7 @@ import {
 import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
 import { addFavorite, listFavorites, mergeFavorites, removeFavorite, safeListFavorites } from "./supabase-favorites";
 import { addCartLine, clearCart, listCart, mergeCartLines, removeCartLine, safeListCart, setCartLineQty } from "./supabase-cart";
-import { isRevenueEligible } from "../../src/lib/revenue";
+import { isRevenueEligible } from "./revenue";
 
 const app = express();
 export default app;
