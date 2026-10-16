@@ -3,14 +3,12 @@ import { motion } from "framer-motion";
 import { useState } from "react";
 import { Reveal, SectionHead, Stagger, StaggerItem, Steam } from "@/components/ui";
 import { useLang } from "@/lib/i18n";
-import { WHATSAPP_DISPLAY, WHATSAPP_GREETING, whatsappUrl } from "@/lib/menu";
-import { telHref } from "@/lib/format";
+import { RESTAURANT, WHATSAPP_DISPLAY, WHATSAPP_GREETING, whatsappUrl } from "@/lib/menu";
 import { useShop } from "@/lib/store";
 import WhatsAppIcon from "@/components/WhatsAppIcon";
 
 export default function AboutPage() {
   const { settings, toast } = useShop();
-  const restaurant = settings.restaurant;
   const { t, dayName } = useLang();
   const [f, setF] = useState({ name: "", email: "", msg: "" });
 
@@ -63,9 +61,9 @@ export default function AboutPage() {
         <Stagger className="grid gap-6 lg:grid-cols-2">
           <StaggerItem className="rounded-3xl border border-cherry/10 bg-cream-deep p-7 shadow-card">
             <h3 className="font-display text-xl font-black text-cherry">{t("about.visit")}</h3>
-            <p className="mt-3 font-bold text-cherry/80">{restaurant.address}, Finland</p>
-            <a href={telHref(restaurant.phone)} className="mt-2 block font-display text-3xl font-black text-cherry-bright hover:text-cherry">
-              {restaurant.phone}
+            <p className="mt-3 font-bold text-cherry/80">{RESTAURANT.address}, Finland</p>
+            <a href={RESTAURANT.phoneHref} className="mt-2 block font-display text-3xl font-black text-cherry-bright hover:text-cherry">
+              {RESTAURANT.phone}
             </a>
             <a href={whatsappUrl(WHATSAPP_GREETING)} target="_blank" rel="noopener noreferrer" aria-label="Chat on WhatsApp" className="mt-3 flex min-h-[44px] items-center gap-2 font-black text-[#168c4a] hover:underline">
               <WhatsAppIcon /> WhatsApp · {WHATSAPP_DISPLAY}
@@ -82,7 +80,7 @@ export default function AboutPage() {
               ))}
             </ul>
             <div className="mt-5 overflow-hidden rounded-2xl border-2 border-gold/50">
-              <iframe title="Map to Kuopio Bites" src={restaurant.mapEmbed} className="h-56 w-full border-0" loading="lazy" />
+              <iframe title="Map to Kuopio Bites" src={RESTAURANT.mapEmbed} className="h-56 w-full border-0" loading="lazy" />
             </div>
           </StaggerItem>
           <StaggerItem>

@@ -4,13 +4,12 @@ import { useRef } from "react";
 import ReservationFlow from "@/components/ReservationFlow";
 import { Reveal, Steam } from "@/components/ui";
 import { useLang } from "@/lib/i18n";
-import { telHref } from "@/lib/format";
+import { RESTAURANT } from "@/lib/menu";
 import { useShop } from "@/lib/store";
 
 export default function DiningPage() {
   const { t, dayName } = useLang();
   const { settings } = useShop();
-  const restaurant = settings.restaurant;
   const flowRef = useRef<HTMLDivElement>(null);
 
   return (
@@ -55,7 +54,7 @@ export default function DiningPage() {
           ))}
         </ul>
         <p className="mt-3 text-sm font-bold text-cherry/60">
-          {restaurant.address} · <a className="text-gold-deep underline decoration-gold underline-offset-4" href={telHref(restaurant.phone)}>{restaurant.phone}</a>
+          {RESTAURANT.address} · <a className="text-gold-deep underline decoration-gold underline-offset-4" href={RESTAURANT.phoneHref}>{RESTAURANT.phone}</a>
         </p>
       </Reveal>
 

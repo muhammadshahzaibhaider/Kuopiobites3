@@ -1,7 +1,8 @@
 "use client";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import { useRef, useState } from "react";
-import { apiForgotPassword } from "@/lib/api";
+import { apiRequestPasswordReset } from "@/lib/api";
 import { describeAuthError, EMAIL_RE, PASSWORD_MIN_LENGTH, passwordOk, passwordRules, passwordStrength, PHONE_RE, STRENGTH_LABELS } from "@/lib/authErrors";
 import { cx } from "@/lib/format";
 import { useShop } from "@/lib/store";
@@ -43,7 +44,7 @@ export default function AuthForm({ onDone, initialMode = "login" }: { onDone?: (
   const [busy, setBusy] = useState(false);
   const [f, setF] = useState({ name: "", email: "", pass: "", confirmPass: "", phone: "", remember: true });
   const [errors, setErrors] = useState<FieldErrors>({});
-  const [banner, setBanner] = useState<{ kind: "error" | "ok"; text: string } | null>(null);
+  const [banner, setBanner] = useState<{ kind: "error" | "ok"; text: string; resetToken?: string } | null>(null);
   const nameRef = useRef<HTMLInputElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
   const phoneRef = useRef<HTMLInputElement>(null);
@@ -95,8 +96,10 @@ export default function AuthForm({ onDone, initialMode = "login" }: { onDone?: (
     setBusy(true);
     try {
       if (mode === "forgot") {
-        await apiForgotPassword(f.email.trim());
-        setBanner({ kind: "ok", text: "If this email is registered, you will receive a reset link shortly." });
+        /* Demo store has no SMTP: the reset token comes back directly and is
+           shown as a link. Production emails it instead. */
+        const token = await apiRequestPasswordReset(f.email.trim()).catch(() => null);
+        setBanner({ kind: "ok", text: "If this email is registered, you will receive a reset link shortly.", resetToken: token ?? undefined });
         return;
       }
       const error = mode === "login"
@@ -105,8 +108,6 @@ export default function AuthForm({ onDone, initialMode = "login" }: { onDone?: (
       if (error) { mapError(error); return; }
       toast(mode === "login" ? "Welcome back! 👋" : "Account created — tervetuloa!");
       onDone?.();
-    } catch (error) {
-      setBanner({ kind: "error", text: describeAuthError((error as Error).message) });
     } finally {
       setBusy(false);
     }
@@ -161,6 +162,7 @@ export default function AuthForm({ onDone, initialMode = "login" }: { onDone?: (
 
       {banner && <div role={banner.kind === "error" ? "alert" : "status"} className={cx("rounded-2xl px-4 py-3 text-sm font-bold", banner.kind === "error" ? "bg-cherry-bright/10 text-cherry-bright" : "bg-[#2e7d32]/10 text-[#2e7d32]")}>
         {banner.text}
+        {banner.resetToken && <span className="mt-1 block">Demo mode (no email service): <Link href={`/auth/reset?token=${encodeURIComponent(banner.resetToken)}`} className="font-black underline underline-offset-2">open your reset link</Link></span>}
         {banner.kind === "error" && banner.text.includes("Log in instead") && <button type="button" onClick={() => switchMode("login")} className="mt-1 block font-black underline underline-offset-2">Switch to sign in</button>}
       </div>}
 

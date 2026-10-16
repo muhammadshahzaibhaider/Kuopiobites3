@@ -1,7 +1,7 @@
 "use client";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useRef, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import PasswordInput from "@/components/PasswordInput";
 import { PasswordStrength } from "@/components/AuthForm";
 import { apiResetPassword } from "@/lib/api";
@@ -10,14 +10,8 @@ import { useShop } from "@/lib/store";
 
 function ResetInner() {
   const params = useSearchParams();
-  const { toast } = useShop();
+  const { toast, logout } = useShop();
   const token = params.get("token") || "";
-  const proof = token
-    ? { token, ...(params.get("type") ? { type: params.get("type") as "signup" | "email" | "recovery" } : {}) }
-    : params.get("code") ? { code: params.get("code")! }
-      : params.get("access_token") && params.get("refresh_token")
-        ? { accessToken: params.get("access_token")!, refreshToken: params.get("refresh_token")! }
-        : null;
   const [pass, setPass] = useState("");
   const [confirm, setConfirm] = useState("");
   const [err, setErr] = useState<string | null>(null);
@@ -25,20 +19,21 @@ function ResetInner() {
   const [done, setDone] = useState(false);
   const passRef = useRef<HTMLInputElement>(null);
 
+  /* A successful reset invalidates sessions (matches the production flow). */
+  useEffect(() => { if (done) logout(); }, [done, logout]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (busy || !proof) return;
+    if (busy || !token) return;
     if (!passwordOk(pass)) { setErr(`Password must be at least ${PASSWORD_MIN_LENGTH} characters and include a letter and a number.`); passRef.current?.focus(); return; }
     if (pass !== confirm) { setErr("Passwords do not match."); return; }
     setErr(null);
     setBusy(true);
     try {
-      await apiResetPassword(proof, pass);
+      const error = await apiResetPassword(token, pass);
+      if (error) { setErr(describeAuthError(error)); return; }
       setDone(true);
       toast("Password updated ✅");
-    } catch (error) {
-      setErr(describeAuthError((error as Error).message));
     } finally {
       setBusy(false);
     }
@@ -52,7 +47,7 @@ function ResetInner() {
           <h1 className="font-display text-3xl font-black text-cherry">Password updated</h1>
           <p className="mt-3 text-cherry/70">Your password has been changed and you were signed out. Sign in with your new password.</p>
           <Link href="/login" className="mt-6 inline-flex min-h-[48px] items-center rounded-full bg-cherry-bright px-7 font-black text-cream">Sign in</Link>
-        </> : !proof ? <>
+        </> : !token ? <>
           <h1 className="font-display text-3xl font-black text-cherry">Reset link invalid</h1>
           <p className="mt-3 text-cherry/70">The link may have expired or already been used. Request a fresh one from the sign-in page.</p>
           <Link href="/login" className="mt-6 inline-flex min-h-[48px] items-center rounded-full bg-cherry-bright px-7 font-black text-cream">Back to sign in</Link>

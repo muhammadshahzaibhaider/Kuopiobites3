@@ -1,7 +1,6 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { resolveImageSrc } from "@/lib/images";
-import { apiUpload } from "@/lib/api";
 import { cx } from "@/lib/format";
 import { fileToWebp, MAX_BYTES } from "@/lib/imgtool";
 import { useLang } from "@/lib/i18n";
@@ -10,7 +9,7 @@ import type { UploadedImg } from "@/lib/types";
 /**
  * Reusable admin uploader: drag-drop / picker, ≤5 MB, aspect-preset center crop,
  * WebP compression, EN/FI alt text (required), replace/delete.
- * The authenticated upload API validates bytes and writes to the configured menu-images storage bucket.
+ * STUB → POST /api/uploads (swap body for S3/Cloudinary/Uploadthing later).
  */
 export default function ImageUploader({
   value,
@@ -29,18 +28,15 @@ export default function ImageUploader({
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
-  const valueSrc = value?.src;
-  const valueAltEn = value?.altEn;
-  const valueAltFi = value?.altFi;
   useEffect(() => {
-    if (valueSrc) {
-      setAltEn(valueAltEn ?? fallbackAlt ?? "");
-      setAltFi(valueAltFi ?? fallbackAlt ?? "");
+    if (value) {
+      setAltEn(value.altEn ?? fallbackAlt ?? "");
+      setAltFi(value.altFi ?? fallbackAlt ?? "");
     } else if (fallbackAlt) {
       setAltEn((current) => current || fallbackAlt);
       setAltFi((current) => current || fallbackAlt);
     }
-  }, [valueSrc, valueAltEn, valueAltFi, fallbackAlt]);
+  }, [value?.src, value?.altEn, value?.altFi, fallbackAlt]);
 
   const handle = async (file: File | undefined | null) => {
     setErr("");
@@ -59,10 +55,9 @@ export default function ImageUploader({
     }
     setBusy(true);
     try {
-      const dataUrl = await fileToWebp(file, preset);
-      const blob = await (await fetch(dataUrl)).blob();
-      const uploaded = await apiUpload(blob);
-      onChange({ src: uploaded.url, altEn: altEn.trim(), altFi: altFi.trim() });
+      // STUB → POST /api/uploads (swap the data URL for an S3/Cloudinary key later)
+      const src = await fileToWebp(file, preset);
+      onChange({ src, altEn: altEn.trim(), altFi: altFi.trim() });
     } catch (e) {
       setErr((e as Error).message);
     } finally {

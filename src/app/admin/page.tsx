@@ -9,42 +9,72 @@ import { Pill, useLocal } from "@/admin/ui";
 import { DashboardView, OrdersView, DiningView } from "@/admin/views-orders";
 import { MenuCategoriesView, MenuItemsView, ToppingsMasterView, SpecialsView } from "@/admin/views-menu";
 import { CustomersView, AnalyticsView, AdminStaffView, SettingsView } from "@/admin/views-misc";
-import { DeliveryRulesView } from "@/admin/DeliveryRulesView";
-import { PromotionsView } from "@/admin/PromotionsView";
 
-/* Staff identity is verified by the backend HttpOnly session, never browser storage. */
+const ADMIN_USER = "admin";
+const ADMIN_PASS = "kuopio2026";
+
 export default function AdminPage() {
-  const { authChecked, staffRole, adminLogout } = useShop();
-  if (!authChecked) return <div className="grid min-h-[60vh] place-items-center text-sm font-bold text-cherry/60">Loading staff session…</div>;
-  if (!staffRole) return <Gate />;
-  return <AdminShell onLogout={adminLogout} />;
+  const [authed, setAuthed] = useState(false);
+  useEffect(() => {
+    setAuthed(sessionStorage.getItem("kb_admin") === "1");
+  }, []);
+  if (!authed)
+    return (
+      <Gate
+        onOk={() => {
+          sessionStorage.setItem("kb_admin", "1");
+          setAuthed(true);
+        }}
+      />
+    );
+  return (
+    <AdminShell
+      onLogout={() => {
+        sessionStorage.removeItem("kb_admin");
+        setAuthed(false);
+      }}
+    />
+  );
 }
 
-function Gate() {
-  const { adminLogin } = useShop();
-  const { t } = useLang();
+function Gate({ onOk }: { onOk: () => void }) {
   const [u, setU] = useState("");
   const [p, setP] = useState("");
-  const [err, setErr] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState(false);
   return (
     <div className="grid min-h-[80vh] place-items-center px-4">
       <div className="w-full max-w-sm">
         <h1 className="font-display text-2xl font-black text-cherry">Kuopio Bites · Staff login</h1>
-        <p className="mt-1 text-xs text-cherry/60">{t("admin.loginSubtitle")}</p>
+        <p className="mt-1 text-xs text-cherry/60">Admin area — function over fashion.</p>
         <form
           className="mt-6 space-y-3 rounded-2xl border border-cherry/15 bg-cream-deep p-5 shadow-card"
-          onSubmit={async (e) => {
-            e.preventDefault(); setErr(""); setBusy(true);
-            const problem = await adminLogin(u, p);
-            setBusy(false);
-            if (problem) setErr(t(problem));
+          autoComplete="off"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (u === ADMIN_USER && p === ADMIN_PASS) onOk();
+            else setErr(true);
           }}
         >
-          <input name="username" autoComplete="username" required className="min-h-[44px] w-full rounded-lg border border-cherry/20 bg-cream px-3 text-sm font-bold" placeholder={t("admin.username")} value={u} onChange={(e) => setU(e.target.value)} />
-          <input name="password" type="password" autoComplete="current-password" required className="min-h-[44px] w-full rounded-lg border border-cherry/20 bg-cream px-3 text-sm font-bold" placeholder={t("admin.password")} value={p} onChange={(e) => setP(e.target.value)} />
-          {err && <p role="alert" className="text-xs font-bold text-brick">{err}</p>}
-          <button disabled={busy} className="min-h-[44px] w-full rounded-lg bg-cherry font-black text-cream hover:bg-cherry-bright disabled:opacity-60">{busy ? t("admin.signingIn") : t("admin.signIn")}</button>
+          <input
+            name="admin_username"
+            autoComplete="off"
+            className="min-h-[44px] w-full rounded-lg border border-cherry/20 bg-cream px-3 text-sm font-bold"
+            placeholder="Username"
+            value={u}
+            onChange={(e) => setU(e.target.value)}
+          />
+          <input
+            type="password"
+            name="admin_password"
+            autoComplete="new-password"
+            className="min-h-[44px] w-full rounded-lg border border-cherry/20 bg-cream px-3 text-sm font-bold"
+            placeholder="Password"
+            value={p}
+            onChange={(e) => setP(e.target.value)}
+          />
+          {err && <p className="text-xs font-bold text-brick">Wrong credentials</p>}
+          <button className="min-h-[44px] w-full rounded-lg bg-cherry font-black text-cream hover:bg-cherry-bright">Sign in</button>
+          <p className="text-center text-[11px] text-cherry/50">demo: admin / kuopio2026</p>
         </form>
       </div>
     </div>
@@ -52,40 +82,37 @@ function Gate() {
 }
 
 /* ── navigation tree ── */
-type Leaf = { id: string; label: string; icon: string; labelFi?: string };
-type Group = { id: string; label: string; icon: string; labelFi?: string; leaves?: Leaf[]; leaf?: string };
+type Leaf = { id: string; label: string; icon: string };
+type Group = { id: string; label: string; icon: string; leaves?: Leaf[]; leaf?: string };
 
 const NAV: Group[] = [
-  { id: "dashboard", label: "Dashboard", labelFi: "Yleiskatsaus", icon: "grid", leaf: "dashboard" },
-  { id: "orders", label: "Orders", labelFi: "Tilaukset", icon: "orders", leaves: [
-    { id: "orders.queue", label: "Live Queue", labelFi: "Live-jono", icon: "clock" },
-    { id: "orders.history", label: "History", labelFi: "Historia", icon: "history" },
-    { id: "orders.refunds", label: "Refunds", labelFi: "Palautukset", icon: "cash" },
+  { id: "dashboard", label: "Dashboard", icon: "grid", leaf: "dashboard" },
+  { id: "orders", label: "Orders", icon: "orders", leaves: [
+    { id: "orders.queue", label: "Live Queue", icon: "clock" },
+    { id: "orders.history", label: "History", icon: "history" },
+    { id: "orders.refunds", label: "Refunds", icon: "cash" },
   ] },
-  { id: "dining", label: "Dining", labelFi: "Ruokailu", icon: "calendar", leaves: [
-    { id: "dining.calendar", label: "Calendar", labelFi: "Kalenteri", icon: "calendar" },
-    { id: "dining.list", label: "Reservations", labelFi: "Varaukset", icon: "list" },
-    { id: "dining.slots", label: "Slot Settings", labelFi: "Aikavarausten asetukset", icon: "clock" },
+  { id: "dining", label: "Dining", icon: "calendar", leaves: [
+    { id: "dining.calendar", label: "Calendar", icon: "calendar" },
+    { id: "dining.list", label: "Reservations", icon: "list" },
+    { id: "dining.slots", label: "Slot Settings", icon: "clock" },
   ] },
-  { id: "menu", label: "Menu", labelFi: "Ruokalista", icon: "menu", leaves: [
-    { id: "menu.items", label: "Items", labelFi: "Tuotteet", icon: "list" },
-    { id: "menu.off", label: "Off-menu", labelFi: "Pois valikosta", icon: "warn" },
-    { id: "menu.categories", label: "Categories", labelFi: "Kategoriat", icon: "group" },
-    { id: "menu.toppings", label: "Toppings", labelFi: "Täytteet", icon: "pizza" },
-    { id: "menu.special", label: "Today's Special", labelFi: "Päivän annos", icon: "star" },
-    { id: "menu.offers", label: "Offers", labelFi: "Tarjoukset", icon: "cash" },
+  { id: "menu", label: "Menu", icon: "menu", leaves: [
+    { id: "menu.items", label: "Items", icon: "list" },
+    { id: "menu.categories", label: "Categories", icon: "group" },
+    { id: "menu.toppings", label: "Toppings", icon: "pizza" },
+    { id: "menu.special", label: "Today's Special", icon: "star" },
   ] },
-  { id: "customers", label: "Customers", labelFi: "Asiakkaat", icon: "users", leaf: "customers" },
-  { id: "analytics", label: "Analytics", labelFi: "Analytiikka", icon: "analytics", leaves: [
-    { id: "analytics.sales", label: "Sales", labelFi: "Myynti", icon: "analytics" },
-    { id: "analytics.items", label: "Item Performance", labelFi: "Tuotemyynti", icon: "list" },
-    { id: "analytics.peaks", label: "Peak Hours", labelFi: "Ruuhka-ajat", icon: "clock" },
+  { id: "customers", label: "Customers", icon: "users", leaf: "customers" },
+  { id: "analytics", label: "Analytics", icon: "analytics", leaves: [
+    { id: "analytics.sales", label: "Sales", icon: "analytics" },
+    { id: "analytics.items", label: "Item Performance", icon: "list" },
+    { id: "analytics.peaks", label: "Peak Hours", icon: "clock" },
   ] },
-  { id: "admin", label: "Admin", labelFi: "Hallinta", icon: "shield", leaf: "admin.staff" },
-  { id: "settings", label: "Settings", labelFi: "Asetukset", icon: "cog", leaves: [
-    { id: "settings.general", label: "General", labelFi: "Yleiset", icon: "cog" },
-    { id: "settings.restaurant", label: "Restaurant Info", labelFi: "Ravintolan tiedot", icon: "store" },
-    { id: "settings.delivery", label: "Delivery Rules", labelFi: "Toimitussäännöt", icon: "cash" },
+  { id: "admin", label: "Admin", icon: "shield", leaf: "admin.staff" },
+  { id: "settings", label: "Settings", icon: "cog", leaves: [
+    { id: "settings.general", label: "General", icon: "cog" },
+    { id: "settings.restaurant", label: "Restaurant Info", icon: "store" },
   ] },
 ];
 
@@ -94,20 +121,15 @@ const ALL_LEAVES: Leaf[] = NAV.flatMap((g) => (g.leaves ?? (g.leaf ? [{ id: g.le
 function AdminShell({ onLogout }: { onLogout: () => void }) {
   const [tabs, setTabs] = useLocal<string[]>("kb_admin_tabs", ["dashboard"]);
   const [active, setActive] = useLocal<string>("kb_admin_active", "dashboard");
-  const { orders, orderStatus, settings, staffRole } = useShop();
-  const { lang, setLang } = useLang();
-  const validLeaves = useMemo(() => ALL_LEAVES.filter((leaf) => {
-    if (staffRole === "owner") return true;
-    if (staffRole === "kitchen") return leaf.id === "orders.queue" || leaf.id === "orders.history" || leaf.id === "menu.items" || leaf.id === "menu.off";
-    return leaf.id !== "admin.staff" && (!leaf.id.startsWith("settings.") || leaf.id === "settings.delivery");
-  }), [staffRole]);
-  const validIds = useMemo(() => new Set(validLeaves.map((leaf) => leaf.id)), [validLeaves]);
+  const validIds = useMemo(() => new Set(ALL_LEAVES.map((leaf) => leaf.id)), []);
   const activeId = validIds.has(active) ? active : "dashboard";
   const [openGroups, setOpenGroups] = useState<Set<string>>(new Set(["orders", "menu"]));
   const [mobileNav, setMobileNav] = useState(false);
   const [navQuery, setNavQuery] = useState("");
   const [userMenu, setUserMenu] = useState(false);
   const [quickCreate, setQuickCreate] = useState(false);
+  const { orders, orderStatus } = useShop();
+  const { lang, setLang } = useLang();
   useTick(4000);
 
   const pending = orders.filter((o) => ["placed", "accepted", "preparing"].includes(orderStatus(o)) && !o.refunded).length;
@@ -131,22 +153,15 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
     if (active !== activeId) setActive(next.includes(activeId) ? activeId : next[0]);
   }, [tabs, active, activeId, validIds, setTabs, setActive]);
 
-  const labelOf = (id: string) => {
-    const leaf = ALL_LEAVES.find((entry) => entry.id === id);
-    return leaf ? (lang === "fi" ? leaf.labelFi ?? leaf.label : leaf.label) : id;
-  };
-  const roleNav = useMemo(() => NAV.map((group) => ({
-    ...group,
-    leaves: group.leaves?.filter((leaf) => validIds.has(leaf.id)),
-  })).filter((group) => group.id !== "admin" || staffRole === "owner").filter((group) => !group.leaves || group.leaves.length > 0), [validIds, staffRole]);
+  const labelOf = (id: string) => ALL_LEAVES.find((l) => l.id === id)?.label ?? id;
   const filteredNav = useMemo(() => {
-    if (!navQuery.trim()) return roleNav;
+    if (!navQuery.trim()) return NAV;
     const q = navQuery.toLowerCase();
-    return roleNav.map((group) => ({
-      ...group,
-      leaves: group.leaves?.filter((leaf) => `${leaf.label} ${leaf.labelFi ?? ""}`.toLowerCase().includes(q)),
-    })).filter((group) => (group.leaves ? group.leaves.length > 0 : `${group.label} ${group.labelFi ?? ""}`.toLowerCase().includes(q)));
-  }, [navQuery, roleNav]);
+    return NAV.map((g) => ({
+      ...g,
+      leaves: g.leaves?.filter((l) => l.label.toLowerCase().includes(q)),
+    })).filter((g) => (g.leaves ? g.leaves.length > 0 : g.label.toLowerCase().includes(q)));
+  }, [navQuery]);
 
   const sidebar = (
     <nav className="flex h-full flex-col bg-[#0F3D3E] text-cream">
@@ -184,7 +199,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
                 className={cx("flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] font-black transition", groupActive ? "bg-gold text-cherry-dark" : "text-cream/85 hover:bg-cream/10")}
               >
                 <Ic n={g.icon} size={16} />
-                <span className="flex-1">{lang === "fi" ? g.labelFi ?? g.label : g.label}</span>
+                <span className="flex-1">{g.label}</span>
                 {g.leaves && <Ic n="chevD" size={12} className={cx("transition", isOpen && "rotate-180")} />}
               </button>
               <AnimatePresence initial={false}>
@@ -196,7 +211,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
                           onClick={() => openView(l.id)}
                           className={cx("ml-4 flex w-[calc(100%-1rem)] items-center gap-2 rounded-lg border-l-2 px-3 py-1.5 text-left text-xs font-bold transition", activeId === l.id ? "border-gold bg-cream/10 text-gold" : "border-transparent text-cream/60 hover:text-cream")}
                         >
-                          <Ic n={l.icon} size={13} /> {lang === "fi" ? l.labelFi ?? l.label : l.label}
+                          <Ic n={l.icon} size={13} /> {l.label}
                         </button>
                       </li>
                     ))}
@@ -208,7 +223,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
         })}
       </div>
       <div className="border-t border-cream/10 px-4 py-3 text-[10px] font-bold text-cream/50">
-        {settings.restaurant.address} · {settings.restaurant.phone}
+        {RESTAURANT_LINE}
       </div>
     </nav>
   );
@@ -324,6 +339,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   );
 }
 
+const RESTAURANT_LINE = "Jalkasenkatu 7 · 044 981 6223";
 
 function renderView(id: string, go: (v: string) => void) {
   switch (id) {
@@ -335,11 +351,9 @@ function renderView(id: string, go: (v: string) => void) {
     case "dining.list": return <DiningView mode="list" />;
     case "dining.slots": return <DiningView mode="slots" />;
     case "menu.items": return <MenuItemsView />;
-    case "menu.off": return <MenuItemsView key="off-menu" initialAvailability="off" />;
     case "menu.categories": return <MenuCategoriesView />;
     case "menu.toppings": return <ToppingsMasterView />;
     case "menu.special": return <SpecialsView />;
-    case "menu.offers": return <PromotionsView />;
     case "customers": return <CustomersView />;
     case "analytics.sales": return <AnalyticsView mode="sales" />;
     case "analytics.items": return <AnalyticsView mode="items" />;
@@ -347,7 +361,6 @@ function renderView(id: string, go: (v: string) => void) {
     case "admin.staff": return <AdminStaffView />;
     case "settings.general": return <SettingsView mode="general" />;
     case "settings.restaurant": return <SettingsView mode="restaurant" />;
-    case "settings.delivery": return <DeliveryRulesView />;
     default: return <DashboardView go={go} />;
   }
 }
