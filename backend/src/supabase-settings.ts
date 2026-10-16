@@ -25,23 +25,31 @@ type SettingsRow = {
 };
 
 export async function loadSettings(): Promise<Settings> {
-  const [settingsResult, categoryResult, itemResult, toppingResult, offerResult, specialResult] = await Promise.all([
+  const [settingsResult, categoryResult, itemResult, toppingResult, offerResult, specialResult, rulesResult] = await Promise.all([
     db.from("shop_settings").select("*").eq("id", true).single(),
-    db.from("categories").select("id, name_fi, name_en, photo_url, photo_alt_fi, photo_alt_en, sort_order, visible").order("sort_order"),
-    db.from("menu_items").select("id, available, sold_out_on, photo_url, photo_alt_fi, photo_alt_en"),
+    db.from("categories").select("id, name_fi, name_en, photo_url, photo_alt_fi, photo_alt_en, sort_order, visible, archived_at").order("sort_order"),
+    db.from("menu_items").select("id, available, sold_out_on, photo_url, photo_alt_fi, photo_alt_en, archived_at"),
     db.from("toppings").select("id, name_fi, name_en, surcharge_med, surcharge_perhe, active, sort_order").order("sort_order"),
     db.from("promotions").select("*").order("priority", { ascending: false }),
     db.from("todays_special").select("*").order("sort_order"),
+    db.from("delivery_rules").select("*").order("priority", { ascending: false }),
   ]);
 
   const row = must(settingsResult) as SettingsRow;
   const categories = must(categoryResult) as Array<{
     id: string; name_fi: string; name_en: string; photo_url: string | null;
-    photo_alt_fi: string | null; photo_alt_en: string | null; sort_order: number; visible: boolean;
+    photo_alt_fi: string | null; photo_alt_en: string | null; sort_order: number; visible: boolean; archived_at: string | null;
   }>;
   const items = must(itemResult) as Array<{
     id: string; available: boolean; sold_out_on: string | null; photo_url: string | null;
-    photo_alt_fi: string | null; photo_alt_en: string | null;
+    photo_alt_fi: string | null; photo_alt_en: string | null; archived_at: string | null;
+  }>;
+  const deliveryRuleRows = must(rulesResult) as Array<{
+    id: string; name_en: string; name_fi: string; condition_type: Settings["deliveryRules"][number]["conditionType"];
+    conditions: Settings["deliveryRules"][number]["conditions"];
+    outcome: Settings["deliveryRules"][number]["outcome"]; value: number | null; active: boolean; active_days: number[] | null;
+    start_time: string | null; end_time: string | null; start_date: string | null; end_date: string | null;
+    priority: number; stackable: boolean;
   }>;
   const toppings = must(toppingResult) as Array<{
     name_fi: string; name_en: string | null; surcharge_med: number; surcharge_perhe: number; active: boolean;
@@ -77,7 +85,9 @@ export async function loadSettings(): Promise<Settings> {
   const offItems = { ...DEFAULT_SETTINGS.offItems, ...(extra.offItems as Settings["offItems"] | undefined) };
   for (const item of items) {
     if (item.photo_url) itemImages[item.id] = { src: item.photo_url, altFi: item.photo_alt_fi ?? "", altEn: item.photo_alt_en ?? "" };
-    if (!item.available || item.sold_out_on) {
+    if (item.archived_at) {
+      offItems[item.id] = { off: true };
+    } else if (!item.available || item.sold_out_on) {
       offItems[item.id] = { off: !item.available, offToday: item.sold_out_on ?? undefined };
     } else {
       delete offItems[item.id];
@@ -132,6 +142,15 @@ export async function loadSettings(): Promise<Settings> {
     start: special.active_from ?? undefined,
     end: special.active_to ?? undefined,
   }));
+  const deliveryRules: Settings["deliveryRules"] = deliveryRuleRows.map((rule) => ({
+    id: rule.id, nameEn: rule.name_en, nameFi: rule.name_fi,
+    conditionType: rule.condition_type, conditions: rule.conditions, outcome: rule.outcome,
+    value: rule.value === null ? undefined : Number(rule.value), active: rule.active,
+    activeDays: rule.active_days ?? undefined, startTime: rule.start_time ?? undefined, endTime: rule.end_time ?? undefined,
+    startDate: rule.start_date ?? undefined, endDate: rule.end_date ?? undefined,
+    priority: rule.priority, stackable: rule.stackable,
+  }));
+  const restaurant = { ...DEFAULT_SETTINGS.restaurant, ...((extra.restaurant as Settings["restaurant"] | undefined) ?? {}) };
 
   return {
     ...DEFAULT_SETTINGS,
@@ -141,18 +160,20 @@ export async function loadSettings(): Promise<Settings> {
     deliveryFee: Number(row.delivery_fee),
     minOrder: Number(row.min_order),
     radiusKm: Number(row.radius_km),
+    deliveryRules,
+    restaurant,
     vatRate: Number(row.vat_rate),
     preorder: row.preorder,
     blockedDates: row.blocked_dates ?? [],
     blockedSlots: row.blocked_slots ?? [],
-    announcement: row.announcement ?? { enabled: false, text: "" },
+    announcement: row.announcement ?? { enabled: false, text: "", textEn: "", textFi: "" },
     platforms: (extra.platforms as Settings["platforms"] | undefined) ?? DEFAULT_SETTINGS.platforms,
     headerLogo: (extra.headerLogo as Settings["headerLogo"] | undefined) ?? DEFAULT_SETTINGS.headerLogo,
     hideUnavailable: (extra.hideUnavailable as boolean | undefined) ?? DEFAULT_SETTINGS.hideUnavailable,
     special: (extra.special as Settings["special"] | undefined) ?? DEFAULT_SETTINGS.special,
     offers,
     todaysSpecials,
-    toppings: toppings.map((topping) => topping.name_fi),
+    toppings: toppings.filter((topping) => topping.active).map((topping) => topping.name_fi),
     toppingMeta,
     offOptions: { ...DEFAULT_SETTINGS.offOptions, ...(extra.offOptions as Settings["offOptions"] | undefined), topping: disabledToppings },
     catMeta,
@@ -168,6 +189,7 @@ export async function saveSettings(settings: Settings): Promise<void> {
     headerLogo: settings.headerLogo,
     hideUnavailable: settings.hideUnavailable,
     special: settings.special,
+    restaurant: settings.restaurant,
     catMeta: settings.catMeta,
     catOrder: settings.catOrder,
     itemImages: settings.itemImages,
@@ -191,8 +213,9 @@ export async function saveSettings(settings: Settings): Promise<void> {
     extra,
   }).eq("id", true));
 
-  const categories = await must(await db.from("categories").select("id"));
+  const categories = await must(await db.from("categories").select("id, archived_at"));
   for (const category of categories) {
+    if (category.archived_at) continue;
     const meta = settings.catMeta[category.id] ?? {};
     const sortOrder = settings.catOrder.indexOf(category.id);
     await check(db.from("categories").update({
@@ -206,8 +229,9 @@ export async function saveSettings(settings: Settings): Promise<void> {
     }).eq("id", category.id));
   }
 
-  const items = await must(await db.from("menu_items").select("id"));
+  const items = await must(await db.from("menu_items").select("id, archived_at"));
   for (const item of items) {
+    if (item.archived_at) continue;
     const availability = settings.offItems[item.id];
     const image = settings.itemImages[item.id];
     await check(db.from("menu_items").update({
@@ -237,10 +261,11 @@ export async function saveSettings(settings: Settings): Promise<void> {
     if (!activeToppings.has(topping.name_fi)) await check(db.from("toppings").update({ active: false }).eq("id", topping.id));
   }
 
-  const currentOffers = await must(await db.from("promotions").select("id"));
+  const currentOffers = await must(await db.from("promotions").select("id, used_count"));
+  const existingUsage = new Map(currentOffers.map((offer) => [offer.id, Number(offer.used_count)]));
   const nextOfferIds = new Set(settings.offers.map((offer) => offer.id));
-  for (const id of currentOffers.map((offer) => offer.id)) {
-    if (!nextOfferIds.has(id)) await check(db.from("promotions").delete().eq("id", id));
+  for (const id of existingUsage.keys()) {
+    if (!nextOfferIds.has(id)) await check(db.from("promotions").update({ active: false }).eq("id", id));
   }
   for (const offer of settings.offers) {
     await check(db.from("promotions").upsert({
@@ -254,7 +279,8 @@ export async function saveSettings(settings: Settings): Promise<void> {
       starts_at: offer.start ?? null,
       expires_at: offer.end ?? null,
       usage_limit: offer.maxUses ?? null,
-      used_count: offer.uses ?? 0,
+      // Usage is checkout-owned; settings snapshots and admin requests cannot reset it.
+      used_count: existingUsage.get(offer.id) ?? 0,
       title_fi: offer.titleFi,
       title_en: offer.titleEn,
       description_fi: offer.descFi ?? null,
@@ -264,6 +290,31 @@ export async function saveSettings(settings: Settings): Promise<void> {
       banner_url: offer.banner?.src ?? null,
       priority: offer.priority,
       active: offer.active,
+    }));
+  }
+
+  const currentRules = await must(await db.from("delivery_rules").select("id"));
+  const nextRuleIds = new Set(settings.deliveryRules.map((rule) => rule.id));
+  for (const id of currentRules.map((rule) => rule.id)) {
+    if (!nextRuleIds.has(id)) await check(db.from("delivery_rules").update({ active: false }).eq("id", id));
+  }
+  for (const rule of settings.deliveryRules) {
+    await check(db.from("delivery_rules").upsert({
+      id: rule.id,
+      name_en: rule.nameEn,
+      name_fi: rule.nameFi,
+      condition_type: rule.conditionType,
+      conditions: rule.conditions,
+      outcome: rule.outcome,
+      value: rule.value ?? null,
+      active: rule.active,
+      active_days: rule.activeDays ?? null,
+      start_time: rule.startTime ?? null,
+      end_time: rule.endTime ?? null,
+      start_date: rule.startDate ?? null,
+      end_date: rule.endDate ?? null,
+      priority: rule.priority,
+      stackable: rule.stackable,
     }));
   }
 

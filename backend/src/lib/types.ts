@@ -3,17 +3,31 @@ export type Lang = "en" | "fi";
 
 export interface PriceVariant {
   label: string;
+  labelEn?: string;
+  labelFi?: string;
   value: number;
+  nameEn?: string;
+  nameFi?: string;
+  descEn?: string;
+  descFi?: string;
+  imageUrl?: string;
+  weightKg?: number;
 }
 
 export interface ModOption {
+  /** Stable machine value persisted in cart/order lines. */
   label: string;
   price: number;
+  labelEn?: string;
+  labelFi?: string;
+  priceByVariant?: number[];
+  toppingId?: string;
 }
 
 export interface ModGroup {
   id: string;
   name: string;
+  nameFi?: string;
   type: "single" | "multi";
   required?: boolean;
   min?: number;
@@ -44,14 +58,25 @@ export interface MenuItem {
   availability?: Availability;
   /** several items can point at one photo file (size/meal variants) */
   imageKey?: string;
-  /** optional persisted image reference for custom/live menu items */
+  /** optional persisted image reference and accessible alt text */
   imageUrl?: string;
+  imageAltEn?: string;
+  imageAltFi?: string;
+  weightKg?: number;
+  featured?: boolean;
+  special?: boolean;
+  showToppings?: boolean;
+  toppingIds?: string[];
+  includedToppingIds?: string[];
+  archived?: boolean;
+  available?: boolean;
 }
 
 export interface Category {
   id: string;
   title: string; // Finnish
   en?: string; // English
+  archived?: boolean;
 }
 
 export interface CartLine {
@@ -62,6 +87,7 @@ export interface CartLine {
   qty: number;
   unitPrice: number;
   options: string[];
+  selections?: { groupId: string; optionLabel: string }[];
   img?: string;
   preorder?: { date: string; time: string };
   note?: string;
@@ -95,6 +121,11 @@ export interface Order {
   vat: number;
   scheduled?: { date: string; time: string };
   statusOverride?: OrderStatus;
+  readyAt?: number;
+  readyNote?: string;
+  deliveryOffer?: { id: string; nameEn: string; nameFi: string };
+  distanceKm?: number;
+  orderWeightKg?: number;
   refunded?: boolean;
   paymentStatus?: "pending" | "paid" | "failed" | "refunded" | "demo_paid";
   paymentId?: string;
@@ -180,6 +211,44 @@ export interface ToppingMeta {
   pricePerhe?: number;
 }
 
+export type DeliveryRuleOutcome = "free_delivery" | "fixed_fee" | "percent_fee" | "fixed_discount" | "no_delivery";
+export interface DeliveryRule {
+  id: string;
+  nameEn: string;
+  nameFi: string;
+  conditionType: "distance" | "weight" | "subtotal" | "combined";
+  conditions: {
+    distanceKm?: { min?: number; max?: number };
+    weightKg?: { min?: number; max?: number };
+    subtotalEur?: { min?: number; max?: number };
+  };
+  outcome: DeliveryRuleOutcome;
+  value?: number;
+  active: boolean;
+  activeDays?: number[];
+  startTime?: string;
+  endTime?: string;
+  startDate?: string;
+  endDate?: string;
+  priority: number;
+  stackable: boolean;
+}
+
+export interface RestaurantInfo {
+  name: string;
+  taglineEn: string;
+  taglineFi: string;
+  address: string;
+  phone: string;
+  email: string;
+  instagram: string;
+  facebook: string;
+  mapLink: string;
+  mapEmbed: string;
+  latitude?: number;
+  longitude?: number;
+}
+
 export interface SpecialCfg {
   itemId: string;
   price?: number;
@@ -216,6 +285,8 @@ export interface Settings {
   deliveryFee: number;
   minOrder: number;
   radiusKm: number;
+  deliveryRules: DeliveryRule[];
+  restaurant: RestaurantInfo;
   vatRate: number;
   toppings: string[];
   special: SpecialCfg;
@@ -243,7 +314,7 @@ export interface Settings {
   catMeta: Record<string, CatMeta>;
   catOrder: string[];
   audit: { ts: number; who: string; msg: string }[];
-  announcement: { enabled: boolean; text: string };
+  announcement: { enabled: boolean; text: string; textEn?: string; textFi?: string };
   pauseMessage: string;
 }
 

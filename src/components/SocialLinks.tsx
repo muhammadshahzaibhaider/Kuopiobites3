@@ -1,5 +1,8 @@
+"use client";
 import { cx } from "@/lib/format";
-import { SOCIAL_LINKS, type SocialLinkId } from "@/lib/menu";
+import { whatsappUrl, type SocialLinkId } from "@/lib/menu";
+import { useShop } from "@/lib/store";
+import { useLang } from "@/lib/i18n";
 import WhatsAppIcon from "./WhatsAppIcon";
 
 function SocialIcon({ id }: { id: SocialLinkId }) {
@@ -38,12 +41,21 @@ function SocialIcon({ id }: { id: SocialLinkId }) {
 }
 
 export default function SocialLinks({ className, tone = "dark" }: { className?: string; tone?: "dark" | "light" }) {
+  const { settings } = useShop();
+  const { lang } = useLang();
+  const links: { id: SocialLinkId; href: string; ariaLabel: string }[] = [
+    { id: "facebook" as const, href: settings.restaurant.facebook, ariaLabel: "Facebook" },
+    { id: "instagram" as const, href: settings.restaurant.instagram, ariaLabel: "Instagram" },
+    ...(settings.platforms.wolt ? [{ id: "wolt" as const, href: settings.platforms.wolt, ariaLabel: lang === "fi" ? "Tilaa Woltista" : "Order on Wolt" }] : []),
+    ...(settings.platforms.uberEats ? [{ id: "uberEats" as const, href: settings.platforms.uberEats, ariaLabel: "Uber Eats" }] : []),
+    { id: "whatsapp" as const, href: whatsappUrl(), ariaLabel: lang === "fi" ? "Avaa WhatsApp-keskustelu" : "Chat on WhatsApp" },
+  ].filter((link) => !!link.href);
   const linkClass = tone === "light"
     ? "border-cherry/20 text-gold-deep hover:bg-cherry hover:text-cream"
     : "border-cream/30 hover:bg-cream hover:text-cherry";
   return (
     <div className={cx("flex flex-wrap gap-3", className)}>
-      {SOCIAL_LINKS.map((link) => (
+      {links.map((link) => (
         <a
           key={link.id}
           href={link.href}

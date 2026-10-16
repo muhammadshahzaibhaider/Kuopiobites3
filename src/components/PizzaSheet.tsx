@@ -152,7 +152,7 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
                     variant === i ? "border-cherry-bright bg-cherry-bright text-cream" : "border-cherry/20 text-cherry hover:border-cherry-bright"
                   )}
                 >
-                  {trLabel(lang, p.label)} · {eur(p.value)}
+                  {trLabel(lang, p.label, p.labelEn, p.labelFi)} · {eur(p.value)}
                 </button>
               ))}
             </div>

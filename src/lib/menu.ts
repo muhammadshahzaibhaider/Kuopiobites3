@@ -1,6 +1,6 @@
 import type { Category, MenuItem, ModGroup, PriceVariant, Tag } from "./types";
-import { WHATSAPP_DISPLAY, whatsappUrl } from "../../frontend/src/lib/whatsapp";
-export { WHATSAPP_DISPLAY, WHATSAPP_GREETING, WHATSAPP_NUMBER, whatsappUrl } from "../../frontend/src/lib/whatsapp";
+import { WHATSAPP_DISPLAY, whatsappUrl } from "./whatsapp";
+export { WHATSAPP_DISPLAY, WHATSAPP_GREETING, WHATSAPP_NUMBER, whatsappUrl } from "./whatsapp";
 
 const FACEBOOK_URL = "https://www.facebook.com/share/1Cc27jbJMm/?mibextid=wwXIfr";
 const INSTAGRAM_URL = "https://www.instagram.com/kuopio.bites?rpxt=N2ZqdjFudWFuczA4";
@@ -484,4 +484,16 @@ export function categoryTitle(id: string, lang: "en" | "fi" = "en"): string {
   const c = CATEGORIES.find((c) => c.id === id);
   if (!c) return id;
   return lang === "fi" ? c.title : c.en ?? c.title;
+}
+
+/**
+ * POST-SPLIT: these arrays are the offline first-paint fallback. ShopProvider
+ * hydrates them IN PLACE from GET /api/items + /api/categories so every existing
+ * import site sees backend-owned data without any call-site changes.
+ */
+export function __setLiveMenu(items: MenuItem[], cats: Category[]) {
+  MENU.length = 0;
+  MENU.push(...items);
+  CATEGORIES.length = 0;
+  CATEGORIES.push(...cats);
 }
