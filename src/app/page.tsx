@@ -6,9 +6,9 @@ import Banner from "@/components/Banner";
 import OffersStrip from "@/components/OffersStrip";
 import SpecialsCarousel from "@/components/SpecialsCarousel";
 import { BtnGhost, BtnPrimary, MenuImage, OpenBadge, Reveal, SectionHead, Stagger, StaggerItem } from "@/components/ui";
-import { eur, telHref } from "@/lib/format";
+import { eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
-import { CATEGORY_IMG, FEATURED, MENU as MENU_ALL } from "@/lib/menu";
+import { CATEGORY_IMG, FEATURED, MENU as MENU_ALL, RESTAURANT } from "@/lib/menu";
 import { resolveImageSrc } from "@/lib/images";
 import { useShop } from "@/lib/store";
 import SocialLinks from "@/components/SocialLinks";
@@ -55,8 +55,7 @@ function CategoryCircle({ cat }: { cat: Category }) {
 export default function Home() {
   const reduce = useReducedMotion();
   const { settings, categories } = useShop();
-  const { t, dayName, lang } = useLang();
-  const restaurant = settings.restaurant;
+  const { t, dayName } = useLang();
   const railRef = useRef<HTMLDivElement>(null);
   const scrollRail = (dir: number) =>
     railRef.current?.scrollBy({ left: dir * 320, behavior: reduce ? "auto" : "smooth" });
@@ -119,15 +118,13 @@ export default function Home() {
               <Link href="/dining"><BtnGhost className="text-lg">{t("cta.dining")}</BtnGhost></Link>
             </motion.div>
             <motion.p className="mt-6 text-sm font-bold text-cherry/60" initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.85 }}>
-              {restaurant.address} ·{" "}
-              <a href={telHref(restaurant.phone)} className="text-gold-deep underline decoration-gold underline-offset-4">{restaurant.phone}</a>
+              {RESTAURANT.address} ·{" "}
+              <a href={RESTAURANT.phoneHref} className="text-gold-deep underline decoration-gold underline-offset-4">{RESTAURANT.phone}</a>
             </motion.p>
             <OffersStrip />
           </div>
         </div>
       </section>
-
-      {settings.announcement.enabled && (lang === "fi" ? settings.announcement.textFi || settings.announcement.text : settings.announcement.textEn || settings.announcement.text) && <div role="status" className="container-x mt-4"><p className="rounded-2xl border border-gold/50 bg-gold/15 px-4 py-3 text-center text-sm font-black text-cherry">{lang === "fi" ? settings.announcement.textFi || settings.announcement.text : settings.announcement.textEn || settings.announcement.text}</p></div>}
 
       {/* from Today's Specials down: the original solid cream page background
           returns — the fixed collage lives only between banner and specials.
@@ -244,21 +241,21 @@ export default function Home() {
           </StaggerItem>
           <StaggerItem className="rounded-3xl border border-cherry/10 bg-cream-deep p-6 shadow-card">
             <h3 className="font-display text-lg font-black text-cherry">{t("home.find")}</h3>
-            <p className="mt-3 text-sm text-cherry/80">{restaurant.address}, Finland</p>
-            <a href={restaurant.mapLink} target="_blank" rel="noreferrer" className="mt-3 inline-block font-black text-gold-deep underline decoration-gold underline-offset-4">{t("home.dirs")}</a>
+            <p className="mt-3 text-sm text-cherry/80">{RESTAURANT.address}, Finland</p>
+            <a href={RESTAURANT.mapLink} target="_blank" rel="noreferrer" className="mt-3 inline-block font-black text-gold-deep underline decoration-gold underline-offset-4">{t("home.dirs")}</a>
             <p className="mt-4 text-sm text-cherry/80">
               {t("home.pickup")} {settings.radiusKm} {t("home.km")} {eur(settings.minOrder)}
             </p>
           </StaggerItem>
           <StaggerItem className="rounded-3xl border border-cherry/10 bg-cream-deep p-6 shadow-card">
             <h3 className="font-display text-lg font-black text-cherry">{t("home.call")}</h3>
-            <a href={telHref(restaurant.phone)} className="mt-3 block font-display text-2xl font-black text-gold-deep hover:text-cherry">{restaurant.phone}</a>
+            <a href={RESTAURANT.phoneHref} className="mt-3 block font-display text-2xl font-black text-gold-deep hover:text-cherry">{RESTAURANT.phone}</a>
             <p className="mt-2 text-sm text-cherry/80">{t("home.phoneNote")}</p>
             <SocialLinks className="mt-3" tone="light" />
           </StaggerItem>
         </Stagger>
         <Reveal delay={0.1} className="mt-8 overflow-hidden rounded-3xl border-2 border-gold/50 shadow-lift">
-          <iframe title={lang === "fi" ? "Kartta Kuopio Bites -ravintolaan" : "Map to Kuopio Bites"} src={restaurant.mapEmbed} className="h-72 w-full border-0" loading="lazy" />
+          <iframe title="Map to Kuopio Bites, Jalkasenkatu 7, 70820 Kuopio" src={RESTAURANT.mapEmbed} className="h-72 w-full border-0" loading="lazy" />
         </Reveal>
       </section>
       </div>

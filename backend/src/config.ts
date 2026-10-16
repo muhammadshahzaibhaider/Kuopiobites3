@@ -139,9 +139,6 @@ export const CFG = {
   },
   stripeSecretKey: process.env.STRIPE_SECRET_KEY || "",
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
-  deliveryGeocoderUrl: process.env.DELIVERY_GEOCODER_URL || "https://nominatim.openstreetmap.org/search",
-  deliveryGeocoderUserAgent: process.env.DELIVERY_GEOCODER_USER_AGENT || "KuopioBites/1.0 (server-side delivery-distance lookup)",
-  deliveryGeocoderTimeoutMs: positiveInt("DELIVERY_GEOCODER_TIMEOUT_MS", 5000),
   /* Outbound mail is handled by Supabase Auth (GoTrue) — SMTP credentials are
      configured in the Supabase Dashboard, never in this process. */
   allowDemoPayments,

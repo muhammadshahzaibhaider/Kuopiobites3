@@ -1,9 +1,7 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { apiAnalyticsReport, type AnalyticsReport } from "@/lib/api";
+import { useMemo, useState } from "react";
 import { eur } from "@/lib/format";
 import { todayStrHelsinki } from "@/lib/hours";
-import { isRevenueEligible } from "@/lib/revenue";
 import { useLang } from "@/lib/i18n";
 import { useShop, useTick } from "@/lib/store";
 import type { Order, OrderStatus, Reservation } from "@/lib/types";
@@ -14,53 +12,35 @@ const NEXT: Record<OrderStatus, OrderStatus> = { placed: "accepted", accepted: "
 
 /* ══ DASHBOARD ══ */
 export function DashboardView({ go }: { go: (v: string) => void }) {
-  const { orders, reservations, users, orderStatus, settings, saveSettings, logAudit, toast, staffRole } = useShop();
-  const { t, lang } = useLang();
+  const { orders, reservations, users, orderStatus, settings, saveSettings, logAudit, toast } = useShop();
+  const { t } = useLang();
   const [range, setRange] = useState<7 | 30>(7);
   const [confirmPause, setConfirmPause] = useState(false);
-  const [report, setReport] = useState<AnalyticsReport | null>(null);
   const ready = useDelayedReady("dash");
   const today = todayStrHelsinki();
-  const from = new Date(Date.parse(`${today}T12:00:00Z`) - (range - 1) * 86400000).toISOString().slice(0, 10);
 
-  useEffect(() => {
-    if (staffRole !== "owner" && staffRole !== "manager") { setReport(null); return; }
-    let live = true;
-    setReport(null);
-    apiAnalyticsReport(from, today).then((value) => { if (live) setReport(value); }).catch(() => { if (live) setReport(null); });
-    return () => { live = false; };
-  }, [from, staffRole, today]);
-
-  const paidOrders = useMemo(() => orders.filter(isRevenueEligible), [orders]);
-  const todays = paidOrders.filter((order) => new Date(order.createdAt).toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" }) === today);
-  const reportToday = report?.daily.find((row) => row.date === today);
-  const revenue = reportToday?.revenue ?? todays.reduce((sum, order) => sum + order.total, 0);
-  const todayOrderCount = reportToday?.orders ?? todays.length;
+  const todays = orders.filter((o) => new Date(o.createdAt).toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" }) === today);
+  const revenue = todays.filter((o) => !o.refunded).reduce((a, o) => a + o.total, 0);
   const pending = orders.filter((o) => ["placed", "accepted", "preparing"].includes(orderStatus(o)) && !o.refunded).length;
   const upcoming = reservations.filter((r) => r.date >= today && r.status !== "declined").length;
   const newUsers = users.filter((u) => new Date(u.createdAt).toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" }) === today).length;
   const offCount = Object.values(settings.offItems).filter((s) => s.off || s.offToday === today).length;
 
-  const fallbackDays = useMemo(() => Array.from({ length: range }).map((_, i) => {
-    const date = new Date(Date.parse(`${today}T12:00:00Z`) - (range - 1 - i) * 86400000);
-    const key = date.toISOString().slice(0, 10);
-    const total = paidOrders.filter((order) => new Date(order.createdAt).toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" }) === key).reduce((sum, order) => sum + order.total, 0);
-    return { label: date.toLocaleDateString(lang === "fi" ? "fi-FI" : "en-GB", { weekday: "short", timeZone: "Europe/Helsinki" }), value: Math.round(total * 100) / 100 };
-  }), [lang, paidOrders, range, today]);
-  const days = useMemo(() => report ? report.daily.map((row) => ({
-    label: new Date(`${row.date}T12:00:00Z`).toLocaleDateString(lang === "fi" ? "fi-FI" : "en-GB", { weekday: "short", timeZone: "Europe/Helsinki" }),
-    value: row.revenue,
-  })) : fallbackDays, [fallbackDays, lang, report]);
+  const days = useMemo(() => {
+    return Array.from({ length: range }).map((_, i) => {
+      const d = new Date(Date.now() - (range - 1 - i) * 86400000);
+      const key = d.toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" });
+      const total = Math.round(orders.filter((o) => !o.refunded && new Date(o.createdAt).toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" }) === key).reduce((a, o) => a + o.total, 0));
+      return { label: d.toLocaleDateString("en-GB", { weekday: "short", timeZone: "Europe/Helsinki" }), value: total };
+    });
+  }, [orders, range]);
 
-  const fallbackTop = useMemo(() => {
+  const top = useMemo(() => {
     const count: Record<string, number> = {};
     const since = Date.now() - range * 86400000;
-    paidOrders.filter((order) => order.createdAt >= since).forEach((order) => order.lines.forEach((line) => (count[line.name] = (count[line.name] ?? 0) + line.qty)));
+    orders.filter((o) => o.createdAt >= since && !o.refunded).forEach((o) => o.lines.forEach((l) => (count[l.name] = (count[l.name] ?? 0) + l.qty)));
     return Object.entries(count).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  }, [paidOrders, range]);
-  const top = useMemo(() => report
-    ? [...report.topItems].sort((a, b) => b.quantity - a.quantity).slice(0, 5).map((item) => [item.name, item.quantity] as [string, number])
-    : fallbackTop, [fallbackTop, report]);
+  }, [orders, range]);
 
   const feed = useMemo(() => [...orders].sort((a, b) => b.createdAt - a.createdAt).slice(0, 6), [orders]);
 
@@ -68,11 +48,11 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
   return (
     <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
-        <StatCard label={t("admin.orders") + " today"} value={todayOrderCount} icon="orders" onClick={() => go("orders.queue")} />
+        <StatCard label={t("admin.orders") + " today"} value={todays.length} icon="orders" onClick={() => go("orders.queue")} />
         <StatCard label="Revenue today" value={eur(revenue)} icon="analytics" tone="green" onClick={() => go("analytics.sales")} />
         <StatCard label="Pending orders" value={pending} icon="clock" tone="orange" onClick={() => go("orders.queue")} />
         <StatCard label="Reservations" value={upcoming} icon="calendar" onClick={() => go("dining.list")} />
-        <StatCard label={lang === "fi" ? "Pois valikosta" : "Off-menu items"} value={offCount} icon="warn" tone={offCount ? "red" : "gray"} onClick={() => go("menu.off")} />
+        <StatCard label="Off-menu items" value={offCount} icon="warn" tone={offCount ? "red" : "gray"} onClick={() => go("menu.items")} />
         <StatCard label="New sign-ups" value={newUsers} icon="users" tone="gold" onClick={() => go("customers")} />
       </div>
 
@@ -123,12 +103,12 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
           <p className="text-[11px] font-black uppercase tracking-wide text-cherry/50">Quick actions</p>
           <PrimaryBtn onClick={() => go("menu.items")}>Add menu item</PrimaryBtn>
           <GhostBtn className="w-full justify-center" onClick={() => go("menu.special")}>★ Set Today's Special</GhostBtn>
-          {staffRole === "owner" && <button
+          <button
             onClick={() => setConfirmPause(true)}
             className={settings.paused ? "min-h-[40px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream" : "min-h-[40px] w-full rounded-xl border-2 border-brick px-4 text-sm font-black text-brick hover:bg-brick hover:text-cream"}
           >
             {settings.paused ? "▶ Resume online ordering" : "⏸ Pause online ordering"}
-          </button>}
+          </button>
         </div>
       </div>
 
@@ -138,12 +118,10 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
         body={settings.paused ? "Customers will be able to order again immediately." : "Customers will see the site as closed for online orders until you resume."}
         danger={!settings.paused}
         onNo={() => setConfirmPause(false)}
-        onYes={async () => {
-          const saved = await saveSettings({ ...settings, paused: !settings.paused });
-          if (saved) {
-            logAudit(`ordering ${settings.paused ? "resumed" : "paused"} from dashboard`);
-            toast(settings.paused ? "Ordering resumed / Tilaaminen avattu" : "Ordering paused / Tilaaminen tauolla", settings.paused ? "ok" : "err");
-          }
+        onYes={() => {
+          saveSettings({ ...settings, paused: !settings.paused });
+          logAudit(`ordering ${settings.paused ? "resumed" : "paused"} from dashboard`);
+          toast(settings.paused ? "Ordering resumed" : "Ordering paused", settings.paused ? "ok" : "err");
           setConfirmPause(false);
         }}
       />
@@ -153,9 +131,7 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
 
 /* ══ ORDERS ══ */
 export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) {
-  const { orders, orderStatus, setOrderStatus, adjustOrderReadyTime, refundOrder, toast, logAudit } = useShop();
-  const { lang } = useLang();
-  const w = (en: string, fi: string) => lang === "fi" ? fi : en;
+  const { orders, orderStatus, setOrderStatus, refundOrder, toast, logAudit } = useShop();
   const [fStatus, setFStatus] = useState("all");
   const [fType, setFType] = useState("all");
   const [fDate, setFDate] = useState("all");
@@ -163,9 +139,6 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
   const [detail, setDetail] = useState<Order | null>(null);
   const [refundReason, setRefundReason] = useState("");
   const ready = useDelayedReady(mode);
-  useTick(1000);
-  const [prepMinutes, setPrepMinutes] = useState("30");
-  const [prepNote, setPrepNote] = useState("");
 
   const base = useMemo(() => {
     let list = [...orders].sort((a, b) => b.createdAt - a.createdAt);
@@ -307,11 +280,6 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
                 );
               })}
             </ol>
-            <section className="rounded-xl border border-gold/40 bg-gold/10 p-3">
-              <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-black text-cherry">{w("Preparation countdown", "Valmistumisajastin")}</h3><p className="mt-1 text-xs text-cherry/60">{detail.readyAt === undefined ? w("No estimate set", "Arviota ei ole asetettu") : w(`Estimated ready in ${Math.max(0, Math.ceil((detail.readyAt - Date.now()) / 60000))} min · ${fmtDT(detail.readyAt)}`, `Arvioitu valmiiksi ${Math.max(0, Math.ceil((detail.readyAt - Date.now()) / 60000))} min kuluttua · ${fmtDT(detail.readyAt)}`)}</p></div><div className="flex items-end gap-2"><Field label={w("Minutes", "Minuuttia")}><input type="number" min="1" max="720" value={prepMinutes} onChange={(event) => setPrepMinutes(event.target.value)} className={inputCls + " w-24"} /></Field><PrimaryBtn disabled={!Number(prepMinutes)} onClick={async () => { const minutes = Math.min(720, Math.max(1, Number(prepMinutes) || 30)); const note = prepNote.trim(); if (await adjustOrderReadyTime(detail.id, { minutes, note })) setDetail({ ...detail, readyAt: Date.now() + minutes * 60000, readyNote: note || undefined }); }}>{w("Set estimate", "Aseta arvio")}</PrimaryBtn></div></div>
-              <div className="mt-3"><Field label={w("Optional customer note", "Valinnainen viesti asiakkaalle")}><input maxLength={300} value={prepNote || detail.readyNote || ""} onChange={(event) => setPrepNote(event.target.value)} className={inputCls} placeholder={w("e.g. Fresh from the oven", "esim. juuri uunista tullut")} /></Field></div>
-              {detail.readyAt !== undefined && <div className="mt-2 flex gap-2"><GhostBtn onClick={async () => { if (await adjustOrderReadyTime(detail.id, { addMinutes: -5 })) setDetail({ ...detail, readyAt: detail.readyAt! - 5 * 60000 }); }}>{w("−5 min", "−5 min")}</GhostBtn><GhostBtn onClick={async () => { if (await adjustOrderReadyTime(detail.id, { addMinutes: 5 })) setDetail({ ...detail, readyAt: detail.readyAt! + 5 * 60000 }); }}>{w("+5 min", "+5 min")}</GhostBtn></div>}
-            </section>
             <div className="grid gap-4 sm:grid-cols-2">
               <div>
                 <p className="font-black text-cherry">Customer</p>

@@ -1,161 +1,267 @@
 /**
- * REAL API CLIENT (post-split). Every function maps 1:1 to the contract in
- * /backend/API.md. No business logic, no secrets, no localStorage data stores —
- * the backend owns all of that. Tokens live in http.ts.
+ * ─────────────────────────────────────────────────────────────────────────────
+ *  API STUB LAYER
+ *  Every function below simulates a network call (latency + async signature)
+ *  and persists to localStorage so the whole product works end-to-end today.
+ *  Each stub is annotated with the real endpoint it should be swapped for —
+ *  the UI only talks to these functions, so wiring a real backend later means
+ *  replacing the bodies here, not restructuring any components.
+ * ─────────────────────────────────────────────────────────────────────────────
  */
-import { api, apiBinary } from "./http";
-import type {
-  CartLine, Category, MenuItem, Order, OrderStatus, Reservation, Settings, StaffRole, User,
-} from "./types";
+import { sleep, uid } from "./format";
+import type { Order, Reservation, Settings, User, Overrides } from "./types";
 
-/* ── bootstrap / public reads ──────────────────────────────────────────── */
-export const fetchSettings = () => api<Settings>("/api/settings");
-export const fetchItems = (includeArchived = false) => includeArchived
-  ? api<MenuItem[]>("/api/admin/items", { staff: true })
-  : api<MenuItem[]>("/api/items");
-export const fetchCategories = (includeArchived = false) => includeArchived
-  ? api<Category[]>("/api/admin/categories", { staff: true })
-  : api<Category[]>("/api/categories");
-export const fetchTranslations = () => api<Record<string, Record<string, string>>>("/api/translations");
-
-/* ── auth ──────────────────────────────────────────────────────────────── */
-export async function apiRegister(d: { name: string; email: string; pass: string; phone?: string }) {
-  return api<{ user: Omit<User, "pass">; needsConfirmation: boolean; devConfirmationToken?: string }>("/api/auth/register", { method: "POST", body: d });
-}
-export async function apiLogin(email: string, pass: string, remember = true) {
-  const r = await api<{ user: Omit<User, "pass"> }>("/api/auth/login", { method: "POST", body: { email, pass, remember } });
-  return r.user;
-}
-export const apiForgotPassword = (email: string) =>
-  api<{ ok: true }>("/api/auth/forgot-password", { method: "POST", body: { email } });
-export const apiResendConfirmation = (email: string) =>
-  api<{ ok: true }>("/api/auth/resend-confirmation", { method: "POST", body: { email } });
-export type ResetProof = { token: string; type?: "signup" | "email" | "recovery" } | { accessToken: string; refreshToken: string } | { code: string };
-export const apiResetPassword = (proof: ResetProof, next: string) =>
-  api<{ ok: true }>("/api/auth/reset-password", { method: "POST", body: { ...proof, next } });
-export async function apiAdminLogin(username: string, password: string) {
-  const r = await api<{ role: string }>("/api/auth/admin-login", { method: "POST", body: { username, password } });
-  return r.role;
-}
-export const apiConfirmEmail = (confirmation: string | { token: string; type?: string } | { accessToken: string; refreshToken: string } | { code: string }) =>
-  api<{ confirmed: true }>("/api/auth/confirm-email", {
-    method: "POST",
-    body: typeof confirmation === "string" ? { token: confirmation } : confirmation,
-  });
-export const apiSession = () => api<{ user: Omit<User, "pass"> | null; role: string | null }>("/api/auth/session");
-export const apiStaffSession = () => api<{ user: null; role: string | null }>("/api/auth/session", { staff: true });
-export const apiLogout = () => api<{ ok: true }>("/api/auth/logout", { method: "POST" });
-export const apiAdminLogout = () => api<{ ok: true }>("/api/auth/logout", { method: "POST", staff: true });
-export const apiUpload = (body: Blob) => apiBinary<{ url: string; mime: string }>("/api/uploads", body, { contentType: body.type || "image/webp", staff: true });
-
-export const apiCurrentAccount = () => api<Omit<User, "pass">>("/api/account");
-export const apiUpdateAccount = (patch: Partial<Pick<User, "name" | "phone" | "addresses" | "marketing">>) =>
-  api<User>("/api/account", { method: "PUT", body: patch });
-/* ── favorites (per user, server-side) ────────────────────────────────── */
-export const apiListFavorites = () => api<string[]>("/api/favorites");
-export const apiAddFavorite = (itemId: string) =>
-  api<{ favorites: string[] }>("/api/favorites", { method: "POST", body: { itemId } });
-export const apiRemoveFavorite = (itemId: string) =>
-  api<{ favorites: string[] }>(`/api/favorites/${encodeURIComponent(itemId)}`, { method: "DELETE" });
-export const apiMergeFavorites = (itemIds: string[]) =>
-  api<{ favorites: string[] }>("/api/favorites/merge", { method: "POST", body: { itemIds } });
-/* ── cart (per user, server-side; guests receive 401) ─────────────────── */
-export const apiListCart = () => api<CartLine[]>("/api/cart");
-export const apiAddCartLine = (line: CartLine) => api<CartLine[]>("/api/cart/lines", { method: "POST", body: line });
-export const apiSetCartQty = (key: string, qty: number) =>
-  api<CartLine[]>(`/api/cart/lines/${encodeURIComponent(key)}`, { method: "PATCH", body: { qty } });
-export const apiRemoveCartLine = (key: string) =>
-  api<CartLine[]>(`/api/cart/lines/${encodeURIComponent(key)}`, { method: "DELETE" });
-export const apiClearCart = () => api<CartLine[]>("/api/cart", { method: "DELETE" });
-export const apiMergeCart = (lines: CartLine[]) => api<CartLine[]>("/api/cart", { method: "PUT", body: { lines } });
-export const apiChangePassword = (current: string, next: string) => api<{ ok: true }>("/api/account/password", { method: "PUT", body: { current, next } });
-export const apiAccountOrders = () => api<Order[]>("/api/account/orders");
-export const apiCustomers = () =>
-  api<{ id: string; name: string; email: string; phone: string; marketing: number; created_at: number }[]>("/api/customers", { staff: true });
-
-/* ── pricing (server is the price authority) ───────────────────────────── */
-export const apiPriceCart = (lines: CartLine[], type: "pickup" | "delivery", lang: "en" | "fi", code?: string, address?: string) =>
-  api<{ lines: CartLine[]; subtotal: number; deliveryFee: number; total: number; vat: number; discount?: { title: string; amount: number; offerId?: string }; deliveryOffer?: { id: string; nameEn: string; nameFi: string; label?: string }; distanceKm?: number; orderWeightKg: number }>(
-    "/api/cart/price", { method: "POST", body: { lines, type, lang, code, address } });
-
-/* ── orders ────────────────────────────────────────────────────────────── */
-export type CheckoutInput = {
-  type: "pickup" | "delivery"; customer: Order["customer"]; address?: string; note?: string;
-  lines: CartLine[]; total: number; scheduled?: { date: string; time: string };
-  lang?: "en" | "fi"; code?: string;
+const K = {
+  orders: "kb_orders",
+  reservations: "kb_reservations",
+  users: "kb_users",
+  session: "kb_session",
+  sessionEphemeral: "kb_session_ephemeral",
+  resets: "kb_password_resets",
+  settings: "kb_settings",
+  overrides: "kb_overrides",
+  cart: "kb_cart",
+  favorites: "kb_guest_favorites",
 };
-export const apiCreateOrder = (o: CheckoutInput) => api<Order>("/api/orders", { method: "POST", body: o });
-export const apiCreateCheckoutSession = (o: CheckoutInput) =>
-  api<{ mode: "stripe" | "demo"; url?: string; sessionId?: string; orderId?: string; order?: Order }>("/api/checkout/session", { method: "POST", body: o });
-export const apiListOrders = () => api<Order[]>("/api/orders", { staff: true });
-export const apiGetOrder = (id: string) => api<Order>(`/api/orders/${encodeURIComponent(id)}`);
-export const apiPatchOrderStatus = (id: string, status: OrderStatus, readyInMinutes?: number, note?: string) =>
-  api<Order>(`/api/orders/${encodeURIComponent(id)}/status`, { method: "PATCH", body: { status, ...(readyInMinutes != null ? { readyInMinutes } : {}), ...(note ? { note } : {}) }, staff: true });
-export const apiPatchOrderReadyTime = (id: string, body: { minutes?: number; addMinutes?: number; note?: string }) =>
-  api<Order>(`/api/orders/${encodeURIComponent(id)}/ready-time`, { method: "PATCH", body, staff: true });
-export const apiRefundOrder = (id: string) =>
-  api<Order>(`/api/orders/${id}/refund`, { method: "POST", staff: true });
 
-/* ── reservations ──────────────────────────────────────────────────────── */
-export const apiCreateReservation = (r: Omit<Reservation, "id" | "createdAt" | "status">) =>
-  api<Reservation>("/api/reservations", { method: "POST", body: r });
-export const apiListReservations = () => api<Reservation[]>("/api/reservations", { staff: true });
-export const apiPatchReservation = (id: string, status: "pending" | "accepted" | "declined") =>
-  api<Reservation>(`/api/reservations/${id}`, { method: "PATCH", body: { status }, staff: true });
-export const apiDeleteReservation = (id: string) =>
-  api<{ ok: true }>(`/api/reservations/${id}`, { method: "DELETE", staff: true });
-
-/* ── admin mutations ───────────────────────────────────────────────────── */
-export const apiSaveSettings = (s: Settings) => api<Settings>("/api/settings", { method: "PUT", body: s, staff: true });
-export const apiGetDeliveryRules = () => api<import("./types").DeliveryRule[]>("/api/delivery-rules", { staff: true });
-export const apiCreateDeliveryRule = (rule: Omit<import("./types").DeliveryRule, "id">) => api<import("./types").DeliveryRule>("/api/delivery-rules", { method: "POST", body: rule, staff: true });
-export const apiUpdateDeliveryRule = (id: string, rule: Omit<import("./types").DeliveryRule, "id">) => api<import("./types").DeliveryRule>(`/api/delivery-rules/${encodeURIComponent(id)}`, { method: "PUT", body: rule, staff: true });
-export const apiDeleteDeliveryRule = (id: string) => api<{ ok: true }>(`/api/delivery-rules/${encodeURIComponent(id)}`, { method: "DELETE", staff: true });
-export const apiPreviewDeliveryRules = (input: { distanceKm?: number; weightKg: number; subtotalEur: number }) =>
-  api<{ deliveryAllowed: boolean; deliveryFee: number; appliedRules: import("./types").DeliveryRule[]; explanation: string }>("/api/delivery-rules/preview", { method: "POST", body: input, staff: true });
-export const apiSaveSpecial = (body: { special?: unknown; todaysSpecials?: unknown }) =>
-  api<unknown>("/api/todays-special", { method: "PUT", body, staff: true });
-export const apiCreatePromotion = (body: Omit<import("./types").Offer, "id" | "uses">) =>
-  api<import("./types").Offer>("/api/promotions", { method: "POST", body, staff: true });
-export const apiUpdatePromotion = (id: string, body: Omit<import("./types").Offer, "id" | "uses">) =>
-  api<import("./types").Offer>(`/api/promotions/${encodeURIComponent(id)}`, { method: "PUT", body, staff: true });
-export const apiArchivePromotion = (id: string) =>
-  api<{ ok: true; archived: true }>(`/api/promotions/${encodeURIComponent(id)}`, { method: "DELETE", staff: true });
-export const apiSetItemAvailability = (id: string, off: boolean) => api<{ id: string; available: boolean }>(`/api/items/${encodeURIComponent(id)}/availability`, { method: "PATCH", body: { off }, staff: true });
-export const apiPutItem = (m: MenuItem) => api<MenuItem>(`/api/items/${m.id}`, { method: "PUT", body: m, staff: true });
-export const apiPostItem = (m: MenuItem) => api<MenuItem>("/api/items", { method: "POST", body: m, staff: true });
-export const apiDeleteItem = (id: string) => api<{ ok: true }>(`/api/items/${id}`, { method: "DELETE", staff: true });
-export const apiReorderItems = (cat: string, order: string[]) =>
-  api<{ ok: true }>(`/api/items/reorder`, { method: "PATCH", body: { cat, order }, staff: true });
-export const apiPostCategory = (title: string, en: string) =>
-  api<{ id: string }>(`/api/categories`, { method: "POST", body: { title, en }, staff: true });
-export const apiPutCategory = (id: string, patch: { title?: string; en?: string; archived?: boolean }) =>
-  api<{ ok: true }>(`/api/categories/${encodeURIComponent(id)}`, { method: "PUT", body: patch, staff: true });
-export const apiDeleteCategory = (id: string) =>
-  api<{ ok: true; archived: boolean }>(`/api/categories/${encodeURIComponent(id)}`, { method: "DELETE", staff: true });
-export const apiPutTranslation = (lang: "en" | "fi", key: string, value: string) =>
-  api<{ ok: true }>(`/api/translations`, { method: "PUT", body: { lang, key, value }, staff: true });
-export const apiActivity = () => api<{ ts: number; who: string; role: string; msg: string }[]>("/api/admin/activity", { staff: true });
-export interface AdminStaffMember { id: string; username: string; name: string; email: string; role: StaffRole; active: boolean; createdAt: number }
-export const apiListStaff = () => api<AdminStaffMember[]>("/api/admin/staff", { staff: true });
-export const apiCreateStaff = (input: { username: string; name: string; email: string; role: StaffRole; password: string }) =>
-  api<AdminStaffMember>("/api/admin/staff", { method: "POST", body: input, staff: true });
-export const apiUpdateStaff = (id: string, input: { username?: string; name?: string; email?: string; role?: StaffRole; active?: boolean }) =>
-  api<AdminStaffMember>(`/api/admin/staff/${encodeURIComponent(id)}`, { method: "PATCH", body: input, staff: true });
-export const apiAnalytics = () => api<Record<string, unknown>>("/api/analytics/summary", { staff: true });
-export interface AnalyticsReport {
-  from: string; to: string; revenue: number; orderCount: number; averageOrderValue: number;
-  refundedCount: number; statuses: Record<string, number>; daily: { date: string; label: string; revenue: number; orders: number }[];
-  topItems: { itemId: string; name: string; quantity: number; revenue: number }[];
-  topCategories: { categoryId: string; name: string; quantity: number; revenue: number }[];
-  byHour: { hour: number; orders: number }[]; byWeekday: { weekday: number; label: string; orders: number }[];
-  fulfillment: { delivery: number; pickup: number };
+function read<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : fallback;
+  } catch {
+    return fallback;
+  }
 }
-export const apiAnalyticsReport = (from: string, to: string) =>
-  api<AnalyticsReport>(`/api/analytics/reports?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`, { staff: true });
-export const apiSubscribeNewsletter = (email: string) => api<{ subscribed: true }>("/api/newsletter", { method: "POST", body: { email } });
-export const apiNewsletter = () => api<{ email: string; subscribed_at: number }[]>("/api/admin/newsletter", { staff: true });
-export const apiDeleteNewsletter = (email: string) => api<{ ok: true }>(`/api/admin/newsletter/${encodeURIComponent(email)}`, { method: "DELETE", staff: true });
 
-export const newId = (prefix: string) =>
-  `${prefix}-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID().slice(0, 8).toUpperCase() : Date.now().toString(36).toUpperCase()}`;
+function write(key: string, value: unknown) {
+  localStorage.setItem(key, JSON.stringify(value));
+  window.dispatchEvent(new CustomEvent("kb-local", { detail: key }));
+}
+
+export const db = { read, write, K };
+
+/* ── Orders ─────────────────────────────────────────────────────────────── */
+
+/** STUB → POST /api/orders  (creates order + payment intent) */
+export async function apiCreateOrder(order: Order): Promise<Order> {
+  await sleep(900); // network + Stripe payment intent latency
+  const orders = read<Order[]>(K.orders, []);
+  orders.unshift(order);
+  write(K.orders, orders);
+  return order;
+}
+
+/** STUB → GET /api/orders */
+export async function apiListOrders(): Promise<Order[]> {
+  await sleep(120);
+  return read<Order[]>(K.orders, []);
+}
+
+/** STUB → PATCH /api/orders/:id  (status change / refund) */
+export async function apiPatchOrder(
+  id: string,
+  patch: Partial<Order>
+): Promise<void> {
+  await sleep(150);
+  const orders = read<Order[]>(K.orders, []);
+  const i = orders.findIndex((o) => o.id === id);
+  if (i >= 0) {
+    orders[i] = { ...orders[i], ...patch };
+    write(K.orders, orders);
+  }
+}
+
+/* ── Reservations ───────────────────────────────────────────────────────── */
+
+/** STUB → POST /api/reservations */
+export async function apiCreateReservation(r: Reservation): Promise<Reservation> {
+  await sleep(700);
+  const all = read<Reservation[]>(K.reservations, []);
+  all.unshift(r);
+  write(K.reservations, all);
+  return r;
+}
+
+/** STUB → GET /api/reservations */
+export async function apiListReservations(): Promise<Reservation[]> {
+  await sleep(120);
+  return read<Reservation[]>(K.reservations, []);
+}
+
+/** STUB → DELETE /api/reservations/:id */
+export async function apiDeleteReservation(id: string): Promise<void> {
+  await sleep(150);
+  const all = read<Reservation[]>(K.reservations, []);
+  write(K.reservations, all.filter((r) => r.id !== id));
+}
+
+/* ── Auth (STUB → POST /api/auth/register | /api/auth/login) ────────────── */
+
+/** Demo-store hashing (SubtleCrypto). The production app never sees these —
+    its passwords live in Supabase Auth with bcrypt. The local demo cannot
+    hold a secret key, but passwords still get a per-user random salt so two
+    demo accounts never share a digest and stolen records cannot be
+    rainbow-tabled. Format: v2$<salt-hex>$<sha256-hex>. */
+const HASH_PREFIX = "v2";
+
+async function sha256Hex(input: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input));
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+const newSalt = () => Array.from(crypto.getRandomValues(new Uint8Array(12))).map((b) => b.toString(16).padStart(2, "0")).join("");
+
+async function hashPassword(pass: string, salt = newSalt()): Promise<string> {
+  return `${HASH_PREFIX}$${salt}$${await sha256Hex(`kuopio-bites:${salt}:${pass}`)}`;
+}
+
+/** v1 records (before the version prefix) were a single unsalted digest. */
+async function matchesPassword(passHash: string, pass: string): Promise<boolean> {
+  const [version, salt] = passHash.split("$");
+  if (version === HASH_PREFIX && salt) return passHash === (await hashPassword(pass, salt));
+  return passHash === (await sha256Hex(`kuopio-bites:${pass}`));
+}
+
+/** Verify a password, upgrading plaintext/unsalted legacy records in place. */
+async function verifyAndMigrate(u: User, pass: string, users: User[]): Promise<boolean> {
+  const matches = u.passHash ? await matchesPassword(u.passHash, pass) : (u as { pass?: string }).pass === pass;
+  if (!matches) return false;
+  if (!u.passHash?.startsWith(`${HASH_PREFIX}$`)) {
+    const upgraded: User = { ...u, passHash: await hashPassword(pass) };
+    delete upgraded.pass;
+    const i = users.findIndex((x) => x.id === u.id);
+    if (i >= 0) { users[i] = upgraded; write(K.users, users); }
+  }
+  return true;
+}
+
+/** remember=false keeps the session only for the browser session (sessionStorage). */
+function writeSession(id: string | null, remember: boolean): void {
+  if (typeof window === "undefined") return;
+  if (id && !remember) {
+    sessionStorage.setItem(K.sessionEphemeral, id);
+    write(K.session, null);
+  } else {
+    sessionStorage.removeItem(K.sessionEphemeral);
+    write(K.session, id);
+  }
+  window.dispatchEvent(new CustomEvent("kb-local", { detail: K.session }));
+}
+
+export function readSession(): string | null {
+  const stable = read<string | null>(K.session, null);
+  if (stable) return stable;
+  if (typeof window === "undefined") return null;
+  return sessionStorage.getItem(K.sessionEphemeral);
+}
+
+export async function apiRegister(u: User, remember = true): Promise<void> {
+  await sleep(500);
+  const users = read<User[]>(K.users, []);
+  const record: User = { ...u, passHash: await hashPassword(u.pass ?? "") };
+  delete record.pass;
+  users.push(record);
+  write(K.users, users);
+  writeSession(u.id, remember);
+}
+
+export async function apiLogin(email: string, pass: string, remember = true): Promise<User> {
+  await sleep(500);
+  const users = read<User[]>(K.users, []);
+  const u = users.find((x) => x.email.toLowerCase() === email.trim().toLowerCase());
+  /* One generic message for both unknown email and wrong password. */
+  if (!u || !(await verifyAndMigrate(u, pass, users))) throw new Error("auth.badCredentials");
+  writeSession(u.id, remember);
+  return { ...u, pass: undefined };
+}
+
+export function apiLogout() {
+  writeSession(null, true);
+}
+
+/* Tokens are stored hashed (like production's GoTrue), so a localStorage dump
+   cannot be replayed as a reset link. `token` remains only to accept legacy
+   records written before hashing — new records never carry it. */
+interface PasswordReset { token?: string; tokenHash?: string; userId: string; expiresAt: number }
+
+/** STUB → POST /api/auth/forgot-password. Demo mode has no SMTP, so the token
+    is returned to the caller (the UI shows it as a clickable reset link). */
+export async function apiRequestPasswordReset(email: string): Promise<string | null> {
+  await sleep(400);
+  const users = read<User[]>(K.users, []);
+  const u = users.find((x) => x.email.toLowerCase() === email.trim().toLowerCase());
+  if (!u) return null; // neutral: never reveal whether the account exists
+  const token = uid("rst");
+  const resets = read<PasswordReset[]>(K.resets, []).filter((r) => r.expiresAt > Date.now() && r.userId !== u.id);
+  resets.push({ tokenHash: await sha256Hex(token), userId: u.id, expiresAt: Date.now() + 30 * 60 * 1000 });
+  write(K.resets, resets);
+  return token;
+}
+
+/** STUB → POST /api/auth/reset-password. Single-use, 30-minute expiry. */
+export async function apiResetPassword(token: string, next: string): Promise<string | null> {
+  await sleep(300);
+  const resets = read<PasswordReset[]>(K.resets, []);
+  const tokenHash = await sha256Hex(token);
+  const reset = resets.find((r) => (r.tokenHash ? r.tokenHash === tokenHash : r.token === token) && r.expiresAt > Date.now());
+  if (!reset) return "auth.resetInvalid";
+  const users = read<User[]>(K.users, []);
+  const i = users.findIndex((x) => x.id === reset.userId);
+  if (i < 0) return "auth.resetInvalid";
+  const upgraded: User = { ...users[i], passHash: await hashPassword(next) };
+  delete upgraded.pass;
+  users[i] = upgraded;
+  write(K.users, users);
+  write(K.resets, resets.filter((r) => r.token !== token));
+  writeSession(null, true); // invalidate existing sessions, like production
+  return null;
+}
+
+export async function apiChangePassword(id: string, current: string, next: string): Promise<string | null> {
+  await sleep(200);
+  const users = read<User[]>(K.users, []);
+  const i = users.findIndex((x) => x.id === id);
+  if (i < 0 || !(await verifyAndMigrate(users[i], current, users))) return "Current password is incorrect";
+  const upgraded: User = { ...users[i], passHash: await hashPassword(next) };
+  delete upgraded.pass;
+  users[i] = upgraded;
+  write(K.users, users);
+  return null;
+}
+
+export async function apiUpdateUser(id: string, patch: Partial<User>) {
+  await sleep(200);
+  const users = read<User[]>(K.users, []);
+  const i = users.findIndex((x) => x.id === id);
+  if (i >= 0) {
+    users[i] = { ...users[i], ...patch };
+    write(K.users, users);
+    return users[i];
+  }
+}
+
+export function readUsers(): User[] {
+  return read<User[]>(K.users, []);
+}
+
+/* ── Settings / overrides ───────────────────────────────────────────────── */
+
+/** STUB → GET /api/settings */
+export function readSettings<T>(fallback: T): T {
+  return read<T>(K.settings, fallback);
+}
+/** STUB → PATCH /api/settings */
+export function writeSettings(s: Settings) {
+  write(K.settings, s);
+}
+export function readOverrides(fallback: Overrides): Overrides {
+  return read<Overrides>(K.overrides, fallback);
+}
+export function writeOverrides(o: Overrides) {
+  write(K.overrides, o);
+}
+
+export function newId(prefix: string) {
+  return prefix + "-" + uid().slice(0, 6).toUpperCase();
+}

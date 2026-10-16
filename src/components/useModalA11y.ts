@@ -1,12 +1,10 @@
 "use client";
-import { useEffect, useRef, type RefObject } from "react";
+import { useEffect, type RefObject } from "react";
 
 const FOCUSABLE = "button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex=\"-1\"])";
 
 /** Keeps modal keyboard focus inside the dialog and restores the page on close. */
 export function useModalA11y(open: boolean, onClose: () => void, dialogRef: RefObject<HTMLElement | null>) {
-  const onCloseRef = useRef(onClose);
-  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
   useEffect(() => {
     if (!open) return;
     const previous = document.activeElement as HTMLElement | null;
@@ -22,7 +20,7 @@ export function useModalA11y(open: boolean, onClose: () => void, dialogRef: RefO
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onCloseRef.current();
+        onClose();
         return;
       }
       if (event.key !== "Tab") return;
@@ -51,5 +49,5 @@ export function useModalA11y(open: boolean, onClose: () => void, dialogRef: RefO
       document.body.style.overflow = previousOverflow;
       previous?.focus?.();
     };
-  }, [open, dialogRef]);
+  }, [open, onClose, dialogRef]);
 }

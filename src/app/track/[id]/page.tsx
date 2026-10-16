@@ -1,9 +1,9 @@
 "use client";
 import { motion } from "framer-motion";
-import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { cx, eur, fmtTime, telHref } from "@/lib/format";
+import { cx, eur, fmtTime } from "@/lib/format";
+import { RESTAURANT } from "@/lib/menu";
 import { fmtDate } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop, useTick } from "@/lib/store";
@@ -19,27 +19,17 @@ const STEPS: { id: OrderStatus; icon: string }[] = [
 
 export default function TrackPage() {
   const { id } = useParams<{ id: string }>();
-  const { orders, orderStatus, settings, refreshOrder } = useShop();
-  const restaurant = settings.restaurant;
-  const { t, lang } = useLang();
-  useTick(1000);
-  const [checked, setChecked] = useState(false);
-  useEffect(() => {
-    let live = true;
-    void refreshOrder(id).finally(() => { if (live) setChecked(true); });
-    const timer = window.setInterval(() => { void refreshOrder(id); }, 10000);
-    return () => { live = false; window.clearInterval(timer); };
-  }, [id, refreshOrder]);
+  const { orders, orderStatus } = useShop();
+  const { t } = useLang();
+  useTick(2000); // re-derive time-based status
 
   const order = orders.find((o) => o.id === id);
-  const remainingMinutes = order?.readyAt === undefined ? null : Math.max(0, Math.ceil((order.readyAt - Date.now()) / 60000));
-  if (!order && !checked) return <div role="status" className="container-x pt-32 text-center text-sm font-bold text-cherry/60">{lang === "fi" ? "Ladataan tilaustietoja…" : "Loading order details…"}</div>;
   if (!order)
     return (
       <div className="container-x pt-32 text-center">
-        <h1 className="font-display text-3xl font-black text-cherry">{lang === "fi" ? "Tilausta ei löytynyt" : "Order not found"}</h1>
-        <p className="mt-2 text-cherry/70">{lang === "fi" ? `Tilausta “${id}” ei löytynyt tällä laitteella.` : `We couldn't find order “${id}” on this device.`}</p>
-        <Link href="/menu" className="mt-6 inline-flex min-h-[48px] items-center rounded-full bg-cherry-bright px-8 font-black text-cream">{lang === "fi" ? "Takaisin ruokalistaan" : "Back to menu"}</Link>
+        <h1 className="font-display text-3xl font-black text-cherry">Order not found</h1>
+        <p className="mt-2 text-cherry/70">We couldn't find order “{id}” on this device.</p>
+        <Link href="/menu" className="mt-6 inline-flex min-h-[48px] items-center rounded-full bg-cherry-bright px-8 font-black text-cream">Back to menu</Link>
       </div>
     );
 
@@ -63,11 +53,9 @@ export default function TrackPage() {
           )}
         </h1>
         <p className="mt-1 text-sm font-bold text-cherry/60">
-          Placed {fmtTime(order.createdAt)} · {order.type === "delivery" ? `Delivery to ${order.address}` : `Pickup at ${restaurant.address}`}
+          Placed {fmtTime(order.createdAt)} · {order.type === "delivery" ? `Delivery to ${order.address}` : `Pickup at ${RESTAURANT.address}`}
         </p>
       </motion.div>
-
-      {order.readyAt !== undefined && status !== "ready" && status !== "completed" && <div role="status" className="mt-5 rounded-2xl border border-gold/50 bg-gold/15 px-4 py-3"><p className="font-black text-cherry">{lang === "fi" ? `Arvioitu valmistuminen ${remainingMinutes === 0 ? "pian" : `${remainingMinutes} minuutin kuluttua`}` : `Estimated ready ${remainingMinutes === 0 ? "soon" : `in ${remainingMinutes} minutes`}`}</p>{order.readyNote && <p className="mt-1 text-xs font-bold text-cherry/65">{order.readyNote}</p>}</div>}
 
       <div className="mt-8 rounded-3xl border-2 border-gold/50 bg-cream-deep p-6 sm:p-8 shadow-lift">
         <ol className="relative space-y-7">
@@ -144,7 +132,7 @@ export default function TrackPage() {
 
       <p className="mt-6 text-center text-sm font-bold text-cherry/60">
         {t("track.questions")}{" "}
-        <a href={telHref(restaurant.phone)} className="text-cherry-bright underline decoration-gold underline-offset-4">{restaurant.phone}</a>
+        <a href={RESTAURANT.phoneHref} className="text-cherry-bright underline decoration-gold underline-offset-4">{RESTAURANT.phone}</a>
       </p>
     </div>
   );

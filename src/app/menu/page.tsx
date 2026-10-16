@@ -30,7 +30,7 @@ function MenuInner() {
   const [highlight, setHighlight] = useState<string | null>(null);
   const deep = params.get("item");
 
-  const all = useMemo(() => effectiveMenu(MENU, lang), [effectiveMenu, lang]);
+  const all = useMemo(() => effectiveMenu(MENU, lang), [effectiveMenu, overrides, lang]);
 
   /* deep link: /menu?item=<id> → category, scroll, pulse, auto-open sheet */
   useEffect(() => {
@@ -41,25 +41,19 @@ function MenuInner() {
       return;
     }
     setCat(item.cat);
-    let scrollTimer: ReturnType<typeof setTimeout> | undefined;
-    let highlightTimer: ReturnType<typeof setTimeout> | undefined;
-    let openTimer: ReturnType<typeof setTimeout> | undefined;
-    scrollTimer = setTimeout(() => {
+    const to = setTimeout(() => {
       document.getElementById(`mi-${deep}`)?.scrollIntoView({ behavior: reduce ? "auto" : "smooth", block: "center" });
       setHighlight(deep);
-      highlightTimer = setTimeout(() => setHighlight(null), 2200);
-      openTimer = setTimeout(() => {
+      setTimeout(() => setHighlight(null), 2200);
+      setTimeout(() => {
         if (isPreorderItem(item)) setPreItem(item);
         else if (isPizzaItem(item)) setPizzaItem(item);
         else setModal(item);
       }, 350);
     }, 200);
-    return () => {
-      if (scrollTimer) clearTimeout(scrollTimer);
-      if (highlightTimer) clearTimeout(highlightTimer);
-      if (openTimer) clearTimeout(openTimer);
-    };
-  }, [all, deep, reduce, t, toast]);
+    return () => clearTimeout(to);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deep]);
 
   const searching = q.trim().length > 0 || vegOnly;
 
@@ -78,7 +72,7 @@ function MenuInner() {
       );
     }
     if (settings.hideUnavailable)
-      list = list.filter((m) => m.available !== false && !isItemOff(settings, m.id) && !isCatOff(settings, m.cat) && !overrides.items[m.id]?.soldOut);
+      list = list.filter((m) => !isItemOff(settings, m.id) && !isCatOff(settings, m.cat) && !overrides.items[m.id]?.soldOut);
     return list;
   }, [all, cat, q, vegOnly, searching, settings, overrides, cats]);
 
@@ -89,7 +83,7 @@ function MenuInner() {
   };
 
   const quickAdd = (m: MenuItem) => {
-    if (m.available === false || isItemOff(settings, m.id) || isCatOff(settings, m.cat) || overrides.items[m.id]?.soldOut) return;
+    if (isItemOff(settings, m.id) || isCatOff(settings, m.cat) || overrides.items[m.id]?.soldOut) return;
     if (isPreorderItem(m)) {
       setPreItem(m);
       return;
@@ -204,7 +198,7 @@ function ItemGrid({ items, onAdd, highlight }: { items: MenuItem[]; onAdd: (m: M
     >
       {items.map((m) => {
         const soldOut = overrides.items[m.id]?.soldOut;
-        const off = m.available === false || isItemOff(settings, m.id) || isCatOff(settings, m.cat) || soldOut;
+        const off = isItemOff(settings, m.id) || isCatOff(settings, m.cat) || soldOut;
         const pre = isPreorderItem(m);
         const min = Math.min(...m.prices.map((p) => p.value));
         const deal = offerPrice(settings, m, 0);
