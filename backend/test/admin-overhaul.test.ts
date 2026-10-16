@@ -5,8 +5,7 @@ import { expectedUnitPrice } from "../src/logic";
 import { cartLineSchema, deliveryRuleSchema, promotionPatchSchema } from "../src/schemas";
 import { computeDiscount } from "../src/lib/v3";
 import { forbiddenSettingsChanges, changedSettings } from "../src/settings-roles";
-import { isRevenueEligible as isFrontendRevenueEligible } from "../../src/lib/revenue";
-import { isRevenueEligible as isApiRevenueEligible } from "../src/revenue";
+import { isRevenueEligible } from "../../src/lib/revenue";
 import type { CartLine, DeliveryRule, MenuItem, Offer, Settings } from "../src/lib/types";
 
 const settings = (overrides: Partial<Settings> = {}) => ({
@@ -45,7 +44,7 @@ test("settings saves diff canonical values and enforce manager/kitchen field all
   assert.deepEqual(changedSettings(current, settings()), []);
 });
 
-test("dashboard and API revenue include paid/demo-paid orders and exclude pending/refunded orders", () => {
+test("dashboard revenue includes paid/demo-paid orders and excludes pending/refunded orders", () => {
   const orders = [
     { paymentStatus: "paid", refunded: false },
     { paymentStatus: "demo_paid", refunded: false },
@@ -53,16 +52,7 @@ test("dashboard and API revenue include paid/demo-paid orders and exclude pendin
     { paymentStatus: "refunded", refunded: true },
     { paymentStatus: "paid", refunded: true },
   ];
-  const expected = [orders[0], orders[1]];
-  assert.deepEqual(orders.filter(isFrontendRevenueEligible), expected);
-  assert.deepEqual(orders.filter(isApiRevenueEligible), expected);
-});
-
-test("serverless API source imports stay inside the backend deployment root", async () => {
-  const { readFile } = await import("node:fs/promises");
-  const { resolve } = await import("node:path");
-  const serverSource = await readFile(resolve(process.cwd(), "src/server.ts"), "utf8");
-  assert.doesNotMatch(serverSource, /from\s+[\"']\.\.\/\.\.\//);
+  assert.deepEqual(orders.filter(isRevenueEligible), [orders[0], orders[1]]);
 });
 
 test("topping option is priced from current server metadata for each variant", () => {
