@@ -52,7 +52,7 @@ export function buildAnalyticsReport(orders: Order[], days: number, pendingReser
   const byDay = new Map(dayKeys.map((key) => [key, { date: key, revenue: 0, orders: 0 }]));
   const byItem = new Map<string, { itemId: string; name: string; quantity: number; revenue: number }>();
   const byHour = Array.from({ length: 24 }, (_, hour) => ({ hour, orders: 0 }));
-  const statusCounts: Record<OrderStatus, number> = { placed: 0, accepted: 0, preparing: 0, ready: 0, completed: 0 };
+  const statusCounts: Record<OrderStatus, number> = { placed: 0, accepted: 0, preparing: 0, ready: 0, completed: 0, cancelled: 0 };
 
   for (const order of paid) {
     const date = helsinkiDayKey(order.createdAt);
