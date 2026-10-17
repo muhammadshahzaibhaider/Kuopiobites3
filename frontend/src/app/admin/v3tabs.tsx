@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import ImageUploader from "@/components/ImageUploader";
 import { cx, eur, fmtDate } from "@/lib/format";
 import { resolveImageSrc } from "@/lib/images";
@@ -10,6 +10,7 @@ import { useShop } from "@/lib/store";
 import { apiActivity } from "@/lib/api";
 import { inputCls, PrimaryBtn } from "@/admin/ui";
 import { nextPreorderSundays } from "@/lib/v3";
+import { newSpecialId, specialsValidationError, withSpecialFor } from "@/lib/specials";
 import type { MenuItem, SpecialItem, ToppingMeta } from "@/lib/types";
 
 /* ── shared ─────────────────────────────────────────── */
@@ -228,54 +229,165 @@ export function PreorderPanel() {
 
 /* ── today's specials (carousel list) ────────────────── */
 
+/* A dish picker instead of "the first menu item": the manager chooses which
+   dish becomes a special, and already-featured dishes are marked so the same
+   dish is not added twice. */
+function SpecialDishPicker({
+  menu, used, onPick, onClose,
+}: {
+  menu: MenuItem[];
+  used: Set<string>;
+  onPick: (itemId: string) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const needle = query.trim().toLowerCase();
+  const results = menu.filter((entry) =>
+    !needle ||
+    entry.name.toLowerCase().includes(needle) ||
+    (entry.nameFi ?? "").toLowerCase().includes(needle) ||
+    (entry.desc ?? "").toLowerCase().includes(needle) ||
+    entry.cat.toLowerCase().includes(needle)
+  );
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-cherry-dark/40 p-0 backdrop-blur-[2px] sm:items-center sm:p-6" role="dialog" aria-modal="true" aria-label="Choose a dish for Today's Special">
+      <div className="flex max-h-[85vh] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl bg-cream shadow-lift sm:rounded-2xl">
+        <div className="flex items-center justify-between border-b-2 border-gold/40 px-4 py-3">
+          <h2 className="font-display text-lg font-black text-cherry">Add to Today&rsquo;s Special</h2>
+          <button type="button" onClick={onClose} aria-label="Close" className="min-h-[36px] rounded-lg border border-cherry/20 px-3 text-xs font-black text-cherry hover:bg-cherry hover:text-cream">Close</button>
+        </div>
+        <div className="px-4 pt-3">
+          <input
+            autoFocus
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="Search a dish…"
+            aria-label="Search a dish"
+            className="min-h-[42px] w-full rounded-xl border border-cherry/20 bg-cream-deep px-3 text-sm font-bold"
+          />
+        </div>
+        <ul className="flex-1 overflow-y-auto p-3">
+          {results.length === 0 && <li className="p-6 text-center text-sm font-bold text-cherry/50">No dish matches that search.</li>}
+          {results.map((entry) => {
+            const already = used.has(entry.id);
+            const price = entry.prices.length ? Math.min(...entry.prices.map((variant) => variant.value)) : 0;
+            return (
+              <li key={entry.id}>
+                <button
+                  type="button"
+                  disabled={already}
+                  onClick={() => onPick(entry.id)}
+                  className={cx(
+                    "flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-left transition",
+                    already ? "cursor-not-allowed opacity-50" : "hover:bg-cream-deep"
+                  )}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-black text-cherry">{entry.name}</span>
+                    <span className="block truncate text-[11px] font-bold text-cherry/50">{entry.cat}</span>
+                  </span>
+                  <span className="shrink-0 text-right">
+                    <span className="block text-sm font-black tabular-nums text-gold-deep">{eur(price)}</span>
+                    {already && <span className="block text-[10px] font-black uppercase text-cherry/40">Already a special</span>}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
 export function SpecialsPanel() {
   const { settings, saveSettings, adminItems, effectiveMenu, toast, logAudit } = useShop();
   const { lang } = useLang();
-  const menu = effectiveMenu(adminItems.length ? adminItems.filter((item) => !item.archived) : MENU, lang);
+  const menu = effectiveMenu(adminItems.length ? adminItems.filter((item) => item.archived !== true) : MENU, lang);
   const [draft, setDraft] = useState<SpecialItem[]>(settings.todaysSpecials ?? []);
   const [saving, setSaving] = useState(false);
-  useEffect(() => setDraft(settings.todaysSpecials ?? []), [settings.todaysSpecials]);
+  const [dirty, setDirty] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  /* The store re-reads settings in the background (tab focus, another admin
+     tab saving). A reset effect keyed on settings.todaysSpecials therefore used
+     to wipe the manager's unsaved draft mid-edit — an uploaded photo vanished
+     when the file dialog closed and returned focus, and "+ Add special" looked
+     broken because the new card disappeared again. Only sync when the panel has
+     nothing unsaved; the ref keeps the effect from reading a stale flag. */
+  const dirtyRef = useRef(false);
+  const markDirty = () => { dirtyRef.current = true; setDirty(true); };
+  useEffect(() => {
+    if (!dirtyRef.current) setDraft(settings.todaysSpecials ?? []);
+  }, [settings.todaysSpecials]);
   const list = [...draft].sort((a, b) => a.sortOrder - b.sortOrder);
 
   const save = async () => {
-    /* Catch values the database would reject before sending the whole settings
-       snapshot, so the manager sees the actual mistake instead of a generic
-       "settings could not be saved". */
-    const badDates = list.find((special) => special.start && special.end && special.end < special.start);
-    if (badDates) { toast("“To” is before “From” — fix the dates on that card", "err"); return; }
-    const badDiscount = list.find((special) => special.discount != null && (special.discount < 0 || special.discount > 100));
-    if (badDiscount) { toast("Discount must be between 0 and 100 %", "err"); return; }
-    const badPrice = list.find((special) => special.overridePrice != null && special.overridePrice < 0);
-    if (badPrice) { toast("Override price cannot be negative", "err"); return; }
+    const validation = specialsValidationError(list);
+    if (validation) { toast(validation, "err"); return; }
     setSaving(true);
     const next = list.map((special, index) => ({ ...special, sortOrder: index }));
     const ok = await saveSettings({ ...settings, todaysSpecials: next });
     setSaving(false);
-    if (ok) { logAudit("today's specials updated"); toast("Specials saved and reloaded from the database"); }
+    if (ok) {
+      dirtyRef.current = false;
+      setDirty(false);
+      setDraft(next);
+      logAudit("today's specials updated");
+      toast("Specials saved and reloaded from the database");
+    }
   };
-  const patch = (id: string, patchValue: Partial<SpecialItem>) =>
+  const reload = () => {
+    dirtyRef.current = false;
+    setDirty(false);
+    setDraft(settings.todaysSpecials ?? []);
+    toast("Draft reloaded from the database");
+  };
+  const patch = (id: string, patchValue: Partial<SpecialItem>) => {
+    markDirty();
     setDraft((current) => current.map((special) => special.id === id ? { ...special, ...patchValue } : special));
-  const move = (index: number, direction: -1 | 1) => setDraft((current) => {
-    const next = [...current].sort((a, b) => a.sortOrder - b.sortOrder);
-    const target = index + direction;
-    if (target < 0 || target >= next.length) return current;
-    [next[index], next[target]] = [next[target], next[index]];
-    return next.map((special, sortOrder) => ({ ...special, sortOrder }));
-  });
+  };
+  const move = (index: number, direction: -1 | 1) => {
+    markDirty();
+    setDraft((current) => {
+      const next = [...current].sort((a, b) => a.sortOrder - b.sortOrder);
+      const target = index + direction;
+      if (target < 0 || target >= next.length) return current;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next.map((special, sortOrder) => ({ ...special, sortOrder }));
+    });
+  };
+  const addDish = (itemId: string) => {
+    const next = withSpecialFor(list, itemId);
+    setPickerOpen(false);
+    if (!next) { toast("That dish is already a Today's Special", "err"); return; }
+    markDirty();
+    setDraft(next.map((special, sortOrder) => ({ ...special, sortOrder })));
+    toast("Special added — remember to Save specials");
+  };
+  const used = new Set(list.map((special) => special.itemId));
 
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="max-w-2xl text-xs text-cherry/60">Today's Special is a scrollable carousel on Home. Each card links to /menu?item=&lt;id&gt; (scroll + pulse + sheet). Changes stay in this draft until saved.</p>
-        <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => {
-            if (!menu.length) { toast("Add a menu item before creating a special", "err"); return; }
-            const special: SpecialItem = { id: `ts-${Date.now()}`, itemId: menu[0].id, sortOrder: list.length, active: true, textEn: "Today's Special", textFi: "Päivän annos" };
-            setDraft((current) => [...current, special]);
-          }} className="min-h-[40px] rounded-lg border border-cherry/20 px-4 text-xs font-black text-cherry">+ Add special</button>
+        <div className="flex flex-wrap items-center gap-2">
+          {dirty && (
+            <span className="inline-flex min-h-[32px] items-center rounded-full bg-gold/25 px-3 text-[11px] font-black uppercase tracking-wide text-gold-deep">
+              Unsaved changes
+            </span>
+          )}
+          {dirty && (
+            <button type="button" onClick={reload} className="min-h-[40px] rounded-lg border border-cherry/20 px-3 text-xs font-black text-cherry">Reload draft</button>
+          )}
+          <button type="button" onClick={() => setPickerOpen(true)} className="min-h-[40px] rounded-lg border border-cherry/20 px-4 text-xs font-black text-cherry">+ Add special</button>
           <PrimaryBtn icon="save" disabled={saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save specials"}</PrimaryBtn>
         </div>
       </div>
+      {dirty && (
+        <p className="rounded-xl border border-gold/50 bg-gold/10 px-3 py-2 text-xs font-bold text-gold-deep">
+          You have unsaved changes. They stay in this draft while the page refreshes settings in the background — press <b>Save specials</b> to publish.
+        </p>
+      )}
       {list.length === 0 && <p className="rounded-xl bg-cream-deep p-8 text-center text-sm font-bold text-cherry/60">No specials — the carousel is hidden.</p>}
       {list.map((special, index) => {
         const item = menu.find((entry) => entry.id === special.itemId);
@@ -295,8 +407,8 @@ export function SpecialsPanel() {
               </span>
               <span className="ml-auto flex items-center gap-2">
                 <Switch on={special.active} ariaLabel={`${item?.name ?? ""} active`} onChange={() => patch(special.id, { active: !special.active })} />
-                <button type="button" onClick={() => { setDraft((current) => [...current, { ...special, id: `ts-${Date.now()}`, active: false, sortOrder: current.length }]); toast("Special duplicated — save to publish"); }} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry">Duplicate</button>
-                <button type="button" onClick={() => setDraft((current) => current.filter((entry) => entry.id !== special.id))} className="min-h-[32px] rounded-lg border border-brick/50 px-2 text-xs font-black text-brick">Remove</button>
+                <button type="button" onClick={() => { markDirty(); setDraft((current) => [...current, { ...special, id: newSpecialId(), active: false, sortOrder: current.length }]); toast("Special duplicated — save to publish"); }} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry">Duplicate</button>
+                <button type="button" onClick={() => { markDirty(); setDraft((current) => current.filter((entry) => entry.id !== special.id)); }} className="min-h-[32px] rounded-lg border border-brick/50 px-2 text-xs font-black text-brick">Remove</button>
               </span>
             </div>
             <div className="mt-3 grid gap-2 sm:grid-cols-3">
@@ -321,13 +433,21 @@ export function SpecialsPanel() {
                 <input type="date" value={special.end ?? ""} onChange={(e) => patch(special.id, { end: e.target.value || undefined })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
               </label>
               <div className="text-xs font-black text-cherry/60">Card image (optional, overrides category photo)
-                <div className="mt-1"><ImageUploader preset="1:1" value={special.imageUrl ? { src: special.imageUrl, altEn: item?.name ?? "", altFi: item?.name ?? "" } : undefined} onChange={(value) => patch(special.id, { imageUrl: value?.src })} /></div>
+                <div className="mt-1">
+                  <ImageUploader
+                    preset="1:1"
+                    fallbackAlt={item?.name ?? "Today's Special"}
+                    value={special.imageUrl ? { src: special.imageUrl, altEn: item?.name ?? "Today's Special", altFi: item?.name ?? "Päivän annos" } : undefined}
+                    onChange={(value) => patch(special.id, { imageUrl: value?.src })}
+                  />
+                </div>
               </div>
             </div>
           </div>
         );
       })}
       {list.length > 0 && <div className="flex justify-end"><PrimaryBtn icon="save" disabled={saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save specials"}</PrimaryBtn></div>}
+      {pickerOpen && <SpecialDishPicker menu={menu} used={used} onPick={addDish} onClose={() => setPickerOpen(false)} />}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { todayStrHelsinki } from "@/lib/hours";
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
 import { activeToppings, sanitizeToppingGroups } from "@/lib/v3";
+import { withSpecialFor } from "@/lib/specials";
 import type { MenuItem, ModGroup, UploadedImg } from "@/lib/types";
 import { CatsTab, SpecialsPanel, ToppingsMetaPanel } from "@/app/admin/v3tabs";
 import { Ic } from "./icons";
@@ -71,6 +72,21 @@ export function MenuItemsView({ initialAvailability = "all" }: { initialAvailabi
     toast(off ? `${ids.length} marked sold out` : `${ids.length} back on menu`, off ? "err" : "ok");
   };
 
+  /* Which dishes are already on the home-page carousel, so the item list can
+     mark them and "Add to Today's Special" never creates a duplicate. */
+  const specialItemIds = useMemo(
+    () => new Set((settings.todaysSpecials ?? []).map((special) => special.itemId)),
+    [settings.todaysSpecials],
+  );
+
+  const addToSpecials = async (item: MenuItem) => {
+    const next = withSpecialFor(settings.todaysSpecials ?? [], item.id);
+    if (!next) { toast(`${item.name} is already in Today's Special — edit it under Menu → Today's Special`); return; }
+    if (!await saveSettings({ ...settings, todaysSpecials: next })) return;
+    logAudit(`today's special + ${item.id}`);
+    toast(`${item.name} added to Today's Special`);
+  };
+
   const cols: Col<MenuItem>[] = [
     {
       key: "item", label: "Item", sort: (r) => r.name,
@@ -78,7 +94,10 @@ export function MenuItemsView({ initialAvailability = "all" }: { initialAvailabi
         <div className="flex min-w-0 items-center gap-3">
           <MenuImage item={r} srcOverride={settings.itemImages[r.id]?.src} className="h-11 w-11 shrink-0 rounded-xl" caption={false} sizes="44px" />
           <div className="min-w-0 flex-1">
-            <span className="block truncate font-black text-cherry">{r.name}</span>
+            <span className="flex min-w-0 items-center gap-1.5">
+              <span className="truncate font-black text-cherry">{r.name}</span>
+              {specialItemIds.has(r.id) && <Pill tone="gold">★ Special</Pill>}
+            </span>
             {r.desc && <span className="block truncate text-[11px] leading-snug text-cherry/50">{r.desc}</span>}
           </div>
         </div>
@@ -135,6 +154,11 @@ export function MenuItemsView({ initialAvailability = "all" }: { initialAvailabi
         onRow={(r) => setEdit(r)}
         rowMenu={(r) => [
           { label: "Edit item", icon: "edit", onClick: () => setEdit(r) },
+          {
+            label: specialItemIds.has(r.id) ? "Already in Today's Special" : "Add to Today's Special",
+            icon: "star",
+            onClick: () => { void addToSpecials(r); },
+          },
           ...(r.archived
             ? [{ label: "Restore item", icon: "toggle", danger: false, onClick: async () => { if (await archiveMenuItem(r.id, false)) toast("Item restored"); } }]
             : [
