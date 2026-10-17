@@ -172,16 +172,20 @@ export function visibleToppingOptions(s: Settings, group: ModGroup): ModGroup["o
  * temporarily short would permanently damage the menu.
  */
 export function sanitizeToppingGroups(s: Settings, mods: ModGroup[] | undefined): ModGroup[] | undefined {
-  if (!mods) return mods;
+  /* Rows written before the jsonb array check existed (or by hand) can hold a
+     non-array / option-less group; leave those untouched instead of letting one
+     malformed row abort every settings save. */
+  if (!mods || !Array.isArray(mods)) return mods;
   const allowed = new Set(s.toppings);
   let changed = false;
   const next = mods.map((group) => {
     if (group.id !== "topping") return group;
-    const options = group.options.filter((option) => allowed.has(option.label));
+    const current = Array.isArray(group.options) ? group.options : [];
+    const options = current.filter((option) => allowed.has(option.label));
     const maxAvailable = Math.max(options.length, group.required || group.exact ? 1 : 0);
     const min = group.min === undefined ? undefined : Math.min(group.min, maxAvailable);
     const max = group.max === undefined ? undefined : Math.max(Math.min(group.max, Math.max(options.length, 1)), min ?? 0);
-    if (options.length === group.options.length && min === group.min && max === group.max) return group;
+    if (options.length === current.length && min === group.min && max === group.max) return group;
     changed = true;
     return { ...group, options, ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}) };
   });

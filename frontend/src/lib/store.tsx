@@ -625,9 +625,23 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       setSettings(next);
       await refresh();
       return true;
-    } catch {
+    } catch (error) {
       await refresh();
-      toast("Settings could not be saved", "err");
+      /* The API code tells the manager (and support) which step refused the
+         write: a database constraint, an invalid value, a stale session or a
+         timeout. A bare "could not be saved" hides all four. */
+      const code = error instanceof Error ? error.message : "unknown";
+      const reason =
+        code === "net.timeout" ? "request timed out — please try again"
+        : code === "net.offline" ? "network unavailable — check the connection"
+        : code === "settings.persistFailed" ? "database write failed"
+        : code === "settings.loadFailed" ? "database read failed"
+        : code.startsWith("settings.persist.") ? `database rejected ${code.slice("settings.persist.".length)}`
+        : code === "validation.failed" || code === "validation.invalid" ? "check the values"
+        : code === "request.tooLarge" ? "payload too large"
+        : code.startsWith("auth.") ? "session expired — sign in again"
+        : code;
+      toast(`Settings could not be saved — ${reason}`, "err");
       return false;
     }
   };

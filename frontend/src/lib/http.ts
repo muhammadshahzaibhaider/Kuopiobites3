@@ -51,9 +51,9 @@ async function csrfHeader(): Promise<string> {
   return csrfFromCookie() ?? csrfToken ?? fetchCsrfToken();
 }
 
-async function request<T>(path: string, init: RequestInit): Promise<T> {
+async function request<T>(path: string, init: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
     response = await fetch(apiBase() + path, { credentials: "include", cache: "no-store", ...init, signal: controller.signal });
@@ -78,7 +78,7 @@ class ApiErrorWithStatus extends ApiError {
 
 export async function api<T>(
   path: string,
-  opts: { method?: string; body?: unknown; staff?: boolean } = {}
+  opts: { method?: string; body?: unknown; staff?: boolean; timeoutMs?: number } = {}
 ): Promise<T> {
   const method = (opts.method ?? "GET").toUpperCase();
   const headers: Record<string, string> = { accept: "application/json" };
@@ -91,7 +91,7 @@ export async function api<T>(
       return await request<T>(path, {
         method, headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-      });
+      }, opts.timeoutMs);
     } catch (error) {
       if (retries > 0 && error instanceof ApiErrorWithStatus && error.status === 403 && error.message === "csrf.invalid") {
         retries -= 1;
