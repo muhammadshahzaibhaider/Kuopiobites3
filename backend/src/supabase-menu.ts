@@ -55,12 +55,44 @@ export async function listCategories() {
   return rows.map((row) => ({ id: row.id, title: row.name_fi, en: row.name_en }));
 }
 
-export async function listItems(categoryId?: string, includeArchived = false): Promise<MenuItem[]> {
+const ARCHIVE_SCHEMA_RETRY_MS = 60_000;
+let archiveColumnFallbackUntil = 0;
+
+type PostgrestFailure = { code?: string; message?: string };
+
+function isMissingArchiveColumn(error: PostgrestFailure | null): boolean {
+  if (!error) return false;
+  const message = error.message ?? "";
+  return /is_archived/i.test(message)
+    && (["42703", "PGRST204", "PGRST205"].includes(error.code ?? "")
+      || /does not exist|could not find|unknown column|not found/i.test(message));
+}
+
+function itemListQuery(categoryId: string | undefined, filterArchived: boolean) {
   let query = db.from("menu_items").select("*").order("sort_order").limit(500);
   if (categoryId) query = query.eq("category_id", categoryId);
-  if (!includeArchived) query = query.eq("is_archived", false);
-  const rows = must(await query) as ItemRow[];
-  return rows.map(toApiItem);
+  if (filterArchived) query = query.eq("is_archived", false);
+  return query;
+}
+
+export async function listItems(categoryId?: string, includeArchived = false): Promise<MenuItem[]> {
+  const filterArchived = !includeArchived && Date.now() >= archiveColumnFallbackUntil;
+  const result = await itemListQuery(categoryId, filterArchived);
+  if (result.error) {
+    if (!filterArchived || !isMissingArchiveColumn(result.error)) throw new Error(result.error.message);
+
+    // Keep the public menu and server repricing available if the additive archive
+    // migration has not reached this database yet. With no archive column, rows
+    // cannot have been archived; retry without the filter and periodically
+    // re-check for the migration instead of caching this fallback indefinitely.
+    archiveColumnFallbackUntil = Date.now() + ARCHIVE_SCHEMA_RETRY_MS;
+    console.warn("schema.migrationRequired: menu_items.is_archived is missing; using legacy public menu read");
+    const legacyResult = await itemListQuery(categoryId, false);
+    if (legacyResult.error) throw new Error(legacyResult.error.message);
+    return ((legacyResult.data ?? []) as ItemRow[]).map(toApiItem);
+  }
+  if (result.data === null) throw new Error("menu.itemsNotFound");
+  return (result.data as ItemRow[]).map(toApiItem);
 }
 
 export async function getItem(id: string): Promise<MenuItem | null> {

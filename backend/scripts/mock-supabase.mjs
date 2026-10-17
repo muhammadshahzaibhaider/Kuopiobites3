@@ -15,7 +15,7 @@
  *
  * Test hooks (not part of the Supabase API):
  *   GET  /__test__/tokens?email=…  → last confirmation/recovery tokens issued
- *   POST /__test__/config {confirmEmail:boolean} → toggle email-confirmation mode
+ *   POST /__test__/config {confirmEmail:boolean,legacyMenuSchema:boolean} → toggle test modes
  */
 import http from "node:http";
 import { randomBytes, createHash } from "node:crypto";
@@ -28,6 +28,7 @@ const emailTokens = new Map(); // token_hash → { userId, type }
 const pkceCodes = new Map(); // auth code → userId
 const tables = { customers: new Map(), staff_users: new Map(), activity_log: [], categories: new Map(), menu_items: new Map(), orders: new Map(), reservations: new Map(), newsletter_subscribers: new Map(), translation_strings: new Map(), promotions: new Map(), stripe_events: new Map(), settings: new Map(), toppings: new Map(), shop_settings: new Map(), todays_special: new Map(), order_items: [], customer_favorites: new Map(), cart_items: new Map() };
 let confirmEmail = false;
+let legacyMenuSchema = false;
 
 const tok = () => randomBytes(32).toString("base64url");
 const tokenHash = (raw) => createHash("sha256").update(raw).digest("hex");
@@ -187,6 +188,10 @@ function handleRest(req, res, url, body) {
   const store = tables[table];
   if (table === "rpc") { res.writeHead(404, { "content-type": "application/json" }); return res.end("{}"); }
   if (!store) { res.writeHead(200, { "content-type": "application/json" }); return res.end("[]"); }
+  if (table === "menu_items" && legacyMenuSchema && url.searchParams.has("is_archived")) {
+    res.writeHead(400, { "content-type": "application/json" });
+    return res.end(JSON.stringify({ code: "42703", message: "column menu_items.is_archived does not exist" }));
+  }
   const wantsObject = String(req.headers.accept || "").includes("pgrst.object+json");
   const rows = [...(store instanceof Map ? store.values() : store)];
   /* PostgREST embeds child resources in select "*, children(*)": */
@@ -314,7 +319,8 @@ const server = http.createServer((req, res) => {
     }
     if (url.pathname === "/__test__/config" && req.method === "POST") {
       if (typeof body.confirmEmail === "boolean") confirmEmail = body.confirmEmail;
-      return res.end(JSON.stringify({ confirmEmail }));
+      if (typeof body.legacyMenuSchema === "boolean") legacyMenuSchema = body.legacyMenuSchema;
+      return res.end(JSON.stringify({ confirmEmail, legacyMenuSchema }));
     }
     if (url.pathname === "/__test__/issue-code" && req.method === "POST") {
       const user = userByEmail(body.email || "");

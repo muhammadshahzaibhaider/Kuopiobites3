@@ -6,7 +6,8 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "seed": "tsx src/seed.ts",
-    "security-check": "node scripts/security-check.mjs"
+    "security-check": "node scripts/security-check.mjs",
+    "smoke:menu-archive-compat": "node scripts/smoke-menu-archive-compat.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",
