@@ -18,6 +18,8 @@ type ItemRow = {
   mods: MenuItem["mods"] | null;
   tags: string[] | null;
   photo_url: string | null;
+  weight_kg?: number | null;
+  is_archived?: boolean;
 };
 
 export function toApiItem(row: ItemRow): MenuItem {
@@ -35,6 +37,8 @@ export function toApiItem(row: ItemRow): MenuItem {
     tags: (row.tags ?? []) as Tag[],
     mods: row.mods ?? undefined,
     imageUrl: row.photo_url ?? undefined,
+    weightKg: row.weight_kg == null ? undefined : Number(row.weight_kg),
+    archived: Boolean(row.is_archived),
     availability: row.pre_order_only || days.length || row.preorder_cutoff || row.lead_time_hours !== null
       ? {
           days,
@@ -51,11 +55,12 @@ export async function listCategories() {
   return rows.map((row) => ({ id: row.id, title: row.name_fi, en: row.name_en }));
 }
 
-export async function listItems(categoryId?: string): Promise<MenuItem[]> {
+export async function listItems(categoryId?: string, includeArchived = false): Promise<MenuItem[]> {
   let query = db.from("menu_items").select("*").order("sort_order").limit(500);
   if (categoryId) query = query.eq("category_id", categoryId);
-  const rows = must(await query);
-  return (rows as ItemRow[]).map(toApiItem);
+  if (!includeArchived) query = query.eq("is_archived", false);
+  const rows = must(await query) as ItemRow[];
+  return rows.map(toApiItem);
 }
 
 export async function getItem(id: string): Promise<MenuItem | null> {
@@ -63,7 +68,7 @@ export async function getItem(id: string): Promise<MenuItem | null> {
      answer 404) instead of throwing — must() turns empty results into errors. */
   const { data, error } = await db.from("menu_items").select("*").eq("id", id).maybeSingle();
   if (error && error.code !== "PGRST116") throw new Error(error.message);
-  return data ? toApiItem(data as ItemRow) : null;
+  return data && !(data as ItemRow).is_archived ? toApiItem(data as ItemRow) : null;
 }
 
 export function toDatabaseItem(item: MenuItem, sortOrder: number) {
@@ -90,6 +95,8 @@ export function toDatabaseItem(item: MenuItem, sortOrder: number) {
     mods: item.mods ?? [],
     tags: item.tags ?? [],
     photo_url: item.imageUrl ?? null,
+    weight_kg: item.weightKg ?? null,
+    is_archived: item.archived ?? false,
     photo_alt_fi: null,
     photo_alt_en: null,
     sort_order: sortOrder,

@@ -44,9 +44,9 @@ const availabilitySchema = z.object({
 }).strict();
 
 const priceSchema = z.object({ label: text(40), value: finiteMoney }).strict();
-const modOptionSchema = z.object({ label: text(100).min(1), price: finiteMoney }).strict();
+const modOptionSchema = z.object({ label: text(100).min(1), labelFi: text(100).optional(), labelEn: text(100).optional(), price: finiteMoney }).strict();
 const modGroupSchema = z.object({
-  id: text(60).min(1), name: text(120).min(1), type: z.enum(["single", "multi"]),
+  id: text(60).min(1), name: text(120).min(1), nameFi: text(120).optional(), nameEn: text(120).optional(), type: z.enum(["single", "multi"]),
   required: z.boolean().optional(), min: z.number().int().min(0).max(30).optional(),
   exact: z.number().int().min(0).max(30).optional(), max: z.number().int().min(0).max(30).optional(),
   options: z.array(modOptionSchema).max(100), perVariantExtra: z.array(finiteMoney).max(10).optional(),
@@ -59,7 +59,30 @@ export const menuItemSchema = z.object({
   prices: z.array(priceSchema).min(1).max(10), tags: z.array(z.enum(["veg", "spicy", "popular"])).max(3).optional(),
   mods: z.array(modGroupSchema).max(30).optional(), availability: availabilitySchema.optional(),
   imageKey: text(160).optional(), imageUrl: imageSource.optional(),
-}).strict();
+  weightKg: z.number().finite().min(0).max(100).optional(), archived: z.boolean().optional(),
+}).strict().superRefine((item, ctx) => {
+  if (item.prices.length === 1 && item.prices[0].label !== "") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["prices", 0, "label"], message: "single-price variants must use an empty label" });
+  }
+  if (new Set(item.prices.map((price) => price.label)).size !== item.prices.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["prices"], message: "variant labels must be unique" });
+  }
+  const groupIds = new Set<string>();
+  const optionLabels = new Set<string>();
+  for (const [groupIndex, group] of (item.mods ?? []).entries()) {
+    if (groupIds.has(group.id)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["mods", groupIndex, "id"], message: "modifier group IDs must be unique" });
+    groupIds.add(group.id);
+    const minimum = group.exact ?? group.min ?? (group.required ? 1 : 0);
+    const maximum = group.exact ?? group.max ?? (group.type === "single" ? 1 : Number.POSITIVE_INFINITY);
+    if (minimum > maximum) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["mods", groupIndex, "max"], message: "modifier maximum must be at least its minimum" });
+    if (group.required && minimum < 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["mods", groupIndex, "min"], message: "required groups need at least one selection" });
+    if (group.type === "single" && minimum > 1) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["mods", groupIndex, "min"], message: "single-selection groups cannot require more than one option" });
+    for (const [optionIndex, option] of group.options.entries()) {
+      if (optionLabels.has(option.label)) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["mods", groupIndex, "options", optionIndex, "label"], message: "raw option labels must be unique across item groups" });
+      optionLabels.add(option.label);
+    }
+  }
+});
 
 const preorderSchema = z.object({ date, time: hhmm }).strict();
 const pizzaSchema = z.object({
@@ -79,7 +102,7 @@ export const cartLineSchema = z.object({
 export const cartSchema = z.object({
   lines: z.array(cartLineSchema).min(1).max(100),
   type: z.enum(["pickup", "delivery"]).default("pickup"),
-  lang: z.enum(["en", "fi"]).default("en"), code: text(40).optional(),
+  lang: z.enum(["en", "fi"]).default("en"), code: text(40).optional(), address: text(200).optional(),
 }).strict();
 
 /* Emails are always normalized (trim + lowercase) before lookup or storage so
@@ -155,7 +178,17 @@ const specialCfgSchema = z.object({
 
 const offerScopeSchema = z.object({
   itemIds: z.array(text(60)).max(100).optional(), category: text(60).optional(), whole: z.boolean().optional(),
-}).strict();
+  deliveryOnly: z.boolean().optional(),
+  minDistanceKm: z.number().finite().min(0).max(500).optional(),
+  maxDistanceKm: z.number().finite().min(0).max(500).optional(),
+  minWeightKg: z.number().finite().min(0).max(1000).optional(),
+  maxWeightKg: z.number().finite().min(0).max(1000).optional(),
+}).strict().superRefine((scope, ctx) => {
+  if (scope.minDistanceKm !== undefined && scope.maxDistanceKm !== undefined && scope.minDistanceKm > scope.maxDistanceKm)
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["maxDistanceKm"], message: "max distance must be at least min distance" });
+  if (scope.minWeightKg !== undefined && scope.maxWeightKg !== undefined && scope.minWeightKg > scope.maxWeightKg)
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["maxWeightKg"], message: "max weight must be at least min weight" });
+});
 const offerSchema = z.object({
   id: text(80).min(1), type: z.enum(["percent", "fixed", "override", "bundle", "freeItem", "freeDelivery"]),
   value: finiteMoney, scope: offerScopeSchema, minOrder: finiteMoney.optional(), days: z.array(z.number().int().min(0).max(6)).max(7).optional(),
@@ -168,11 +201,25 @@ const offerSchema = z.object({
 const toppingMetaSchema = z.object({ en: text(100).optional(), fi: text(100).optional(), priceMed: finiteMoney.optional(), pricePerhe: finiteMoney.optional() }).strict();
 const availabilityStateSchema = z.object({ off: z.boolean().optional(), offToday: date.optional() }).strict();
 const catMetaSchema = z.object({ img: imageSource.optional(), altEn: text(160).optional(), altFi: text(160).optional(), nameFi: text(120).optional(), nameEn: text(120).optional(), hidden: z.boolean().optional() }).strict();
+const deliveryRuleSchema = z.object({
+  id: text(80).min(1), name: text(120).min(1),
+  minDistanceKm: z.number().finite().min(0).max(500).optional(),
+  maxDistanceKm: z.number().finite().min(0).max(500).optional(),
+  minWeightKg: z.number().finite().min(0).max(1000).optional(),
+  maxWeightKg: z.number().finite().min(0).max(1000).optional(),
+  fee: finiteMoney, active: z.boolean(),
+}).strict().superRefine((rule, ctx) => {
+  if (rule.minDistanceKm !== undefined && rule.maxDistanceKm !== undefined && rule.minDistanceKm > rule.maxDistanceKm)
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["maxDistanceKm"], message: "max distance must be at least min distance" });
+  if (rule.minWeightKg !== undefined && rule.maxWeightKg !== undefined && rule.minWeightKg > rule.maxWeightKg)
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["maxWeightKg"], message: "max weight must be at least min weight" });
+});
 const dayHoursSchema = z.object({ open: hhmm, close: hhmm }).strict();
 const hoursSchema = z.record(z.enum(["0", "1", "2", "3", "4", "5", "6"]), dayHoursSchema.nullable());
 
 export const settingsSchema = z.object({
   paused: z.boolean(), hours: hoursSchema, deliveryFee: finiteMoney, minOrder: finiteMoney, radiusKm: z.number().finite().min(0).max(100),
+  readyTimeMinutes: z.number().int().min(5).max(240), deliveryRules: z.array(deliveryRuleSchema).max(100),
   vatRate: z.number().finite().min(0).max(1), toppings: z.array(text(100)).max(200), special: specialCfgSchema,
   blockedSlots: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/)).max(500),
   blockedDates: z.array(date).max(500), platforms: z.object({ wolt: url.or(z.literal("")), uberEats: url.or(z.literal("")) }).strict(),
@@ -188,6 +235,7 @@ export const settingsSchema = z.object({
 export const categoryCreateSchema = z.object({ title: text(60).min(1), en: text(60).optional() }).strict();
 export const categoryPatchSchema = z.object({ title: text(60).min(1).optional(), en: text(60).optional() }).strict();
 export const statusSchema = z.object({ status: z.enum(["placed", "accepted", "preparing", "ready", "completed"]) }).strict();
+export const readyTimeSchema = z.object({ minutes: z.number().int().min(5).max(240).nullable() }).strict();
 export const reorderSchema = z.object({ cat: text(40).min(1), order: z.array(text(60).min(1)).min(1).max(1000) }).strict();
 export const accountPatchSchema = z.object({
   name: text(80).min(1).optional(), phone: text(30).optional(), addresses: z.array(text(160)).max(6).optional(), marketing: z.boolean().optional(),

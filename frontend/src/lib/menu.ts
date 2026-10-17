@@ -110,6 +110,12 @@ function it(
   return { id: `${cat}-${seq}`, cat, name, desc, prices, tags, mods };
 }
 
+/** Keep stable seed IDs for retired rows while the consolidated variants use the first ID. */
+function reserveItemIds(count: number): MenuItem[] {
+  seq += count;
+  return [];
+}
+
 export const CATEGORIES: Category[] = [
   { id: "specials", title: "South Asian Specials", en: "South Asian Specials" },
   { id: "pizza1", title: "Pizzat · 1 täyte", en: "Pizzas · 1 topping" },
@@ -180,11 +186,17 @@ export const MENU: MenuItem[] = [
   // ── South Asian Specials ──
   { ...it("specials", "Halwa Puri Platter", one(9.9), "Puri, halwa, channa", ["popular", "veg"]), nameFi: "Halwa Puri -annos", availability: { days: [0], mode: "preorder_only", preorderCutoff: { day: 6, time: "18:00" }, leadTimeHours: 18 } },
   { ...it("specials", "Extra Puri", one(0.7), "Add-on", ["veg"]), availability: { days: [0], mode: "preorder_only", preorderCutoff: { day: 6, time: "18:00" }, leadTimeHours: 18 } },
-  it("specials", "Karachi Biryani", one(9.9), "Served with raita", ["popular", "spicy"]),
-  it("specials", "Biryani Meal", one(12.8), "Biryani + cold drink + chicken shami + raita + salad", ["popular"]),
-  it("specials", "Biryani Half Plate", one(4.9), "Served with raita"),
-  it("specials", "Samosa (1 pc)", one(2.8), "Served with ketchup & raita"),
-  it("specials", "Samosa (2 pcs)", one(5.2), "Served with ketchup & raita"),
+  { ...it("specials", "Karachi Biryani", [
+    { label: "Half", value: 4.9 },
+    { label: "Full", value: 9.9 },
+    { label: "Meal", value: 12.8 },
+  ], "Served with raita; meal includes drink, chicken shami and salad", ["popular", "spicy"]), nameFi: "Karachi Biryani", descFi: "Tarjoillaan raitan kanssa; ateriaan kuuluu juoma, kanashami ja salaatti." },
+  ...reserveItemIds(2), // specials-4 and specials-5 were the separate full/half entries
+  { ...it("specials", "Samosa", [
+    { label: "1pc", value: 2.8 },
+    { label: "2pc", value: 5.2 },
+  ], "Served with ketchup & raita"), nameFi: "Samosa", descFi: "Tarjoillaan ketsupin ja raitan kanssa." },
+  ...reserveItemIds(1), // specials-7 was the separate two-piece entry
   it("specials", "Shami Kebab", one(1.8)),
   it("specials", "Zinger Paratha", one(3.9), undefined, ["spicy"]),
   it("specials", "Tea", one(2.9), undefined, ["veg"]),

@@ -1,9 +1,10 @@
 "use client";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { eur } from "@/lib/format";
 import { todayStrHelsinki } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
 import { useShop, useTick } from "@/lib/store";
+import { apiAnalyticsReport, type AnalyticsReport } from "@/lib/api";
 import type { Order, OrderStatus, Reservation } from "@/lib/types";
 import { Ic } from "./icons";
 import { Bars, Confirm, DataTable, Drawer, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, Toolbar, downloadCSV, fmtDT, inputCls, statusTone, useDelayedReady, SkeletonRows, type Col, type FilterDef } from "./ui";
@@ -15,32 +16,30 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
   const { orders, reservations, users, orderStatus, settings, saveSettings, logAudit, toast } = useShop();
   const { t } = useLang();
   const [range, setRange] = useState<7 | 30>(7);
+  const [report, setReport] = useState<AnalyticsReport | null>(null);
   const [confirmPause, setConfirmPause] = useState(false);
   const ready = useDelayedReady("dash");
+  useEffect(() => {
+    let active = true;
+    apiAnalyticsReport(range).then((value) => { if (active) setReport(value); }).catch(() => { if (active) setReport(null); });
+    return () => { active = false; };
+  }, [range]);
   const today = todayStrHelsinki();
 
   const todays = orders.filter((o) => new Date(o.createdAt).toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" }) === today);
-  const revenue = todays.filter((o) => !o.refunded).reduce((a, o) => a + o.total, 0);
+  const revenue = todays.filter((o) => !o.refunded && ["paid", "demo_paid"].includes(String(o.paymentStatus))).reduce((a, o) => a + o.total, 0);
   const pending = orders.filter((o) => ["placed", "accepted", "preparing"].includes(orderStatus(o)) && !o.refunded).length;
   const upcoming = reservations.filter((r) => r.date >= today && r.status !== "declined").length;
   const newUsers = users.filter((u) => new Date(u.createdAt).toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" }) === today).length;
   const offCount = Object.values(settings.offItems).filter((s) => s.off || s.offToday === today).length;
 
-  const days = useMemo(() => {
-    return Array.from({ length: range }).map((_, i) => {
-      const d = new Date(Date.now() - (range - 1 - i) * 86400000);
-      const key = d.toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" });
-      const total = Math.round(orders.filter((o) => !o.refunded && new Date(o.createdAt).toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" }) === key).reduce((a, o) => a + o.total, 0));
-      return { label: d.toLocaleDateString("en-GB", { weekday: "short", timeZone: "Europe/Helsinki" }), value: total };
-    });
-  }, [orders, range]);
+  const days = useMemo(() => (report?.revenueByDay ?? []).map((day) => ({
+    label: new Date(`${day.date}T12:00:00`).toLocaleDateString("en-GB", { weekday: "short", timeZone: "Europe/Helsinki" }),
+    value: day.revenue,
+  })), [report]);
 
-  const top = useMemo(() => {
-    const count: Record<string, number> = {};
-    const since = Date.now() - range * 86400000;
-    orders.filter((o) => o.createdAt >= since && !o.refunded).forEach((o) => o.lines.forEach((l) => (count[l.name] = (count[l.name] ?? 0) + l.qty)));
-    return Object.entries(count).sort((a, b) => b[1] - a[1]).slice(0, 5);
-  }, [orders, range]);
+  const top = useMemo((): [string, number][] => (report?.items ?? []).slice(0, 5).map((item) => [item.name, item.quantity]), [report]);
+  const revenueToday = report?.revenueByDay.at(-1)?.revenue ?? revenue;
 
   const feed = useMemo(() => [...orders].sort((a, b) => b.createdAt - a.createdAt).slice(0, 6), [orders]);
 
@@ -49,10 +48,10 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
     <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-3 xl:grid-cols-6">
         <StatCard label={t("admin.orders") + " today"} value={todays.length} icon="orders" onClick={() => go("orders.queue")} />
-        <StatCard label="Revenue today" value={eur(revenue)} icon="analytics" tone="green" onClick={() => go("analytics.sales")} />
+        <StatCard label="Revenue today" value={eur(revenueToday)} icon="analytics" tone="green" onClick={() => go("analytics.sales")} />
         <StatCard label="Pending orders" value={pending} icon="clock" tone="orange" onClick={() => go("orders.queue")} />
         <StatCard label="Reservations" value={upcoming} icon="calendar" onClick={() => go("dining.list")} />
-        <StatCard label="Off-menu items" value={offCount} icon="warn" tone={offCount ? "red" : "gray"} onClick={() => go("menu.items")} />
+        <StatCard label="Off-menu items" value={offCount} icon="warn" tone={offCount ? "red" : "gray"} onClick={() => go("menu.off")} />
         <StatCard label="New sign-ups" value={newUsers} icon="users" tone="gold" onClick={() => go("customers")} />
       </div>
 
@@ -66,7 +65,7 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
               ))}
             </div>
           </div>
-          <div className="mt-3"><Bars data={days} height={140} /></div>
+          <div className="mt-3"><Bars data={days} height={140} formatValue={eur} /></div>
         </div>
         <div className="rounded-2xl border border-cherry/10 bg-cream-deep p-4">
           <p className="text-[11px] font-black uppercase tracking-wide text-cherry/50">Top selling · {range}d</p>
@@ -119,10 +118,14 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
         danger={!settings.paused}
         onNo={() => setConfirmPause(false)}
         onYes={() => {
-          saveSettings({ ...settings, paused: !settings.paused });
-          logAudit(`ordering ${settings.paused ? "resumed" : "paused"} from dashboard`);
-          toast(settings.paused ? "Ordering resumed" : "Ordering paused", settings.paused ? "ok" : "err");
-          setConfirmPause(false);
+          void (async () => {
+            const paused = !settings.paused;
+            if (await saveSettings({ ...settings, paused })) {
+              logAudit(`ordering ${paused ? "paused" : "resumed"} from dashboard`);
+              toast(paused ? "Ordering paused" : "Ordering resumed", paused ? "err" : "ok");
+            }
+            setConfirmPause(false);
+          })();
         }}
       />
     </div>
@@ -131,14 +134,21 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
 
 /* ══ ORDERS ══ */
 export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) {
-  const { orders, orderStatus, setOrderStatus, refundOrder, toast, logAudit } = useShop();
+  const { orders, settings, orderStatus, setOrderStatus, setOrderReadyTime, refundOrder, toast, logAudit } = useShop();
   const [fStatus, setFStatus] = useState("all");
   const [fType, setFType] = useState("all");
   const [fDate, setFDate] = useState("all");
   const [group, setGroup] = useState("none");
   const [detail, setDetail] = useState<Order | null>(null);
   const [refundReason, setRefundReason] = useState("");
+  const [readyMinutes, setReadyMinutes] = useState("25");
+  const [savingReadyTime, setSavingReadyTime] = useState(false);
   const ready = useDelayedReady(mode);
+
+  useEffect(() => {
+    if (!detail?.estimatedReadyAt) { setReadyMinutes(String(settings.readyTimeMinutes)); return; }
+    setReadyMinutes(String(Math.max(5, Math.min(240, Math.ceil((detail.estimatedReadyAt - Date.now()) / 60_000)))));
+  }, [detail?.id, detail?.estimatedReadyAt, settings.readyTimeMinutes]);
 
   const base = useMemo(() => {
     let list = [...orders].sort((a, b) => b.createdAt - a.createdAt);
@@ -185,6 +195,7 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
       key: "total", label: "Total", sort: (o) => o.total,
       render: (o) => <span className="font-black tabular-nums">{eur(o.total)}</span>,
     },
+    { key: "ready", label: "Ready estimate", hideMd: true, sort: (o) => o.estimatedReadyAt ?? 0, render: (o) => o.estimatedReadyAt ? <span className="whitespace-nowrap text-xs font-bold text-cherry/60">{new Intl.DateTimeFormat("fi-FI", { timeZone: "Europe/Helsinki", hour: "2-digit", minute: "2-digit" }).format(o.estimatedReadyAt)}</span> : <span className="text-xs text-cherry/35">—</span> },
     {
       key: "status", label: "Status", sort: (o) => orderStatus(o),
       render: (o) => (
@@ -297,9 +308,26 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
                 </ul>
               </div>
             </div>
+            <section className="space-y-3 rounded-xl border border-gold/50 bg-gold/10 p-3">
+              <div><h3 className="font-black text-cherry">Customer ready-time estimate</h3><p className="text-xs text-cherry/60">This timestamp is saved to the order and refreshed on the customer tracking page.</p></div>
+              {detail.estimatedReadyAt && <p className="text-sm font-black text-cherry">Current estimate: {new Intl.DateTimeFormat("fi-FI", { timeZone: "Europe/Helsinki", dateStyle: "medium", timeStyle: "short" }).format(detail.estimatedReadyAt)}</p>}
+              <div className="flex flex-wrap items-end gap-2">
+                <Field label="Minutes from now (5–240)"><input type="number" min="5" max="240" step="5" value={readyMinutes} onChange={(e) => setReadyMinutes(e.target.value)} className={inputCls + " w-36"} /></Field>
+                <PrimaryBtn icon="clock" disabled={savingReadyTime} onClick={async () => {
+                  const minutes = Number(readyMinutes);
+                  if (!Number.isInteger(minutes) || minutes < 5 || minutes > 240) { toast("Enter a ready time between 5 and 240 minutes", "err"); return; }
+                  setSavingReadyTime(true);
+                  const updated = await setOrderReadyTime(detail.id, minutes);
+                  setSavingReadyTime(false);
+                  if (updated) { setDetail(updated); toast("Customer ready-time estimate saved"); }
+                }}>{savingReadyTime ? "Saving…" : "Set estimate"}</PrimaryBtn>
+                {detail.estimatedReadyAt && <GhostBtn onClick={async () => { const updated = await setOrderReadyTime(detail.id, null); if (updated) { setDetail(updated); toast("Ready-time estimate cleared"); } }}>Clear</GhostBtn>}
+              </div>
+              <div className="flex flex-wrap gap-1.5">{[10, 15, 20, 30, 45].map((minutes) => <button key={minutes} type="button" onClick={() => setReadyMinutes(String(minutes))} className="min-h-[34px] rounded-lg border border-cherry/15 bg-cream px-2.5 text-xs font-black text-cherry">+{minutes} min</button>)}</div>
+            </section>
             <dl className="space-y-1 rounded-xl border border-cherry/10 bg-cream p-3">
               <div className="flex justify-between"><dt>Subtotal</dt><dd className="tabular-nums">{eur(detail.subtotal)}</dd></div>
-              <div className="flex justify-between"><dt>Delivery</dt><dd className="tabular-nums">{detail.deliveryFee ? eur(detail.deliveryFee) : "—"}</dd></div>
+              <div className="flex justify-between"><dt>Delivery</dt><dd className="tabular-nums">{detail.deliveryFee ? eur(detail.deliveryFee) : detail.discount?.freeDelivery ? "Free" : "—"}</dd></div>
               {detail.discount && detail.discount.amount > 0 && <div className="flex justify-between text-[#2e7d32]"><dt>− {detail.discount.title}</dt><dd>−{eur(detail.discount.amount)}</dd></div>}
               <div className="flex justify-between text-xs text-cherry/60"><dt>VAT</dt><dd className="tabular-nums">{eur(detail.vat)}</dd></div>
               <div className="flex justify-between font-display text-lg font-black text-cherry"><dt>Total</dt><dd className="tabular-nums">{eur(detail.total)}</dd></div>
@@ -355,10 +383,43 @@ function printTicket(o: Order) {
 
 /* ══ DINING ══ */
 export function DiningView({ mode }: { mode: "calendar" | "list" | "slots" }) {
-  const { reservations, setReservationStatus, settings, saveSettings, toast, logAudit } = useShop();
+  const { reservations, setReservationStatus, settings, saveSettings, toast } = useShop();
   const [month, setMonth] = useState(() => { const d = new Date(); return { y: d.getFullYear(), m: d.getMonth() }; });
   const [selRes, setSelRes] = useState<Reservation | null>(null);
+  const [blockedSlotsText, setBlockedSlotsText] = useState(settings.blockedSlots.join("\n"));
+  const [blockedDatesText, setBlockedDatesText] = useState(settings.blockedDates.join("\n"));
+  const [savingBlocks, setSavingBlocks] = useState(false);
+  const [blockError, setBlockError] = useState("");
   const ready = useDelayedReady(mode);
+
+  useEffect(() => {
+    setBlockedSlotsText(settings.blockedSlots.join("\n"));
+    setBlockedDatesText(settings.blockedDates.join("\n"));
+  }, [settings.blockedSlots, settings.blockedDates]);
+
+  const isCalendarDate = (value: string) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [year, month, day] = value.split("-").map(Number);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
+  };
+  const saveBlockedSchedule = async () => {
+    const blockedSlots = blockedSlotsText.split("\n").map((value) => value.trim()).filter(Boolean);
+    const blockedDates = blockedDatesText.split("\n").map((value) => value.trim()).filter(Boolean);
+    if (blockedSlots.some((value) => !/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/.test(value))) {
+      setBlockError("Use YYYY-MM-DDTHH:MM for each blocked slot."); return;
+    }
+    if (blockedDates.some((value) => !isCalendarDate(value))) {
+      setBlockError("Use YYYY-MM-DD for each blackout date."); return;
+    }
+    if (new Set(blockedSlots).size !== blockedSlots.length || new Set(blockedDates).size !== blockedDates.length) {
+      setBlockError("Remove duplicate slots and dates before saving."); return;
+    }
+    setSavingBlocks(true); setBlockError("");
+    const ok = await saveSettings({ ...settings, blockedSlots, blockedDates });
+    setSavingBlocks(false);
+    if (ok) toast("Reservation slot settings saved and reloaded from the database");
+  };
 
   if (mode === "calendar") {
     const first = new Date(month.y, month.m, 1);
@@ -420,12 +481,14 @@ export function DiningView({ mode }: { mode: "calendar" | "list" | "slots" }) {
       <div className="max-w-2xl space-y-4 rounded-2xl border border-cherry/10 bg-cream-deep/40 p-5">
         <p className="text-sm font-black text-cherry">Table / slot settings</p>
         <Field label="Blocked slots (date-time keys, one per line)">
-          <textarea value={settings.blockedSlots.join("\n")} onChange={(e) => saveSettings({ ...settings, blockedSlots: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })} rows={4} className={inputCls} />
+          <textarea value={blockedSlotsText} onChange={(e) => { setBlockedSlotsText(e.target.value); setBlockError(""); }} rows={4} className={inputCls} placeholder="2026-10-25T18:30" />
         </Field>
         <Field label="Blackout dates (YYYY-MM-DD, one per line)">
-          <textarea value={settings.blockedDates.join("\n")} onChange={(e) => saveSettings({ ...settings, blockedDates: e.target.value.split("\n").map((s) => s.trim()).filter(Boolean) })} rows={4} className={inputCls} />
+          <textarea value={blockedDatesText} onChange={(e) => { setBlockedDatesText(e.target.value); setBlockError(""); }} rows={4} className={inputCls} placeholder="2026-12-25" />
         </Field>
-        <p className="text-xs text-cherry/60">Max party size and concurrent slots are enforced by the public reservation flow against these rules.</p>
+        <p className="text-xs text-cherry/60">Max party size and concurrent slots are enforced by the public reservation flow against these rules. Changes stay in this draft until saved.</p>
+        {blockError && <p role="alert" className="rounded-lg bg-brick/10 p-2 text-xs font-bold text-brick">{blockError}</p>}
+        <div className="flex justify-end"><PrimaryBtn icon="save" disabled={savingBlocks} onClick={() => { void saveBlockedSchedule(); }}>{savingBlocks ? "Saving…" : "Save slot settings"}</PrimaryBtn></div>
       </div>
     );
   }

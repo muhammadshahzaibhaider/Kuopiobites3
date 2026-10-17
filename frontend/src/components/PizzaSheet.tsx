@@ -60,24 +60,15 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
   };
 
   const add = () => {
-    const sizeLabel = item.prices[variant].label;
-    const opt: string[] = [];
-    if (incLabels.length) opt.push(`Sisältää: ${incLabels.join(", ")}`);
-    if (extraList.length)
-      opt.push(
-        `${isBuilder ? "Täytteet" : "Lisätäytteet"}: ` +
-          extraList
-            .map((e) => `${e.label}${e.count > 1 ? ` ×${e.count}` : ""}${isBuilder ? "" : ` (+${eur(toppingExtraPrice(settings, e.label, variant) * e.count)})`}`)
-            .join(", ")
-      );
-    if (note.trim()) opt.push(`Note: ${note.trim()}`);
+    const sizeLabel = item.prices[variant].label ?? "";
     addLine({
       itemId: item.id,
-      name: item.name,
+      name: trName(lang, item),
       variantLabel: sizeLabel,
       qty,
       unitPrice: unit,
-      options: opt,
+      // Pizza selections stay structured; CartLine.options contains only raw modifier labels.
+      options: [],
       note: note.trim() || undefined,
       pizza: {
         sizeLabel,

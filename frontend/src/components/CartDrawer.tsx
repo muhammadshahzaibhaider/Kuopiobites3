@@ -3,7 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { eur, fmtDate, vatPct } from "@/lib/format";
-import { isItemOff } from "@/lib/v3";
+import { cartOptionLabel, isItemOff } from "@/lib/v3";
 import { whatsappUrl } from "@/lib/menu";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
@@ -11,14 +11,14 @@ import { LineThumb, QtyStepper } from "./ui";
 import WhatsAppIcon from "./WhatsAppIcon";
 
 export default function CartDrawer() {
-  const { cart, cartOpen, setCartOpen, setQty, removeLine, cartSubtotal, settings } = useShop();
-  const { t } = useLang();
+  const { cart, cartOpen, setCartOpen, setQty, removeLine, cartSubtotal, settings, adminItems } = useShop();
+  const { t, lang } = useLang();
   const router = useRouter();
   const scheduled = cart.find((l) => l.preorder)?.preorder;
   const unavailable = cart.filter((l) => isItemOff(settings, l.itemId));
   const whatsappMessage = [
     "Hello Kuopio Bites! I'd like to order:",
-    ...cart.map((l) => `- ${l.name} | ${l.variantLabel || "standard"} | ${l.options.length ? l.options.join(", ") : "no options"} | qty ${l.qty} | ${eur(l.unitPrice * l.qty)}`),
+    ...cart.map((l) => `- ${l.name} | ${l.variantLabel || "standard"} | ${l.options.length ? l.options.map((option) => cartOptionLabel(adminItems.find((item) => item.id === l.itemId), settings, lang, option)).join(", ") : "no options"} | qty ${l.qty} | ${eur(l.unitPrice * l.qty)}`),
     `Total: ${eur(cartSubtotal)}`,
   ].join("\n");
 
@@ -97,7 +97,7 @@ export default function CartDrawer() {
                             {l.options.length > 0 && (
                               <ul className="mt-1 space-y-0.5 text-xs text-cherry/70">
                                 {l.options.map((o, i) => (
-                                  <li key={i}>· {o}</li>
+                                  <li key={i}>· {cartOptionLabel(adminItems.find((item) => item.id === l.itemId), settings, lang, o)}</li>
                                 ))}
                               </ul>
                             )}

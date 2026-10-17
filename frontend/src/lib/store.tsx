@@ -24,13 +24,18 @@ export interface Toast { id: string; msg: string; kind: "ok" | "err" }
 interface ShopCtx {
   settings: Settings;
   saveSettings: (s: Settings) => Promise<boolean>;
+  adminItems: MenuItem[];
   overrides: Overrides; // compat shim — backend data is already effective
   patchItem: (id: string, patch: { soldOut?: boolean; name?: string; prices?: number[] }) => Promise<boolean>;
+  saveMenuItem: (item: MenuItem) => Promise<boolean>;
+  archiveMenuItem: (id: string, archived: boolean) => Promise<boolean>;
   moveItem: (cat: string, id: string, dir: -1 | 1) => Promise<boolean>;
   moveItemTo: (cat: string, dragId: string, overId: string) => Promise<boolean>;
-  addItem: (cat: string, name: string, price: number, desc?: string, image?: import("./types").UploadedImg) => Promise<boolean>;
+  addItem: (item: Omit<MenuItem, "id">) => Promise<boolean>;
   removeAdded: (id: string) => Promise<boolean>;
   addCat: (title: string, en: string) => Promise<boolean>;
+  updateCat: (id: string, title: string, en: string) => Promise<boolean>;
+  deleteCat: (id: string) => Promise<boolean>;
   setItemText: (lang: Lang, id: string, text: { name?: string; desc?: string }) => Promise<boolean>;
   effectiveMenu: (items: MenuItem[], lang?: Lang) => MenuItem[];
   categories: () => Category[];
@@ -67,13 +72,14 @@ interface ShopCtx {
   cartCount: number;
   cartSubtotal: number;
   pulse: number;
-  priceCart: (type: "pickup" | "delivery", code?: string) => Promise<void>;
-  serverPricing: { total: number; subtotal: number; deliveryFee: number; vat: number; discount?: { title: string; amount: number } } | null;
+  priceCart: (type: "pickup" | "delivery", code?: string, address?: string, lang?: Lang) => Promise<void>;
+  serverPricing: { total: number; subtotal: number; deliveryFee: number; vat: number; deliveryDistanceKm?: number; weightKg?: number; discount?: { title: string; amount: number; offerId?: string; freeDelivery?: boolean } } | null;
 
   orders: Order[];
   startCheckout: (o: Omit<Order, "id" | "createdAt" | "paymentId" | "paymentStatus"> & { lang?: Lang; code?: string }) => Promise<{ mode: "stripe" | "demo"; url?: string; sessionId?: string; orderId?: string; order?: Order }>;
   placeOrder: (o: Omit<Order, "id" | "createdAt" | "paymentId" | "paymentStatus">) => Promise<Order>;
   setOrderStatus: (id: string, s: OrderStatus) => Promise<boolean>;
+  setOrderReadyTime: (id: string, minutes: number | null) => Promise<Order | null>;
   refundOrder: (id: string) => Promise<boolean>;
   orderStatus: (o: Order) => OrderStatus;
 
@@ -122,6 +128,7 @@ const clearPending = () => { try { sessionStorage.removeItem(PENDING_ACTION_KEY)
 
 export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [adminItems, setAdminItems] = useState<MenuItem[]>(BASE_ITEMS);
   /* Session identity comes from the HttpOnly cookie via /api/auth/session;
      profile data is in memory only, not localStorage. */
   const [user, setUser] = useState<User | null>(null);
@@ -224,11 +231,17 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
         setCart([]);
       }
       setStaffRole(staffSession.role);
+      if (staffSession.role === "manager") {
+        const managerItems = await api.apiAdminItems(true).catch(() => items);
+        setAdminItems(managerItems);
+      } else {
+        setAdminItems(items);
+      }
       if (staffSession.role) {
         const [o, r] = await Promise.all([api.apiListOrders(), api.apiListReservations()]);
         setOrders(o); setReservations(r);
         api.apiCustomers().then((cs) =>
-          setUsers(cs.map((c) => ({ ...c, marketing: !!c.marketing, addresses: [], createdAt: c.created_at } as unknown as User)))
+          setUsers(cs.map((c) => ({ ...c, marketing: !!c.marketing, addresses: [], createdAt: c.created_at, orderCount: c.orderCount, lifetimeSpend: c.lifetimeSpend } as unknown as User)))
         ).catch(() => {}); // kitchen role has no customer reads
       } else if (session.user) {
         api.apiAccountOrders().then(setOrders).catch(() => {});
@@ -370,24 +383,25 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const cartCount = cart.reduce((a, l) => a + l.qty, 0);
   const cartSubtotal = cart.reduce((a, l) => a + l.qty * l.unitPrice, 0);
 
-  const priceCart: ShopCtx["priceCart"] = async (type, code) => {
-    if (!cart.length) return setServerPricing(null);
+  const priceCart = useCallback<ShopCtx["priceCart"]>(async (type, code, address, lang = "en") => {
+    if (!cart.length) { setServerPricing(null); return; }
+    setServerPricing(null);
     try {
-      const p = await api.apiPriceCart(cart, type, "en", code);
-      setServerPricing({ total: p.total, subtotal: p.subtotal, deliveryFee: p.deliveryFee, vat: p.vat, discount: p.discount });
+      const p = await api.apiPriceCart(cart, type, lang, code, address);
+      setServerPricing({ total: p.total, subtotal: p.subtotal, deliveryFee: p.deliveryFee, vat: p.vat, deliveryDistanceKm: p.deliveryDistanceKm, weightKg: p.weightKg, discount: p.discount });
       // displayed line prices come from the server too (only touch state on real change,
-      // otherwise the [cart] effect dependency would re-trigger forever)
+      // otherwise the cart pricing effect would re-trigger forever)
       setCart((prev) => {
         let changed = false;
-        const next = prev.map((l) => {
-          const s = p.lines.find((x) => x.key === l.key || (x.itemId === l.itemId && x.variantLabel === l.variantLabel));
-          if (s && s.unitPrice !== l.unitPrice) { changed = true; return { ...l, unitPrice: s.unitPrice }; }
-          return l;
+        const next = prev.map((line) => {
+          const priced = p.lines.find((entry) => entry.key === line.key || (entry.itemId === line.itemId && entry.variantLabel === line.variantLabel));
+          if (priced && priced.unitPrice !== line.unitPrice) { changed = true; return { ...line, unitPrice: priced.unitPrice }; }
+          return line;
         });
         return changed ? next : prev;
       });
     } catch (e) { toast((e as Error).message, "err"); }
-  };
+  }, [cart, toast]);
 
   /* ── menu admin (backend CRUD) ── */
   const patchItem: ShopCtx["patchItem"] = async (id, patch) => {
@@ -407,6 +421,28 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       return true;
     } catch {
       toast("Item could not be saved", "err");
+      return false;
+    }
+  };
+
+  const saveMenuItem: ShopCtx["saveMenuItem"] = async (item) => {
+    try {
+      await api.apiPutItem(item);
+      await refresh();
+      return true;
+    } catch {
+      toast("Item could not be saved", "err");
+      return false;
+    }
+  };
+
+  const archiveMenuItem: ShopCtx["archiveMenuItem"] = async (id, archived) => {
+    try {
+      await api.apiArchiveItem(id, archived);
+      await refresh();
+      return true;
+    } catch {
+      toast(archived ? "Item could not be archived" : "Item could not be restored", "err");
       return false;
     }
   };
@@ -438,19 +474,12 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
   };
-  const addItem: ShopCtx["addItem"] = async (cat, name, price, desc, image) => {
+  const addItem: ShopCtx["addItem"] = async (input) => {
     try {
-      const item = {
-        id: "custom-" + uid().slice(0, 6),
-        cat,
-        name,
-        desc: desc?.trim() || undefined,
-        imageUrl: image?.src,
-        prices: [{ label: "", value: price }],
-      } as MenuItem;
+      const item: MenuItem = { ...input, id: "custom-" + uid().slice(0, 6) };
       await api.apiPostItem(item);
-      await refresh();
-      if (image) {
+      if (item.imageUrl) {
+        const image = { src: item.imageUrl, altEn: item.name, altFi: item.nameFi ?? item.name };
         const saved = await saveSettings({ ...settings, itemImages: { ...settings.itemImages, [item.id]: image } });
         if (!saved) return false;
       }
@@ -479,6 +508,15 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
   };
+  const updateCat: ShopCtx["updateCat"] = async (id, title, en) => {
+    try { await api.apiPutCategory(id, { title, en }); await refresh(); return true; }
+    catch { toast("Category could not be saved", "err"); return false; }
+  };
+  const deleteCat: ShopCtx["deleteCat"] = async (id) => {
+    try { await api.apiDeleteCategory(id); await refresh(); return true; }
+    catch { toast("Category could not be deleted. It may still contain archived or active items.", "err"); return false; }
+  };
+
   const setItemText: ShopCtx["setItemText"] = async (lang, id, text) => {
     try {
       const m = allItems.find((x) => x.id === id);
@@ -561,6 +599,16 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
   };
+  const setOrderReadyTime: ShopCtx["setOrderReadyTime"] = async (id, minutes) => {
+    try {
+      const updated = await api.apiPatchOrderReadyTime(id, minutes);
+      setOrders((current) => current.map((order) => order.id === id ? { ...order, ...updated } : order));
+      return updated;
+    } catch {
+      toast("Order ready-time estimate could not be saved", "err");
+      return null;
+    }
+  };
   const refundOrder: ShopCtx["refundOrder"] = async (id) => {
     try {
       const upd = await api.apiRefundOrder(id);
@@ -576,6 +624,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     const el = (Date.now() - o.createdAt) / 1000;
     if (el < 45) return "placed";
     if (el < 120) return "accepted";
+    if (o.estimatedReadyAt) return Date.now() < o.estimatedReadyAt ? "preparing" : "ready";
     if (el < 300) return "preparing";
     if (el < 720) return "ready";
     return "completed";
@@ -609,9 +658,9 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   };
 
   const value: ShopCtx = {
-    settings, saveSettings,
+    settings, saveSettings, adminItems,
     overrides: { items: {}, order: {} },
-    patchItem, moveItem, moveItemTo, addItem, removeAdded, addCat, setItemText,
+    patchItem, saveMenuItem, archiveMenuItem, moveItem, moveItemTo, addItem, removeAdded, addCat, updateCat, deleteCat, setItemText,
     effectiveMenu, categories,
     user, authChecked, users, register, login, logout, updateUser, changePassword, favorites, isFavorite, toggleFavorite, adminLogin, adminLogout, staffRole,
     cart, addLine, setQty, removeLine, clearCart, loginGate,
@@ -619,7 +668,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     closeLoginGate: () => setLoginGate(false),
     cartOpen, setCartOpen, cartCount, cartSubtotal,
     pulse, priceCart, serverPricing,
-    orders, startCheckout, placeOrder, setOrderStatus, refundOrder, orderStatus,
+    orders, startCheckout, placeOrder, setOrderStatus, setOrderReadyTime, refundOrder, orderStatus,
     reservations, addReservation, cancelReservation, setReservationStatus,
     toasts, toast, logAudit, refresh,
   };

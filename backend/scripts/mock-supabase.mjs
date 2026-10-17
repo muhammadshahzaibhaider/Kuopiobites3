@@ -296,7 +296,8 @@ const server = http.createServer((req, res) => {
             }
             /* Row id equals the Map key: PATCH/DELETE filter .eq("id", …) and
                then delete by row.id — a mismatched id would silently no-op. */
-            store.set(key, { id: key, created_at: nowIso(), ...item });
+            const defaults = table === "menu_items" ? { available: true, sold_out_on: null, weight_kg: null, is_archived: false } : {};
+            store.set(key, { id: key, created_at: nowIso(), ...defaults, ...item });
           }
           res.writeHead(201, { "content-type": "application/json" });
           const wantsObject = String(req.headers.accept || "").includes("pgrst.object+json");

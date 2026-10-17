@@ -22,6 +22,7 @@ type OrderRow = {
   address: string | null;
   note: string | null;
   scheduled_for: string | null;
+  estimated_ready_at?: string | null;
   created_at: string;
   order_items: Array<{
     id: string;
@@ -75,7 +76,12 @@ export function toApiOrder(row: OrderRow): Order {
     })),
     subtotal: Number(row.subtotal),
     deliveryFee: Number(row.delivery_fee),
-    discount: row.discount_title || row.offer_id ? { title: row.discount_title ?? "", amount: Number(row.discount), offerId: row.offer_id ?? undefined } : undefined,
+    discount: row.discount_title || row.offer_id ? {
+      title: row.discount_title ?? "",
+      amount: Number(row.discount),
+      offerId: row.offer_id ?? undefined,
+      freeDelivery: row.type === "delivery" && Number(row.delivery_fee) === 0 && Boolean(row.offer_id),
+    } : undefined,
     total: Number(row.total),
     vat: Number(row.vat),
     scheduled,
@@ -83,6 +89,7 @@ export function toApiOrder(row: OrderRow): Order {
     paymentStatus: row.payment_status === "paid" && paymentRef.startsWith("demo:") ? "demo_paid" : row.payment_status,
     paymentId: paymentRef.startsWith("pi_") ? paymentRef : undefined,
     checkoutSessionId: paymentRef.startsWith("cs_") ? paymentRef : undefined,
+    estimatedReadyAt: row.estimated_ready_at ? Date.parse(row.estimated_ready_at) : undefined,
     userId: row.customer_id ?? "",
   } as Order;
 }

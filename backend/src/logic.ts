@@ -1,4 +1,5 @@
 import { listItems } from "./supabase-menu";
+import { cartWeightKg, deliveryFeeFor, resolveDeliveryDistanceKm } from "./delivery";
 import { loadSettings as loadSupabaseSettings } from "./supabase-settings";
 import {
   builderUnitPrice, computeDiscount, isCatOff, isItemOff, optionOff, pizzaUnitPrice, todayDayH, validatePreorder,
@@ -40,6 +41,10 @@ export function expectedUnitPrice(s: Settings, items: MenuItem[], line: CartLine
     const group = groups.find((g) => g.options.some((o) => o.label === opt));
     const found = group?.options.find((o) => o.label === opt);
     if (!group || !found) throw new Error("validation.invalidOption");
+    if (group.id === "topping") {
+      if (!s.toppings.includes(opt)) throw new Error("validation.invalidOption");
+      if (optionOff(s, "topping", opt)) throw new Error("avail.unavailable");
+    }
     if (optionOff(s, `mod:${m.id}:${group.id}`, opt) || optionOff(s, "dip", opt)) throw new Error("avail.unavailable");
     price += found.price;
   }
@@ -56,7 +61,9 @@ export interface PricedCart {
   lines: CartLine[];
   subtotal: number;
   deliveryFee: number;
-  discount: { title: string; amount: number; offerId?: string } | undefined;
+  deliveryDistanceKm?: number;
+  weightKg: number;
+  discount: { title: string; amount: number; offerId?: string; freeDelivery?: boolean } | undefined;
   total: number;
   vat: number;
 }
@@ -68,7 +75,8 @@ export async function priceCart(
   type: "pickup" | "delivery",
   lang: Lang,
   code?: string,
-  knownItems?: MenuItem[]
+  knownItems?: MenuItem[],
+  address?: string
 ): Promise<PricedCart> {
   const items = knownItems ?? await effectiveItems();
   const repriced = lines.map((l) => {
@@ -81,18 +89,22 @@ export async function priceCart(
     };
   });
   const subtotal = Math.round(repriced.reduce((a, l) => a + l.qty * l.unitPrice, 0) * 100) / 100;
-  const disc = computeDiscount(s, repriced, subtotal, lang, code);
-  let deliveryFee = type === "delivery" ? s.deliveryFee : 0;
-  if (disc.freeDelivery) deliveryFee = 0;
+  const weightKg = cartWeightKg(items, repriced);
+  const deliveryDistanceKm = type === "delivery" ? await resolveDeliveryDistanceKm(address) : undefined;
+  const disc = computeDiscount(s, repriced, subtotal, lang, code, { type, distanceKm: deliveryDistanceKm, weightKg }, items);
+  let deliveryFee = type === "delivery" ? deliveryFeeFor(s, deliveryDistanceKm, weightKg) : 0;
+  if (disc.freeDelivery && type === "delivery") deliveryFee = 0;
   const total = Math.max(0, Math.round((subtotal - disc.amount + deliveryFee) * 100) / 100);
   // prices include VAT; vatRate is a fraction (0.135 = 13.5 %), so the VAT share is total × r / (1 + r)
   const vat = Math.round(((total * s.vatRate) / (1 + s.vatRate)) * 100) / 100;
   return {
-    lines: repriced,
+    lines: repriced.map((line) => line.pizza ? { ...line, options: [] } : line),
     subtotal,
     deliveryFee,
+    deliveryDistanceKm,
+    weightKg,
     discount: disc.amount || disc.freeDelivery
-      ? { title: disc.title, amount: disc.amount, offerId: disc.offer?.id }
+      ? { title: disc.title, amount: disc.amount, offerId: disc.offer?.id, freeDelivery: disc.freeDelivery }
       : undefined,
     total,
     vat,
@@ -102,7 +114,7 @@ export async function priceCart(
 /** full order validation used by POST /api/orders */
 export async function validateOrder(
   s: Settings,
-  body: { type: "pickup" | "delivery"; lines: CartLine[]; scheduled?: { date: string; time: string }; lang?: Lang; code?: string }
+  body: { type: "pickup" | "delivery"; lines: CartLine[]; scheduled?: { date: string; time: string }; lang?: Lang; code?: string; address?: string }
 ): Promise<PricedCart> {
   if (s.paused) throw new Error("order.paused");
   const items = await effectiveItems();
@@ -123,7 +135,10 @@ export async function validateOrder(
   if (preErr) throw new Error(preErr);
   /* Deliberately no client-total comparison: totals are recalculated from the
      current menu/settings and the persisted server total is authoritative. */
-  return priceCart(s, body.lines, body.type, body.lang ?? "en", body.code, items);
+  const priced = await priceCart(s, body.lines, body.type, body.lang ?? "en", body.code, items, body.address);
+  if (body.type === "delivery" && priced.deliveryDistanceKm !== undefined && s.radiusKm > 0 && priced.deliveryDistanceKm > s.radiusKm)
+    throw new Error("order.deliveryRadius");
+  return priced;
 }
 
 /** time-based progression (moved from the old client store) */
@@ -132,6 +147,7 @@ export function orderStatus(o: Order): string {
   const el = (Date.now() - o.createdAt) / 1000;
   if (el < 45) return "placed";
   if (el < 120) return "accepted";
+  if (o.estimatedReadyAt) return Date.now() < o.estimatedReadyAt ? "preparing" : "ready";
   if (el < 300) return "preparing";
   if (el < 720) return "ready";
   return "completed";

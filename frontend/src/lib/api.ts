@@ -67,12 +67,12 @@ export const apiMergeCart = (lines: CartLine[]) => api<CartLine[]>("/api/cart", 
 export const apiChangePassword = (current: string, next: string) => api<{ ok: true }>("/api/account/password", { method: "PUT", body: { current, next } });
 export const apiAccountOrders = () => api<Order[]>("/api/account/orders");
 export const apiCustomers = () =>
-  api<{ id: string; name: string; email: string; phone: string; marketing: number; created_at: number }[]>("/api/customers", { staff: true });
+  api<{ id: string; name: string; email: string; phone: string; marketing: number; created_at: number; orderCount: number; lifetimeSpend: number }[]>("/api/customers", { staff: true });
 
 /* ── pricing (server is the price authority) ───────────────────────────── */
-export const apiPriceCart = (lines: CartLine[], type: "pickup" | "delivery", lang: "en" | "fi", code?: string) =>
-  api<{ lines: CartLine[]; subtotal: number; deliveryFee: number; total: number; vat: number; discount?: { title: string; amount: number } }>(
-    "/api/cart/price", { method: "POST", body: { lines, type, lang, code } });
+export const apiPriceCart = (lines: CartLine[], type: "pickup" | "delivery", lang: "en" | "fi", code?: string, address?: string) =>
+  api<{ lines: CartLine[]; subtotal: number; deliveryFee: number; deliveryDistanceKm?: number; weightKg: number; total: number; vat: number; discount?: { title: string; amount: number; offerId?: string; freeDelivery?: boolean } }>(
+    "/api/cart/price", { method: "POST", body: { lines, type, lang, code, address } });
 
 /* ── orders ────────────────────────────────────────────────────────────── */
 export type CheckoutInput = {
@@ -87,6 +87,8 @@ export const apiListOrders = () => api<Order[]>("/api/orders", { staff: true });
 export const apiGetOrder = (id: string) => api<Order>(`/api/orders/${id}`);
 export const apiPatchOrderStatus = (id: string, status: OrderStatus) =>
   api<Order>(`/api/orders/${id}/status`, { method: "PATCH", body: { status }, staff: true });
+export const apiPatchOrderReadyTime = (id: string, minutes: number | null) =>
+  api<Order>(`/api/orders/${id}/ready-time`, { method: "PATCH", body: { minutes }, staff: true });
 export const apiRefundOrder = (id: string) =>
   api<Order>(`/api/orders/${id}/refund`, { method: "POST", staff: true });
 
@@ -106,14 +108,39 @@ export const apiSaveSpecial = (body: { special?: unknown; todaysSpecials?: unkno
 export const apiPutItem = (m: MenuItem) => api<MenuItem>(`/api/items/${m.id}`, { method: "PUT", body: m, staff: true });
 export const apiPostItem = (m: MenuItem) => api<MenuItem>("/api/items", { method: "POST", body: m, staff: true });
 export const apiDeleteItem = (id: string) => api<{ ok: true }>(`/api/items/${id}`, { method: "DELETE", staff: true });
+export const apiArchiveItem = (id: string, archived: boolean) =>
+  api<{ id: string; archived: boolean }>(`/api/items/${encodeURIComponent(id)}/archive`, { method: "PATCH", body: { archived }, staff: true });
+export const apiAdminItems = (includeArchived = true) =>
+  api<MenuItem[]>(`/api/admin/items?includeArchived=${includeArchived ? "true" : "false"}`, { staff: true });
+export const apiPostPromotion = (promotion: Omit<import("./types").Offer, "id" | "uses">) =>
+  api<import("./types").Offer>("/api/promotions", { method: "POST", body: promotion, staff: true });
+export const apiPutPromotion = (id: string, promotion: Omit<import("./types").Offer, "id" | "uses">) =>
+  api<import("./types").Offer>(`/api/promotions/${encodeURIComponent(id)}`, { method: "PUT", body: promotion, staff: true });
+export const apiDeletePromotion = (id: string) =>
+  api<{ ok: true }>(`/api/promotions/${encodeURIComponent(id)}`, { method: "DELETE", staff: true });
 export const apiReorderItems = (cat: string, order: string[]) =>
   api<{ ok: true }>(`/api/items/reorder`, { method: "PATCH", body: { cat, order }, staff: true });
 export const apiPostCategory = (title: string, en: string) =>
   api<{ id: string }>(`/api/categories`, { method: "POST", body: { title, en }, staff: true });
+export const apiPutCategory = (id: string, patch: { title?: string; en?: string }) =>
+  api<{ ok: true }>(`/api/categories/${encodeURIComponent(id)}`, { method: "PUT", body: patch, staff: true });
+export const apiDeleteCategory = (id: string) =>
+  api<{ ok: true }>(`/api/categories/${encodeURIComponent(id)}`, { method: "DELETE", staff: true });
 export const apiPutTranslation = (lang: "en" | "fi", key: string, value: string) =>
   api<{ ok: true }>(`/api/translations`, { method: "PUT", body: { lang, key, value }, staff: true });
 export const apiActivity = () => api<{ ts: number; who: string; role: string; msg: string }[]>("/api/admin/activity", { staff: true });
 export const apiAnalytics = () => api<Record<string, unknown>>("/api/analytics/summary", { staff: true });
+export interface AnalyticsReport {
+  days: number; orders: number; revenue: number; averageOrderValue: number;
+  refunded: number; refundedAmount: number; pickup: number; delivery: number;
+  revenueByDay: { date: string; revenue: number; orders: number }[];
+  items: { itemId: string; name: string; quantity: number; revenue: number }[];
+  ordersByHour: { hour: number; orders: number }[];
+  statusCounts: Record<OrderStatus, number>;
+  pendingReservations: number;
+}
+export const apiAnalyticsReport = (days: 7 | 14 | 30) =>
+  api<AnalyticsReport>(`/api/analytics/report?days=${days}`, { staff: true });
 export const apiSubscribeNewsletter = (email: string) => api<{ subscribed: true }>("/api/newsletter", { method: "POST", body: { email } });
 export const apiNewsletter = () => api<{ email: string; subscribed_at: number }[]>("/api/admin/newsletter", { staff: true });
 export const apiDeleteNewsletter = (email: string) => api<{ ok: true }>(`/api/admin/newsletter/${encodeURIComponent(email)}`, { method: "DELETE", staff: true });

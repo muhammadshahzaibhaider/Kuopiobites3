@@ -8,6 +8,7 @@ import { Ic } from "@/admin/icons";
 import { Pill, useLocal } from "@/admin/ui";
 import { DashboardView, OrdersView, DiningView } from "@/admin/views-orders";
 import { MenuCategoriesView, MenuItemsView, ToppingsMasterView, SpecialsView } from "@/admin/views-menu";
+import { DeliveryRulesView, OffersView } from "@/admin/views-delivery";
 import { CustomersView, AnalyticsView, AdminStaffView, SettingsView } from "@/admin/views-misc";
 
 /* credentials live ONLY in the backend (bcrypt + scoped staff JWTs) */
@@ -86,8 +87,11 @@ const NAV: Group[] = [
   ] },
   { id: "menu", label: "Menu", icon: "menu", leaves: [
     { id: "menu.items", label: "Items", icon: "list" },
+    { id: "menu.off", label: "Off-menu", icon: "warn" },
     { id: "menu.categories", label: "Categories", icon: "group" },
     { id: "menu.toppings", label: "Toppings", icon: "pizza" },
+    { id: "menu.offers", label: "Offers", icon: "cash" },
+    { id: "menu.delivery", label: "Delivery rules", icon: "clock" },
     { id: "menu.special", label: "Today's Special", icon: "star" },
   ] },
   { id: "customers", label: "Customers", icon: "users", leaf: "customers" },
@@ -338,8 +342,11 @@ function renderView(id: string, go: (v: string) => void) {
     case "dining.list": return <DiningView mode="list" />;
     case "dining.slots": return <DiningView mode="slots" />;
     case "menu.items": return <MenuItemsView />;
+    case "menu.off": return <MenuItemsView initialAvailability="off" />;
     case "menu.categories": return <MenuCategoriesView />;
     case "menu.toppings": return <ToppingsMasterView />;
+    case "menu.offers": return <OffersView />;
+    case "menu.delivery": return <DeliveryRulesView />;
     case "menu.special": return <SpecialsView />;
     case "customers": return <CustomersView />;
     case "analytics.sales": return <AnalyticsView mode="sales" />;

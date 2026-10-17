@@ -194,22 +194,38 @@ export interface DiscountResult {
   offer?: Offer;
 }
 
+export interface OfferContext {
+  type: "pickup" | "delivery";
+  distanceKm?: number;
+  weightKg: number;
+}
+
 export function computeDiscount(
   s: Settings,
   lines: CartLine[],
   subtotal: number,
   lang: Lang,
-  code?: string
+  code?: string,
+  context?: OfferContext,
+  menuItems: MenuItem[] = MENU
 ): DiscountResult {
   const live = liveOffers(s).filter((o) => !o.code || (code ?? "").toUpperCase() === o.code.toUpperCase());
   let best: DiscountResult = { amount: 0, title: "", freeDelivery: false };
   for (const o of live) {
+    const scope = o.scope;
+    if (scope.deliveryOnly && context?.type !== "delivery") continue;
+    if ((scope.minDistanceKm !== undefined || scope.maxDistanceKm !== undefined)
+      && (context?.distanceKm === undefined
+        || (scope.minDistanceKm !== undefined && context.distanceKm < scope.minDistanceKm)
+        || (scope.maxDistanceKm !== undefined && context.distanceKm > scope.maxDistanceKm))) continue;
+    if ((scope.minWeightKg !== undefined && (context?.weightKg ?? 0) < scope.minWeightKg)
+      || (scope.maxWeightKg !== undefined && (context?.weightKg ?? 0) > scope.maxWeightKg)) continue;
     const scoped = lines.filter((l) =>
-      o.scope.whole
+      scope.whole
         ? true
-        : o.scope.category
-          ? MENU.find((m) => m.id === l.itemId)?.cat === o.scope.category
-          : (o.scope.itemIds ?? []).includes(l.itemId)
+        : scope.category
+          ? menuItems.find((m) => m.id === l.itemId)?.cat === scope.category
+          : (scope.itemIds ?? []).includes(l.itemId)
     );
     const scopedTotal = scoped.reduce((a, l) => a + l.qty * l.unitPrice, 0);
     if (o.minOrder && subtotal < o.minOrder) continue;
@@ -221,7 +237,7 @@ export function computeDiscount(
     }
     let amount = 0;
     if (o.type === "percent") amount = (scopedTotal * o.value) / 100;
-    if (o.type === "fixed") amount = Math.min(o.value, subtotal);
+    if (o.type === "fixed") amount = Math.min(o.value, scopedTotal);
     if (o.type === "override") {
       const l = lines.find((x) => (o.scope.itemIds ?? []).includes(x.itemId));
       if (l) amount = Math.max(0, (l.unitPrice - o.value) * l.qty);

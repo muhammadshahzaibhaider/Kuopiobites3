@@ -88,11 +88,12 @@ export function EmptyState({ icon = "search", title, sub }: { icon?: string; tit
 }
 
 /* ── buttons ── */
-export function PrimaryBtn({ children, onClick, icon = "plus" }: { children: React.ReactNode; onClick?: () => void; icon?: string }) {
+export function PrimaryBtn({ children, onClick, icon = "plus", disabled = false }: { children: React.ReactNode; onClick?: () => void; icon?: string; disabled?: boolean }) {
   return (
     <button
       onClick={onClick}
-      className="inline-flex min-h-[40px] items-center gap-2 rounded-xl bg-gold px-4 text-sm font-black text-cherry-dark shadow-card transition hover:bg-gold-deep hover:text-cream active:scale-[0.97]"
+      disabled={disabled}
+      className={cx("inline-flex min-h-[40px] items-center gap-2 rounded-xl px-4 text-sm font-black text-cherry-dark shadow-card transition", disabled ? "cursor-wait bg-gold/60" : "bg-gold hover:bg-gold-deep hover:text-cream active:scale-[0.97]")}
     >
       <Ic n={icon} size={16} /> {children}
     </button>
@@ -428,17 +429,20 @@ export function downloadCSV(name: string, rows: (string | number)[][]) {
 }
 
 /* ── tiny bar chart ── */
-export function Bars({ data, height = 120 }: { data: { label: string; value: number }[]; height?: number }) {
+export function Bars({ data, height = 120, formatValue }: { data: { label: string; value: number }[]; height?: number; formatValue?: (value: number) => string }) {
   const max = Math.max(...data.map((d) => d.value), 1);
   return (
     <div className="flex items-end gap-1.5" style={{ height }}>
-      {data.map((d, i) => (
-        <div key={i} className="flex flex-1 flex-col items-center gap-1" title={`${d.label}: ${d.value}`}>
-          <span className="text-[9px] font-black tabular-nums text-cherry/50">{d.value || ""}</span>
-          <div className="w-full rounded-t bg-cherry-bright transition-all" style={{ height: `${Math.max(3, (d.value / max) * 100)}%` }} />
-          <span className="text-[9px] font-black uppercase text-cherry/50">{d.label}</span>
-        </div>
-      ))}
+      {data.map((d, i) => {
+        const valueLabel = formatValue ? formatValue(d.value) : String(d.value);
+        return (
+          <div key={i} className="flex flex-1 flex-col items-center gap-1" title={`${d.label}: ${valueLabel}`}>
+            <span className="text-[9px] font-black tabular-nums text-cherry/50">{d.value && data.length <= 14 ? valueLabel : ""}</span>
+            <div className="w-full rounded-t bg-cherry-bright transition-all" style={{ height: `${Math.max(3, (d.value / max) * 100)}%` }} />
+            <span className="text-[9px] font-black uppercase text-cherry/50">{d.label}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

@@ -22,9 +22,10 @@ import {
   accountPatchSchema, cartLineSchema, cartMergeSchema, cartQtySchema, cartSchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema,
   customerOrderSchema, favoriteAddSchema, favoriteMergeSchema, passwordChangeSchema,
   forgotPasswordSchema, loginSchema, menuItemSchema, paramId, promotionPatchSchema, registerSchema, reorderSchema, reservationSchema,
-  resetPasswordSchema, settingsSchema, specialPatchSchema, staffLoginSchema, statusSchema, translationSchema, newsletterSchema,
+  resetPasswordSchema, settingsSchema, specialPatchSchema, staffLoginSchema, statusSchema, readyTimeSchema, translationSchema, newsletterSchema,
 } from "./schemas";
 import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
+import { buildAnalyticsReport } from "./analytics";
 import { addFavorite, listFavorites, mergeFavorites, removeFavorite, safeListFavorites } from "./supabase-favorites";
 import { addCartLine, clearCart, listCart, mergeCartLines, removeCartLine, safeListCart, setCartLineQty } from "./supabase-cart";
 
@@ -182,6 +183,11 @@ app.get("/api/categories", wrap(async (_req, res) => ok(res, await listCategorie
 app.get("/api/items", wrap(async (req, res) => {
   const query = z.object({ cat: z.string().max(40).optional() }).strict().parse(req.query);
   ok(res, await listItems(query.cat));
+}));
+
+app.get("/api/admin/items", requireStaff("manager"), wrap(async (req, res) => {
+  const query = z.object({ includeArchived: z.enum(["true", "false"]).optional() }).strict().parse(req.query);
+  ok(res, await listItems(undefined, query.includeArchived !== "false"));
 }));
 
 app.get("/api/items/:id", wrap(async (req, res) => {
@@ -408,7 +414,7 @@ app.post("/api/auth/logout", wrap(async (req, res) => {
 /* ── server-side pricing ───────────────────────────────────────────────── */
 app.post("/api/cart/price", wrap(async (req, res) => {
   const b = cartSchema.parse(req.body);
-  ok(res, await priceCart(await loadSettings(), b.lines as CartLine[], b.type, b.lang, b.code));
+  ok(res, await priceCart(await loadSettings(), b.lines as CartLine[], b.type, b.lang, b.code, undefined, b.address));
 }));
 
 /* ── upload boundary ───────────────────────────────────────────────────── */
@@ -473,7 +479,7 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
   if (!auth || !customer) throw new Error("auth.required");
   validateDeliveryAddress(body.type, body.address);
   const settings = await loadSettings();
-  const priced = await validateOrder(settings, { type: body.type, lines: body.lines as CartLine[], scheduled: body.scheduled, lang: body.lang, code: body.code });
+  const priced = await validateOrder(settings, { type: body.type, lines: body.lines as CartLine[], scheduled: body.scheduled, lang: body.lang, code: body.code, address: body.address });
   if (body.scheduled && settings.preorder.capacity) {
     const start = helsinkiIso(body.scheduled.date, "00:00");
     const end = helsinkiIso(nextDate(body.scheduled.date), "00:00");
@@ -489,8 +495,13 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
   if (body.type === "delivery" && priced.total < settings.minOrder) throw new Error("order.minOrder");
   if (priced.total <= 0) throw new Error("payment.amountInvalid");
 
+  const createdAt = Date.now();
+  const readyBase = body.scheduled
+    ? Date.parse(helsinkiIso(body.scheduled.date, body.scheduled.time))
+    : createdAt;
+  const estimatedReadyAt = new Date(readyBase + settings.readyTimeMinutes * 60_000).toISOString();
   const order: Order = {
-    id: uid("KB"), createdAt: Date.now(), type: body.type,
+    id: uid("KB"), createdAt, type: body.type, estimatedReadyAt: Date.parse(estimatedReadyAt),
     customer: { name: customer.name, email: customer.email, phone: body.customer.phone || customer.phone || "" },
     address: body.type === "delivery" ? body.address : undefined, note: body.note,
     lines: priced.lines, subtotal: priced.subtotal, deliveryFee: priced.deliveryFee, discount: priced.discount,
@@ -516,6 +527,7 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
       address: order.address ?? null,
       note: order.note ?? null,
       scheduled_for: body.scheduled ? `${body.scheduled.date} ${body.scheduled.time} Europe/Helsinki` : null,
+      estimated_ready_at: estimatedReadyAt,
     },
     p_items: priced.lines.map((line) => ({
       menu_item_id: line.itemId,
@@ -608,7 +620,7 @@ function withStatus(order: Order) {
 app.get("/api/orders", requireStaff("kitchen"), wrap(async (_req, res) => {
   const orders = await listOrders(300);
   ok(res, orders
-    .filter((order) => order.paymentStatus === "paid" || order.paymentStatus === "demo_paid")
+    .filter((order) => ["paid", "demo_paid", "refunded"].includes(String(order.paymentStatus)))
     .map((order) => ({ ...order, status: orderStatus(order) })));
 }));
 
@@ -635,6 +647,21 @@ app.patch("/api/orders/:id/status", requireStaff("kitchen"), wrap(async (req, re
   const staff = authStaff(req);
   logActivity(staff.username, staff.role, `order ${id} -> ${b.status}`);
   ok(res, { ...order, status: b.status });
+}));
+
+app.patch("/api/orders/:id/ready-time", requireStaff("kitchen"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const { minutes } = readyTimeSchema.parse(req.body);
+  const order = await getOrder(id);
+  if (!order) return fail(res, 404, "order.notFound");
+  if (order.paymentStatus !== "paid" && order.paymentStatus !== "demo_paid") return fail(res, 400, "payment.notPaid");
+  const estimatedReadyAt = minutes === null ? null : new Date(Date.now() + minutes * 60_000).toISOString();
+  const { error } = await supabaseDb.from("orders").update({ estimated_ready_at: estimatedReadyAt }).eq("id", id);
+  if (error) throw error;
+  order.estimatedReadyAt = estimatedReadyAt ? Date.parse(estimatedReadyAt) : undefined;
+  const staff = authStaff(req);
+  logActivity(staff.username, staff.role, `order ${id} ready estimate ${minutes === null ? "cleared" : `${minutes}m`}`);
+  ok(res, withStatus(order));
 }));
 
 app.post("/api/orders/:id/refund", requireStaff("manager"), wrap(async (req, res) => {
@@ -923,6 +950,9 @@ app.put("/api/categories/:id", requireStaff("manager"), wrap(async (req, res) =>
 
 app.delete("/api/categories/:id", requireStaff("manager"), wrap(async (req, res) => {
   const id = paramId.parse(req.params.id);
+  const { data: child, error: childError } = await supabaseDb.from("menu_items").select("id").eq("category_id", id).limit(1);
+  if (childError) throw childError;
+  if (child?.length) return fail(res, 409, "category.hasItems");
   const { data, error } = await supabaseDb.from("categories").delete().eq("id", id).select("id").maybeSingle();
   if (error) throw error;
   if (!data) return fail(res, 404, "item.notFound");
@@ -949,6 +979,16 @@ app.put("/api/items/:id", requireStaff("manager"), wrap(async (req, res) => {
   const staff = authStaff(req); logActivity(staff.username, staff.role, `item ~ ${id}`); ok(res, m);
 }));
 
+app.patch("/api/items/:id/archive", requireStaff("manager"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const body = z.object({ archived: z.boolean() }).strict().parse(req.body);
+  const { data, error } = await supabaseDb.from("menu_items").update({ is_archived: body.archived }).eq("id", id).select("id, is_archived").maybeSingle();
+  if (error) throw error;
+  if (!data) return fail(res, 404, "item.notFound");
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `item ${body.archived ? "archived" : "restored"} ${id}`);
+  ok(res, { id, archived: data.is_archived });
+}));
+
 app.delete("/api/items/:id", requireStaff("manager"), wrap(async (req, res) => {
   const id = paramId.parse(req.params.id);
   const { data, error } = await supabaseDb.from("menu_items").delete().eq("id", id).select("id").maybeSingle();
@@ -967,9 +1007,18 @@ app.patch("/api/items/reorder", requireStaff("manager"), wrap(async (req, res) =
 }));
 
 app.put("/api/settings", requireStaff("manager"), wrap(async (req, res) => {
-  const current = await loadSettings();
-  const next = settingsSchema.parse({ ...current, ...req.body, audit: current.audit }) as Settings;
-  await saveSettings(next);
+  let next: Settings;
+  try {
+    const current = await loadSettings();
+    next = settingsSchema.parse({ ...current, ...req.body, audit: current.audit }) as Settings;
+    await saveSettings(next);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("settings.")) {
+      safeLogError((req as any).requestId || "unknown", error);
+      return fail(res, 503, error.message.startsWith("settings.persist.") ? "settings.persistFailed" : "settings.loadFailed");
+    }
+    throw error;
+  }
   const staff = authStaff(req); logActivity(staff.username, staff.role, "settings updated"); ok(res, next);
 }));
 
@@ -1029,11 +1078,22 @@ app.delete("/api/admin/newsletter/:email", requireStaff("manager"), wrap(async (
   ok(res, { ok: true });
 }));
 app.get("/api/customers", requireStaff("manager"), wrap(async (_req, res) => {
-  const { data, error } = await supabaseDb.from("customers").select("id, name, email, phone, marketing_consent, created_at").limit(10000);
+  const [{ data, error }, orders] = await Promise.all([
+    supabaseDb.from("customers").select("id, name, email, phone, marketing_consent, created_at").limit(10000),
+    listOrders(10000),
+  ]);
   if (error) throw error;
+  const metrics = new Map<string, { orderCount: number; lifetimeSpend: number }>();
+  for (const order of orders) {
+    if (order.refunded || !["paid", "demo_paid"].includes(String(order.paymentStatus))) continue;
+    const row = metrics.get(order.userId) ?? { orderCount: 0, lifetimeSpend: 0 };
+    row.orderCount += 1; row.lifetimeSpend += order.total; metrics.set(order.userId, row);
+  }
   ok(res, (data ?? []).map((customer) => ({
     id: customer.id, name: customer.name, email: customer.email, phone: customer.phone ?? "",
     marketing: customer.marketing_consent, created_at: Date.parse(customer.created_at),
+    orderCount: metrics.get(customer.id)?.orderCount ?? 0,
+    lifetimeSpend: Math.round((metrics.get(customer.id)?.lifetimeSpend ?? 0) * 100) / 100,
   })));
 }));
 app.delete("/api/customers/:id", requireStaff("owner"), wrap(async (req, res) => {
@@ -1047,15 +1107,24 @@ app.delete("/api/customers/:id", requireStaff("owner"), wrap(async (req, res) =>
   if (authError) throw authError;
   const staff = authStaff(req); logActivity(staff.username, staff.role, `customer erased ${id} (GDPR)`); ok(res, { ok: true });
 }));
-app.get("/api/analytics/summary", requireStaff("manager"), wrap(async (_req, res) => {
-  const orders = await listOrders(10000);
-  const revenue = orders.filter((order) => !order.refunded && ["paid", "demo_paid"].includes(String(order.paymentStatus))).reduce((sum, order) => sum + order.total, 0);
-  const byItem = new Map<string, number>();
-  for (const order of orders) for (const line of order.lines) byItem.set(line.name, (byItem.get(line.name) ?? 0) + line.qty);
-  const { data: reservations, error } = await supabaseDb.from("reservations").select("status").eq("status", "pending").limit(10000);
+app.get("/api/analytics/report", requireStaff("manager"), wrap(async (req, res) => {
+  const query = z.object({ days: z.enum(["7", "14", "30"]).optional() }).strict().parse(req.query);
+  const [{ data: reservations, error }, orders] = await Promise.all([
+    supabaseDb.from("reservations").select("status").eq("status", "pending").limit(10000),
+    listOrders(10000),
+  ]);
   if (error) throw error;
-  const pendingReservations = reservations?.length ?? 0;
-  ok(res, { orders: orders.length, revenue: Math.round(revenue * 100) / 100, refunded: orders.filter((order) => order.refunded).length, topItems: [...byItem.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10), pendingReservations });
+  ok(res, buildAnalyticsReport(orders, Number(query.days ?? "7"), reservations?.length ?? 0));
+}));
+
+app.get("/api/analytics/summary", requireStaff("manager"), wrap(async (_req, res) => {
+  const [{ data: reservations, error }, orders] = await Promise.all([
+    supabaseDb.from("reservations").select("status").eq("status", "pending").limit(10000),
+    listOrders(10000),
+  ]);
+  if (error) throw error;
+  const report = buildAnalyticsReport(orders, 30, reservations?.length ?? 0);
+  ok(res, { orders: report.orders, revenue: report.revenue, refunded: report.refunded, topItems: report.items.slice(0, 10).map((item) => [item.name, item.quantity]), pendingReservations: report.pendingReservations });
 }));
 app.get("/api/admin/activity", requireStaff("manager"), wrap(async (_req, res) => {
   const { data, error } = await supabaseDb.from("activity_log").select("created_at, actor_name, actor_role, action, details").order("created_at", { ascending: false }).limit(200);
@@ -1067,6 +1136,9 @@ app.use("/api", (_req, res) => fail(res, 404, "route.notFound"));
 app.use((_req, res) => fail(res, 404, "route.notFound"));
 app.use((err: Error & { status?: number; type?: string }, req: Request, res: Response, _next: NextFunction) => {
   safeLogError((req as any).requestId || "unknown", err);
+  if (err.message?.startsWith("settings.persist.")) return fail(res, 503, "settings.persistFailed");
+  if (err.message?.startsWith("settings.load.")) return fail(res, 503, "settings.loadFailed");
+  if (err instanceof z.ZodError) return fail(res, 400, "validation.invalid");
   if (err.status === 413 || err.type === "entity.too.large") return fail(res, 413, "request.tooLarge");
   /* Malformed JSON bodies (express.json rejects with a SyntaxError typed
      "entity.parse.failed") are client mistakes, not server faults: answer 400
