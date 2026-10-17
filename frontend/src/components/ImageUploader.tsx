@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from "react";
 import { resolveImageSrc } from "@/lib/images";
 import { cx } from "@/lib/format";
-import { fileToWebp, MAX_BYTES } from "@/lib/imgtool";
+import { fileToWebpBlob, MAX_BYTES } from "@/lib/imgtool";
 import { apiUpload } from "@/lib/api";
 import { useLang } from "@/lib/i18n";
 import type { UploadedImg } from "@/lib/types";
@@ -57,8 +57,9 @@ export default function ImageUploader({
     }
     setBusy(true);
     try {
-      const dataUrl = await fileToWebp(file, preset);
-      const blob = await (await fetch(dataUrl)).blob();
+      /* Upload the encoded Blob directly — never fetch() a data: URL, the CSP
+         connect-src for this origin does not allow that scheme. */
+      const blob = await fileToWebpBlob(file, preset);
       const uploaded = await apiUpload(blob);
       onChange({ src: uploaded.url, altEn: altEn.trim(), altFi: altFi.trim() });
     } catch (e) {

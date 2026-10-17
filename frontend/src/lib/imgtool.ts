@@ -6,7 +6,14 @@ export type Preset = "1:1" | "16:9";
 
 export const MAX_BYTES = 5 * 1024 * 1024;
 
-export function fileToWebp(file: Blob, preset: Preset, maxW = 1200): Promise<string> {
+/**
+ * Encode straight to a Blob. Prefer this over the data-URL variant: reading the
+ * canvas result back as `data:` and then `fetch()`-ing it is blocked by the
+ * site's CSP (`connect-src` does not — and should not — allow `data:`), and it
+ * would inflate the payload by ~33% for nothing. The upload endpoint takes the
+ * Blob body as-is.
+ */
+export function fileToWebpBlob(file: Blob, preset: Preset, maxW = 1200): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const im = new window.Image();
@@ -33,10 +40,7 @@ export function fileToWebp(file: Blob, preset: Preset, maxW = 1200): Promise<str
         (blob) => {
           URL.revokeObjectURL(url);
           if (!blob) return reject(new Error("encode failed"));
-          const r = new FileReader();
-          r.onload = () => resolve(String(r.result));
-          r.onerror = () => reject(new Error("read failed"));
-          r.readAsDataURL(blob);
+          resolve(blob);
         },
         "image/webp",
         0.85
@@ -47,5 +51,17 @@ export function fileToWebp(file: Blob, preset: Preset, maxW = 1200): Promise<str
       reject(new Error("not an image"));
     };
     im.src = url;
+  });
+}
+
+/** Data-URL variant, kept for previews. Do not `fetch()` the result: CSP blocks
+    `data:` under connect-src. Upload with `fileToWebpBlob` instead. */
+export async function fileToWebp(file: Blob, preset: Preset, maxW = 1200): Promise<string> {
+  const blob = await fileToWebpBlob(file, preset, maxW);
+  return await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(new Error("read failed"));
+    r.readAsDataURL(blob);
   });
 }
