@@ -238,6 +238,15 @@ export function SpecialsPanel() {
   const list = [...draft].sort((a, b) => a.sortOrder - b.sortOrder);
 
   const save = async () => {
+    /* Catch values the database would reject before sending the whole settings
+       snapshot, so the manager sees the actual mistake instead of a generic
+       "settings could not be saved". */
+    const badDates = list.find((special) => special.start && special.end && special.end < special.start);
+    if (badDates) { toast("“To” is before “From” — fix the dates on that card", "err"); return; }
+    const badDiscount = list.find((special) => special.discount != null && (special.discount < 0 || special.discount > 100));
+    if (badDiscount) { toast("Discount must be between 0 and 100 %", "err"); return; }
+    const badPrice = list.find((special) => special.overridePrice != null && special.overridePrice < 0);
+    if (badPrice) { toast("Override price cannot be negative", "err"); return; }
     setSaving(true);
     const next = list.map((special, index) => ({ ...special, sortOrder: index }));
     const ok = await saveSettings({ ...settings, todaysSpecials: next });

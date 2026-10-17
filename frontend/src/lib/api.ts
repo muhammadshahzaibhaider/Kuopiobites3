@@ -121,9 +121,11 @@ export const apiDeleteReservation = (id: string) =>
   api<{ ok: true }>(`/api/reservations/${id}`, { method: "DELETE", staff: true });
 
 /* ── admin mutations ───────────────────────────────────────────────────── */
-export const apiSaveSettings = (s: Settings) => api<Settings>("/api/settings", { method: "PUT", body: s, staff: true });
+/* A whole-settings snapshot can legitimately take a few seconds on a
+   cross-region link; the default 15 s transport timeout used to abort it. */
+export const apiSaveSettings = (s: Settings) => api<Settings>("/api/settings", { method: "PUT", body: s, staff: true, timeoutMs: 45_000 });
 export const apiSaveSpecial = (body: { special?: unknown; todaysSpecials?: unknown }) =>
-  api<unknown>("/api/todays-special", { method: "PUT", body, staff: true });
+  api<unknown>("/api/todays-special", { method: "PUT", body, staff: true, timeoutMs: 45_000 });
 export const apiPutItem = (m: MenuItem) => api<MenuItem>(`/api/items/${m.id}`, { method: "PUT", body: m, staff: true });
 export const apiPostItem = (m: MenuItem) => api<MenuItem>("/api/items", { method: "POST", body: m, staff: true });
 export const apiDeleteItem = (id: string) => api<{ ok: true }>(`/api/items/${id}`, { method: "DELETE", staff: true });
