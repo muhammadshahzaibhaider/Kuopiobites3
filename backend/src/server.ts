@@ -15,11 +15,12 @@ import {
   readAuth, requireCustomer, requireStaff, staffById, staffRow, csrfCookie,
   type Role, type TokenPayload,
 } from "./auth";
-import { effectiveItems, loadSettings, orderStatus, priceCart, validateOrder } from "./logic";
+import { effectiveItems, loadSettings, orderStatus, priceCart, priceLines, validateOrder } from "./logic";
 import { openInfo } from "./lib/hours";
 import type { CartLine, MenuItem, Order, Reservation, Settings, User } from "./lib/types";
 import {
-  accountPatchSchema, cartLineSchema, cartMergeSchema, cartQtySchema, cartSchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema,
+  accountPatchSchema, cartLineSchema, cartMergeSchema, cartQtySchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema,
+  priceRequestSchema,
   customerOrderSchema, favoriteAddSchema, favoriteMergeSchema, passwordChangeSchema,
   forgotPasswordSchema, loginSchema, menuItemSchema, paramId, promotionPatchSchema, registerSchema, reorderSchema, reservationSchema,
   resetPasswordSchema, settingsSchema, specialPatchSchema, staffLoginSchema, statusSchema, readyTimeSchema, translationSchema, newsletterSchema,
@@ -412,9 +413,11 @@ app.post("/api/auth/logout", wrap(async (req, res) => {
 }));
 
 /* ── server-side pricing ───────────────────────────────────────────────── */
+/* Lenient quote: always 200, prices what it can and reports each bad line.
+   Checkout (/api/checkout/session → validateOrder → priceCart) stays strict. */
 app.post("/api/cart/price", wrap(async (req, res) => {
-  const b = cartSchema.parse(req.body);
-  ok(res, await priceCart(await loadSettings(), b.lines as CartLine[], b.type, b.lang, b.code, undefined, b.address));
+  const b = priceRequestSchema.parse(req.body);
+  ok(res, await priceLines(await loadSettings(), b.lines, b.type, b.lang, b.code, undefined, b.address));
 }));
 
 /* ── upload boundary ───────────────────────────────────────────────────── */

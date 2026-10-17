@@ -1,9 +1,8 @@
 import { listItems } from "./supabase-menu";
 import { cartWeightKg, deliveryFeeFor, resolveDeliveryDistanceKm } from "./delivery";
 import { loadSettings as loadSupabaseSettings } from "./supabase-settings";
-import {
-  builderUnitPrice, computeDiscount, isCatOff, isItemOff, optionOff, pizzaUnitPrice, todayDayH, validatePreorder,
-} from "./lib/v3";
+import { computeDiscount, todayDayH, validatePreorder } from "./lib/v3";
+import { expectedUnitPrice, priceEachLine, type LineErrorCode, type PricedLine } from "./lib/line-pricing";
 import type { CartLine, Lang, MenuItem, Order, Overrides, Settings } from "./lib/types";
 
 export const loadSettings = loadSupabaseSettings;
@@ -13,49 +12,7 @@ export async function effectiveItems(): Promise<MenuItem[]> {
   return listItems();
 }
 
-export function expectedUnitPrice(s: Settings, items: MenuItem[], line: CartLine): number {
-  const m = items.find((x) => x.id === line.itemId);
-  if (!m) throw new Error("avail.unavailable");
-  if (isItemOff(s, m.id) || isCatOff(s, m.cat)) throw new Error("avail.unavailable");
-  if (optionOff(s, `size:${m.id}`, line.variantLabel)) throw new Error("avail.unavailable");
-  const vi = m.prices.findIndex((p) => p.label === line.variantLabel);
-  if (vi < 0) throw new Error("validation.invalidVariant");
-  if (line.pizza) {
-    if (line.pizza.sizeLabel !== line.variantLabel) throw new Error("validation.invalidVariant");
-    const builderItem = m.cat === "fantasia" || m.cat === "pannu" || Boolean(m.mods?.some((group) => group.id === "top"));
-    if (Boolean(line.pizza.builder) !== builderItem) throw new Error("validation.invalidPizzaMode");
-    const toppingSet = new Set(s.toppings);
-    for (const e of line.pizza.extras) {
-      if (!toppingSet.has(e.label) || optionOff(s, "topping", e.label)) throw new Error("avail.unavailable");
-    }
-    return line.pizza.builder
-      ? builderUnitPrice(m, vi, line.pizza.extras.reduce((a, e) => a + e.count, 0))
-      : pizzaUnitPrice(s, m, vi, line.pizza.extras);
-  }
-  const selected = new Set<string>();
-  const groups = m.mods ?? [];
-  let price = m.prices[vi]?.value ?? 0;
-  for (const opt of line.options) {
-    if (selected.has(opt)) throw new Error("validation.duplicateOption");
-    selected.add(opt);
-    const group = groups.find((g) => g.options.some((o) => o.label === opt));
-    const found = group?.options.find((o) => o.label === opt);
-    if (!group || !found) throw new Error("validation.invalidOption");
-    if (group.id === "topping") {
-      if (!s.toppings.includes(opt)) throw new Error("validation.invalidOption");
-      if (optionOff(s, "topping", opt)) throw new Error("avail.unavailable");
-    }
-    if (optionOff(s, `mod:${m.id}:${group.id}`, opt) || optionOff(s, "dip", opt)) throw new Error("avail.unavailable");
-    price += found.price;
-  }
-  for (const group of groups) {
-    const count = line.options.filter((opt) => group.options.some((o) => o.label === opt)).length;
-    const minimum = group.exact ?? (group.required ? (group.min ?? 1) : (group.min ?? 0));
-    const maximum = group.exact ?? group.max ?? (group.type === "single" ? 1 : Number.POSITIVE_INFINITY);
-    if (count < minimum || count > maximum) throw new Error("validation.invalidOptions");
-  }
-  return Math.round(price * 100) / 100;
-}
+export { expectedUnitPrice };
 
 export interface PricedCart {
   lines: CartLine[];
@@ -66,6 +23,99 @@ export interface PricedCart {
   discount: { title: string; amount: number; offerId?: string; freeDelivery?: boolean } | undefined;
   total: number;
   vat: number;
+}
+
+export type PricedCartLine = Omit<CartLine, "unitPrice"> & {
+  unitPrice: number | null;
+  error: LineErrorCode | null;
+};
+
+export interface PricedLines {
+  lines: PricedCartLine[];
+  subtotal: number;
+  deliveryFee: number;
+  deliveryDistanceKm?: number;
+  weightKg: number;
+  discount: { title: string; amount: number; offerId?: string; freeDelivery?: boolean } | undefined;
+  total: number;
+  vat: number;
+  /** how many lines could not be priced (the UI blocks checkout while > 0) */
+  invalidCount: number;
+}
+
+/** Totals over already priced lines. Shared by the strict and lenient paths. */
+async function totalsFor(
+  s: Settings,
+  items: MenuItem[],
+  priced: CartLine[],
+  type: "pickup" | "delivery",
+  lang: Lang,
+  code?: string,
+  address?: string
+) {
+  const subtotal = Math.round(priced.reduce((a, l) => a + l.qty * l.unitPrice, 0) * 100) / 100;
+  const weightKg = cartWeightKg(items, priced);
+  const deliveryDistanceKm = type === "delivery" ? await resolveDeliveryDistanceKm(address) : undefined;
+  const disc = computeDiscount(s, priced, subtotal, lang, code, { type, distanceKm: deliveryDistanceKm, weightKg }, items);
+  let deliveryFee = type === "delivery" ? deliveryFeeFor(s, deliveryDistanceKm, weightKg) : 0;
+  if (disc.freeDelivery && type === "delivery") deliveryFee = 0;
+  const total = Math.max(0, Math.round((subtotal - disc.amount + deliveryFee) * 100) / 100);
+  // prices include VAT; vatRate is a fraction (0.135 = 13.5 %), so the VAT share is total × r / (1 + r)
+  const vat = Math.round(((total * s.vatRate) / (1 + s.vatRate)) * 100) / 100;
+  return {
+    subtotal,
+    weightKg,
+    deliveryDistanceKm,
+    deliveryFee,
+    total,
+    vat,
+    discount: disc.amount || disc.freeDelivery
+      ? { title: disc.title, amount: disc.amount, offerId: disc.offer?.id, freeDelivery: disc.freeDelivery }
+      : undefined,
+  };
+}
+
+const serverName = (items: MenuItem[], line: CartLine, lang: Lang): string => {
+  const m = items.find((x) => x.id === line.itemId);
+  return m ? (lang === "fi" ? m.nameFi ?? m.name : m.name) : line.name;
+};
+const publicLine = (line: CartLine, lang: Lang, items: MenuItem[]): CartLine => ({
+  ...line,
+  name: serverName(items, line, lang),
+  ...(line.pizza ? { options: [] } : {}),
+});
+
+/**
+ * Lenient cart quote used by POST /api/cart/price.
+ *
+ * Every line is priced on its own so a single stale row (old variant label,
+ * display-string option, note saved as an option…) no longer 400s the whole
+ * cart. Broken rows come back with `unitPrice: null` + `error`, are excluded
+ * from the totals, and the client offers to remove them. Checkout stays strict
+ * (`priceCart` / `validateOrder`) — nothing is ever charged on guessed data.
+ */
+export async function priceLines(
+  s: Settings,
+  raws: unknown[],
+  type: "pickup" | "delivery",
+  lang: Lang,
+  code?: string,
+  knownItems?: MenuItem[],
+  address?: string
+): Promise<PricedLines> {
+  const items = knownItems ?? await effectiveItems();
+  const priced: PricedLine[] = priceEachLine(s, items, raws);
+  const valid = priced.filter((p): p is PricedLine & { unitPrice: number; error: null } => p.error === null && p.unitPrice !== null);
+  const totals = await totalsFor(s, items, valid.map((p) => ({ ...publicLine(p.line, lang, items), unitPrice: p.unitPrice })), type, lang, code, address);
+  return {
+    lines: priced.map((p) => ({
+      ...publicLine(p.line, lang, items),
+      unitPrice: p.unitPrice,
+      error: p.error,
+    })),
+    ...totals,
+    invalidCount: priced.length - valid.length,
+  };
 }
 
 /** THE price authority: recalculates every line + totals; never trusts client numbers */
@@ -88,26 +138,10 @@ export async function priceCart(
       unitPrice: expectedUnitPrice(s, items, l),
     };
   });
-  const subtotal = Math.round(repriced.reduce((a, l) => a + l.qty * l.unitPrice, 0) * 100) / 100;
-  const weightKg = cartWeightKg(items, repriced);
-  const deliveryDistanceKm = type === "delivery" ? await resolveDeliveryDistanceKm(address) : undefined;
-  const disc = computeDiscount(s, repriced, subtotal, lang, code, { type, distanceKm: deliveryDistanceKm, weightKg }, items);
-  let deliveryFee = type === "delivery" ? deliveryFeeFor(s, deliveryDistanceKm, weightKg) : 0;
-  if (disc.freeDelivery && type === "delivery") deliveryFee = 0;
-  const total = Math.max(0, Math.round((subtotal - disc.amount + deliveryFee) * 100) / 100);
-  // prices include VAT; vatRate is a fraction (0.135 = 13.5 %), so the VAT share is total × r / (1 + r)
-  const vat = Math.round(((total * s.vatRate) / (1 + s.vatRate)) * 100) / 100;
+  const totals = await totalsFor(s, items, repriced, type, lang, code, address);
   return {
     lines: repriced.map((line) => line.pizza ? { ...line, options: [] } : line),
-    subtotal,
-    deliveryFee,
-    deliveryDistanceKm,
-    weightKg,
-    discount: disc.amount || disc.freeDelivery
-      ? { title: disc.title, amount: disc.amount, offerId: disc.offer?.id, freeDelivery: disc.freeDelivery }
-      : undefined,
-    total,
-    vat,
+    ...totals,
   };
 }
 

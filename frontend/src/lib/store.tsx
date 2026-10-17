@@ -12,6 +12,7 @@ import * as api from "./api";
 import { DEFAULT_SETTINGS } from "./hours";
 import { uid } from "./format";
 import { hydrateMenu } from "./menuStore";
+import { sanitizeCartLines } from "./cart-lines";
 import { hydrateTranslations } from "./i18n";
 import { CATEGORIES as BASE_CATS, MENU as BASE_ITEMS } from "./menu";
 import { trDesc, trName } from "./v3";
@@ -23,6 +24,9 @@ export interface Toast { id: string; msg: string; kind: "ok" | "err" }
 
 interface ShopCtx {
   settings: Settings;
+  /** True once settings came back from the backend at least once. Pages that
+      print opening hours wait for this so build-time defaults never flash. */
+  settingsReady: boolean;
   saveSettings: (s: Settings) => Promise<boolean>;
   adminItems: MenuItem[];
   overrides: Overrides; // compat shim — backend data is already effective
@@ -73,7 +77,18 @@ interface ShopCtx {
   cartSubtotal: number;
   pulse: number;
   priceCart: (type: "pickup" | "delivery", code?: string, address?: string, lang?: Lang) => Promise<void>;
-  serverPricing: { total: number; subtotal: number; deliveryFee: number; vat: number; deliveryDistanceKm?: number; weightKg?: number; discount?: { title: string; amount: number; offerId?: string; freeDelivery?: boolean } } | null;
+  serverPricing: {
+    total: number; subtotal: number; deliveryFee: number; vat: number;
+    deliveryDistanceKm?: number; weightKg?: number;
+    discount?: { title: string; amount: number; offerId?: string; freeDelivery?: boolean };
+    /** lines the server could not price — blocked from checkout until removed */
+    invalidCount: number;
+    /** cart line key → contract error code (validation.* / avail.*) */
+    lineErrors: Record<string, string>;
+  } | null;
+  /** true when the customer dismissed the "some items changed" banner */
+  cartIssuesDismissed: boolean;
+  dismissCartIssues: () => void;
 
   orders: Order[];
   startCheckout: (o: Omit<Order, "id" | "createdAt" | "paymentId" | "paymentStatus"> & { lang?: Lang; code?: string }) => Promise<{ mode: "stripe" | "demo"; url?: string; sessionId?: string; orderId?: string; order?: Order }>;
@@ -128,6 +143,7 @@ const clearPending = () => { try { sessionStorage.removeItem(PENDING_ACTION_KEY)
 
 export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [settingsReady, setSettingsReady] = useState(false);
   const [adminItems, setAdminItems] = useState<MenuItem[]>(BASE_ITEMS);
   /* Session identity comes from the HttpOnly cookie via /api/auth/session;
      profile data is in memory only, not localStorage. */
@@ -145,6 +161,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
   const [serverPricing, setServerPricing] = useState<ShopCtx["serverPricing"]>(null);
+  const [cartIssuesDismissed, setCartIssuesDismissed] = useState(false);
   const allItems = BASE_ITEMS; // live array, hydrated in place from the backend
   const allCats = BASE_CATS;
 
@@ -169,9 +186,10 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       api.apiListCart().catch(() => [] as CartLine[]),
     ]);
     let favs = favoriteIds;
-    let cartLinesOut = cartLines;
+    /* Never trust persisted cart rows: drop structurally broken ones once. */
+    let cartLinesOut = sanitizeCartLines(cartLines);
     const legacyFavs = readLS<string[]>(GUEST_FAVORITES_KEY, []);
-    const legacyCart = readLS<CartLine[]>(LEGACY_CART_KEY, []);
+    const legacyCart = sanitizeCartLines(readLS<unknown>(LEGACY_CART_KEY, []));
     if (legacyFavs.length) {
       try {
         favs = (await api.apiMergeFavorites(legacyFavs)).favorites;
@@ -179,7 +197,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     }
     if (legacyCart.length) {
       try {
-        cartLinesOut = await api.apiMergeCart(legacyCart.map((l) => ({ ...l, key: l.key || lineKeyOf(l) })));
+        cartLinesOut = sanitizeCartLines(await api.apiMergeCart(legacyCart.map((l) => ({ ...l, key: l.key || lineKeyOf(l) }))));
       } catch { /* keep server list */ }
     }
     try {
@@ -196,7 +214,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       if (pending.kind === "cart") {
         try {
           const line: CartLine = { ...pending.line, key: lineKeyOf(pending.line) };
-          cartLinesOut = await api.apiAddCartLine(line);
+          cartLinesOut = sanitizeCartLines(await api.apiAddCartLine(line));
           setCart(cartLinesOut);
           setPulse((p) => p + 1);
           setTimeout(() => toast("Added to cart ✔"), 0);
@@ -252,10 +270,30 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       // offline first-paint fallback (bundled data) stays in place
       console.warn("backend unreachable, using bundled fallback", e);
     } finally {
+      setSettingsReady(true);
       setAuthChecked(true);
     }
   }, [hydrateUser]);
   useEffect(() => { void refresh(); }, [refresh]);
+
+  /* Settings are edited from another tab (/admin). Re-read them when this tab
+     becomes visible again — throttled, so tab-flipping stays cheap. */
+  useEffect(() => {
+    let last = 0;
+    const sync = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const now = Date.now();
+      if (now - last < 30_000) return;
+      last = now;
+      api.fetchSettings().then(setSettings).catch(() => { /* keep the last good copy */ });
+    };
+    document.addEventListener("visibilitychange", sync);
+    window.addEventListener("focus", sync);
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      window.removeEventListener("focus", sync);
+    };
+  }, []);
 
   /* ── auth: identity is maintained by HttpOnly cookies, never localStorage ── */
   const register: ShopCtx["register"] = async (d) => {
@@ -345,7 +383,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   /* ── cart (server is the single source of truth for logged-in users;
         totals always re-priced by the server at checkout) ── */
   /* Re-sync from the server whenever a mutation failed or raced. */
-  const syncCart = () => { if (user) api.apiListCart().then(setCart).catch(() => {}); };
+  const syncCart = () => { if (user) api.apiListCart().then((lines) => setCart(sanitizeCartLines(lines))).catch(() => {}); };
   const addLine: ShopCtx["addLine"] = (l) => {
     /* Guests get the login prompt; the line is replayed after they sign in. */
     if (!user) {
@@ -371,6 +409,12 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     setCart((p) => p.map((x) => (x.key === key ? { ...x, qty } : x)));
     api.apiSetCartQty(key, qty).then(setCart).catch(syncCart);
   };
+  /* Keep the "some items changed" banner relevant: a new set of broken rows
+     always re-opens it, and it closes itself when the cart is clean again. */
+  const invalidSignature = Object.keys(serverPricing?.lineErrors ?? {}).sort().join("|");
+  useEffect(() => { setCartIssuesDismissed(false); }, [invalidSignature]);
+  const dismissCartIssues = useCallback(() => setCartIssuesDismissed(true), []);
+
   const removeLine = (key: string) => {
     if (!user) return;
     setCart((p) => p.filter((x) => x.key !== key));
@@ -387,15 +431,30 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     if (!cart.length) { setServerPricing(null); return; }
     setServerPricing(null);
     try {
+      /* The quote is lenient: it always answers 200 and reports unsellable
+         rows per line instead of failing the whole cart. */
       const p = await api.apiPriceCart(cart, type, lang, code, address);
-      setServerPricing({ total: p.total, subtotal: p.subtotal, deliveryFee: p.deliveryFee, vat: p.vat, deliveryDistanceKm: p.deliveryDistanceKm, weightKg: p.weightKg, discount: p.discount });
+      const lineErrors: Record<string, string> = {};
+      p.lines.forEach((entry, index) => {
+        if (!entry.error) return;
+        const key = cart[index]?.key ?? entry.key;
+        if (key) lineErrors[key] = entry.error;
+      });
+      setServerPricing({
+        total: p.total, subtotal: p.subtotal, deliveryFee: p.deliveryFee, vat: p.vat,
+        deliveryDistanceKm: p.deliveryDistanceKm, weightKg: p.weightKg, discount: p.discount,
+        invalidCount: p.invalidCount, lineErrors,
+      });
       // displayed line prices come from the server too (only touch state on real change,
       // otherwise the cart pricing effect would re-trigger forever)
       setCart((prev) => {
         let changed = false;
         const next = prev.map((line) => {
           const priced = p.lines.find((entry) => entry.key === line.key || (entry.itemId === line.itemId && entry.variantLabel === line.variantLabel));
-          if (priced && priced.unitPrice !== line.unitPrice) { changed = true; return { ...line, unitPrice: priced.unitPrice }; }
+          if (priced && priced.unitPrice !== null && priced.unitPrice !== line.unitPrice) {
+            changed = true;
+            return { ...line, unitPrice: priced.unitPrice };
+          }
           return line;
         });
         return changed ? next : prev;
@@ -651,7 +710,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   };
 
   const value: ShopCtx = {
-    settings, saveSettings, adminItems,
+    settings, settingsReady, saveSettings, adminItems,
     overrides: { items: {}, order: {} },
     patchItem, saveMenuItem, archiveMenuItem, moveItem, moveItemTo, addItem, removeAdded, addCat, updateCat, deleteCat, setItemText,
     effectiveMenu, categories,
@@ -660,7 +719,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     openLoginGate: () => setLoginGate(true),
     closeLoginGate: () => setLoginGate(false),
     cartOpen, setCartOpen, cartCount, cartSubtotal,
-    pulse, priceCart, serverPricing,
+    pulse, priceCart, serverPricing, cartIssuesDismissed, dismissCartIssues,
     orders, startCheckout, placeOrder, setOrderStatus, setOrderReadyTime, refundOrder, orderStatus,
     reservations, addReservation, cancelReservation, setReservationStatus,
     toasts, toast, logAudit, refresh,

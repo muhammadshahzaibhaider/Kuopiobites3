@@ -1,7 +1,7 @@
 "use client";
 import { motion, useReducedMotion } from "framer-motion";
 import Image from "next/image";
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { cx } from "@/lib/format";
 import { orderingInfo } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
@@ -131,9 +131,18 @@ export function TagBadge({ tag }: { tag: Tag }) {
 }
 
 export function OpenBadge({ big }: { big?: boolean }) {
-  const { settings } = useShop();
+  const { settings, settingsReady } = useShop();
   const { t, dayName } = useLang();
-  const st = orderingInfo(settings);
+  /* The label depends on the current Helsinki time *and* on owner-edited hours.
+     `/` and the other marketing pages are prerendered, so build-time text can
+     never be trusted: render a neutral placeholder until the real settings have
+     been fetched, then compute. The text node is a leaf with suppressed
+     hydration, so React #418 cannot fire on it. */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const ready = mounted && settingsReady;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const st = useMemo(() => orderingInfo(settings), [settings, mounted, settingsReady]);
   const label = st.paused
     ? t("open.paused")
     : st.open
@@ -141,8 +150,24 @@ export function OpenBadge({ big }: { big?: boolean }) {
       : st.info.nextDay === 0
         ? `${t("open.closed")} ${st.info.openAt}`
         : `${t("open.closedDay")} ${st.info.nextDay === 1 ? t("open.tomorrow") : dayName(st.info.nextDay!)} ${st.info.openAt}`;
+  if (!ready)
+    return (
+      <span
+        className={cx(
+          "inline-flex items-center gap-2 rounded-full border border-cherry/15 bg-cherry/5 font-bold text-cherry/40",
+          big ? "px-4 py-2 text-sm" : "px-3 py-1 text-xs"
+        )}
+        aria-busy="true"
+      >
+        <span className="relative flex h-2.5 w-2.5">
+          <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-cherry/20" />
+        </span>
+        <span className="inline-block h-3 w-24 animate-pulse rounded bg-cherry/15 motion-reduce:animate-none" />
+      </span>
+    );
   return (
     <span
+      suppressHydrationWarning
       className={cx(
         "inline-flex items-center gap-2 rounded-full border font-bold",
         big ? "px-4 py-2 text-sm" : "px-3 py-1 text-xs",
