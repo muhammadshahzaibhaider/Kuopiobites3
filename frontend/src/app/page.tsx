@@ -3,7 +3,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import Link from "next/link";
 import { useRef } from "react";
 import Banner from "@/components/Banner";
-import OffersStrip from "@/components/OffersStrip";
+import OffersSection from "@/components/OffersSection";
 import SpecialsCarousel from "@/components/SpecialsCarousel";
 import { BtnGhost, BtnPrimary, MenuImage, OpenBadge, Reveal, SectionHead, Stagger, StaggerItem } from "@/components/ui";
 import { eur } from "@/lib/format";
@@ -121,7 +121,6 @@ export default function Home() {
               {RESTAURANT.address} ·{" "}
               <a href={RESTAURANT.phoneHref} className="text-gold-deep underline decoration-gold underline-offset-4">{RESTAURANT.phone}</a>
             </motion.p>
-            <OffersStrip />
           </div>
         </div>
       </section>
@@ -132,6 +131,9 @@ export default function Home() {
           fixed layer would otherwise show through). */}
       <div className="relative -mb-20 bg-cream pb-20">
         <SpecialsCarousel />
+
+        {/* Every offer created in admin, right after today's specials. */}
+        <OffersSection />
 
       {/* ── MARQUEE ── */}
       <section className="mt-16 -rotate-1 bg-cherry-deep py-3 shadow-card" aria-hidden>
