@@ -1,6 +1,6 @@
 "use client";
 import { eur } from "@/lib/format";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useShop } from "@/lib/store";
 import { applyOfferToPrice } from "@/lib/v3";
 import type { DeliveryRule, Offer } from "@/lib/types";
@@ -181,36 +181,78 @@ export function OffersView() {
   );
 }
 
+const cloneRules = (rules: DeliveryRule[]) => rules.map((rule) => ({ ...rule }));
+
 export function DeliveryRulesView() {
   const { settings, saveSettings, toast } = useShop();
-  const [draft, setDraft] = useState<DeliveryRule[]>(settings.deliveryRules.map((rule) => ({ ...rule })));
+  const [draft, setDraft] = useState<DeliveryRule[]>(cloneRules(settings.deliveryRules));
   const [saving, setSaving] = useState(false);
-  useEffect(() => setDraft(settings.deliveryRules.map((rule) => ({ ...rule }))), [settings.deliveryRules]);
+  const [dirty, setDirty] = useState(false);
+  /* The store re-reads settings in the background (window focus, another admin
+     tab). A plain reset effect therefore wiped a rule the manager had just
+     added — and the next "Save rules" wrote the empty draft back to the
+     database, which is why the new rule card vanished. Only sync when there is
+     nothing unsaved; the ref keeps the effect from reading a stale flag. */
+  const dirtyRef = useRef(false);
+  const markDirty = () => { dirtyRef.current = true; setDirty(true); };
+  useEffect(() => {
+    if (!dirtyRef.current) setDraft(cloneRules(settings.deliveryRules));
+  }, [settings.deliveryRules]);
 
-  const update = (index: number, patch: Partial<DeliveryRule>) => setDraft((current) => current.map((rule, i) => i === index ? { ...rule, ...patch } : rule));
-  const add = () => setDraft((current) => [...current, { id: `delivery-${Date.now().toString(36)}`, name: "New delivery zone", fee: settings.deliveryFee, active: true }]);
-  const move = (index: number, offset: -1 | 1) => setDraft((current) => {
-    const next = [...current]; const target = index + offset;
-    if (target < 0 || target >= next.length) return current;
-    [next[index], next[target]] = [next[target], next[index]];
-    return next;
-  });
+  const update = (index: number, patch: Partial<DeliveryRule>) => {
+    markDirty();
+    setDraft((current) => current.map((rule, i) => i === index ? { ...rule, ...patch } : rule));
+  };
+  const add = () => {
+    markDirty();
+    setDraft((current) => [...current, { id: `delivery-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`, name: "New delivery zone", fee: settings.deliveryFee, active: true }]);
+  };
+  const remove = (index: number) => {
+    markDirty();
+    setDraft((current) => current.filter((_, i) => i !== index));
+  };
+  const move = (index: number, offset: -1 | 1) => {
+    markDirty();
+    setDraft((current) => {
+      const next = [...current]; const target = index + offset;
+      if (target < 0 || target >= next.length) return current;
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+  const reload = () => {
+    dirtyRef.current = false;
+    setDirty(false);
+    setDraft(cloneRules(settings.deliveryRules));
+    toast("Draft reloaded from the database");
+  };
   const save = async () => {
     for (const rule of draft) {
       if (rule.minDistanceKm !== undefined && rule.maxDistanceKm !== undefined && rule.minDistanceKm > rule.maxDistanceKm) { toast(`Check distance range for “${rule.name}”.`, "err"); return; }
       if (rule.minWeightKg !== undefined && rule.maxWeightKg !== undefined && rule.minWeightKg > rule.maxWeightKg) { toast(`Check weight range for “${rule.name}”.`, "err"); return; }
     }
+    const snapshot = cloneRules(draft);
     setSaving(true);
-    const ok = await saveSettings({ ...settings, deliveryRules: draft });
+    const ok = await saveSettings({ ...settings, deliveryRules: snapshot });
     setSaving(false);
-    if (ok) toast("Delivery rules saved and reloaded from the database");
+    if (ok) {
+      dirtyRef.current = false;
+      setDirty(false);
+      setDraft(snapshot);
+      toast("Delivery rules saved and reloaded from the database");
+    }
   };
 
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-gold/50 bg-gold/10 p-4">
         <div><h2 className="font-display text-lg font-black text-cherry">Distance and weight delivery pricing</h2><p className="mt-1 max-w-2xl text-xs text-cherry/60">The first active matching rule is used; otherwise the flat delivery fee applies. Distance ranges require the optional backend-only Google Distance Matrix key. Weight ranges work without it.</p><p className="mt-2 text-xs font-black text-cherry">Current fallback: {eur(settings.deliveryFee)} · delivery radius {settings.radiusKm} km</p></div>
-        <div className="flex gap-2"><GhostBtn onClick={add}><Ic n="plus" size={13} /> Add rule</GhostBtn><PrimaryBtn icon="save" disabled={saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save rules"}</PrimaryBtn></div>
+        <div className="flex flex-wrap items-center gap-2">
+          {dirty && <span className="inline-flex min-h-[32px] items-center rounded-full bg-gold/25 px-3 text-[11px] font-black uppercase tracking-wide text-gold-deep">Unsaved changes</span>}
+          {dirty && <button type="button" onClick={reload} className="min-h-[40px] rounded-lg border border-cherry/20 px-3 text-xs font-black text-cherry">Reload draft</button>}
+          <GhostBtn onClick={add}><Ic n="plus" size={13} /> Add rule</GhostBtn>
+          <PrimaryBtn icon="save" disabled={saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save rules"}</PrimaryBtn>
+        </div>
       </div>
       {draft.length === 0 && <div className="rounded-2xl border border-dashed border-cherry/20 p-6 text-sm text-cherry/60">No overrides: deliveries use the fallback fee.</div>}
       <div className="space-y-3">
@@ -219,7 +261,7 @@ export function DeliveryRulesView() {
             <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_140px_auto] sm:items-end">
               <Field label="Rule name"><input maxLength={120} value={rule.name} onChange={(e) => update(index, { name: e.target.value })} className={inputCls} /></Field>
               <Field label="Delivery fee (€)"><input type="number" min="0" step="0.01" value={rule.fee} onChange={(e) => update(index, { fee: Number(e.target.value) })} className={inputCls} /></Field>
-              <div className="flex flex-wrap gap-1"><GhostBtn onClick={() => move(index, -1)}>↑ Priority</GhostBtn><GhostBtn onClick={() => move(index, 1)}>↓</GhostBtn><GhostBtn onClick={() => setDraft((current) => current.filter((_, i) => i !== index))}>Remove</GhostBtn></div>
+              <div className="flex flex-wrap gap-1"><GhostBtn onClick={() => move(index, -1)}>↑ Priority</GhostBtn><GhostBtn onClick={() => move(index, 1)}>↓</GhostBtn><GhostBtn onClick={() => remove(index)}>Remove</GhostBtn></div>
             </div>
             <div className="grid gap-3 sm:grid-cols-4">
               <Field label="Min distance (km)">{numInput(rule.minDistanceKm, (value) => update(index, { minDistanceKm: value }))}</Field>
