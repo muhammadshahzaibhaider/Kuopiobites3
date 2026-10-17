@@ -61,7 +61,7 @@ export function OffersView() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-gold/50 bg-gold/10 p-4">
-        <div><h2 className="font-display text-lg font-black text-cherry">Promotions and delivery offers</h2><p className="text-xs text-cherry/60">Offers are repriced and validated by the backend. Distance targeting requires the optional server-only distance provider key.</p></div>
+        <div><h2 className="font-display text-lg font-black text-cherry">Promotions and delivery offers</h2><p className="text-xs text-cherry/60">Active offers are listed for customers on the home page right after Today&rsquo;s Specials (and on the menu page), including weekday-only offers, which show the day they apply. Offers are repriced and validated by the backend; distance targeting requires the optional server-only distance provider key.</p></div>
         <PrimaryBtn onClick={openNew}>Create offer</PrimaryBtn>
       </div>
       {settings.offers.length === 0 ? <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-6 text-sm text-cherry/60">No offers yet.</div> : (

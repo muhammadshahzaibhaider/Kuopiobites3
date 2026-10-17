@@ -1,3 +1,4 @@
+import { eur } from "./format";
 import { helsinkiNow, todayStrHelsinki, toMin } from "./hours";
 import { MENU } from "./menu";
 import type { CartLine, Lang, MenuItem, ModGroup, ModOption, Offer, Settings } from "./types";
@@ -231,6 +232,30 @@ export function liveOffers(s: Settings): Offer[] {
     .filter((o) => o.active)
     .filter((o) => (!o.start || o.start <= today) && (!o.end || o.end >= today))
     .filter((o) => !o.days?.length || o.days.includes(day));
+}
+
+/* Offers the customer pages advertise: switched on and inside their date
+   window. `liveOffers` additionally drops offers that only apply on other
+   weekdays (correct for pricing), but the home page still lists those and
+   states the day — an offer created in admin must never be invisible. */
+export function activeOffers(s: Settings): Offer[] {
+  const today = todayStrHelsinki();
+  return s.offers
+    .filter((o) => o.active)
+    .filter((o) => (!o.start || o.start <= today) && (!o.end || o.end >= today))
+    .sort((a, b) => b.priority - a.priority);
+}
+
+/** Badge shown on a customer-facing offer card. Uses the owner's badge text
+ *  when set, otherwise a label derived from the offer type and value. */
+export function offerBadge(o: Offer, lang: Lang, t: (key: string) => string): string {
+  const own = lang === "fi" ? o.badgeFi ?? o.badgeEn : o.badgeEn ?? o.badgeFi;
+  if (own) return own;
+  if (o.type === "percent") return `−${o.value}%`;
+  if (o.type === "override") return eur(o.value);
+  if (o.type === "freeDelivery") return t("offers.freeDelivery");
+  if (o.type === "freeItem") return t("offers.freeItem");
+  return `−${eur(o.value)}`;
 }
 
 export interface DiscountResult {

@@ -2,18 +2,22 @@
 import Link from "next/link";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
-import { liveOffers } from "@/lib/v3";
+import { activeOffers, offerBadge } from "@/lib/v3";
 import { MENU } from "@/lib/menu";
 import { MenuImage } from "./ui";
 
 export default function OffersStrip() {
-  const { settings } = useShop();
-  const { lang } = useLang();
-  const offers = liveOffers(settings);
+  const { settings, settingsReady } = useShop();
+  const { lang, t, dayName } = useLang();
+  /* Same reason as OffersSection: the bundled demo offer must not reach the
+     prerendered page before the real settings arrive. */
+  if (!settingsReady) return null;
+  const offers = activeOffers(settings);
   if (!offers.length) return null;
   return (
     <div className="no-scrollbar -mx-4 mt-6 flex gap-3 overflow-x-auto px-4 sm:mx-0 sm:px-0">
       {offers.map((o) => {
+        const days = o.days?.length && o.days.length < 7 ? [...o.days].sort((a, b) => a - b) : null;
         const href = o.scope.category
           ? `/menu?cat=${o.scope.category}`
           : o.scope.itemIds?.[0]
@@ -30,7 +34,7 @@ export default function OffersStrip() {
               return itm ? <MenuImage item={itm} sizes="44px" className="h-11 w-11 shrink-0 rounded-xl" caption={false} /> : null;
             })()}
             <span className="grid h-9 min-w-[36px] place-items-center rounded-full bg-gold px-1 font-display text-sm font-black text-cherry-dark">
-              {lang === "fi" ? o.badgeFi ?? o.badgeEn : o.badgeEn ?? o.badgeFi}
+              {offerBadge(o, lang, t)}
             </span>
             <span>
               <span className="block font-display text-sm font-black text-cherry">
@@ -39,6 +43,11 @@ export default function OffersStrip() {
               <span className="block text-xs text-cherry/60">
                 {lang === "fi" ? o.descFi ?? o.descEn : o.descEn ?? o.descFi}
               </span>
+              {days && (
+                <span className="mt-0.5 block text-[10px] font-black uppercase tracking-wide text-gold-deep">
+                  {t("offers.only")} {days.map((day) => dayName(day)).join(", ")}
+                </span>
+              )}
             </span>
           </Link>
         );
