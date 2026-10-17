@@ -214,3 +214,25 @@ test("independent writes use a bounded pool instead of one round trip per row", 
   assert.ok(mock.state.maxInFlight > 1, "writes should overlap");
   assert.ok(mock.state.maxInFlight <= 8, `pool must stay bounded, saw ${mock.state.maxInFlight}`);
 });
+
+test("delivery rules ride along in the shop_settings extra snapshot", async () => {
+  const mock = makeDb(seed());
+  const next = fixture();
+  next.deliveryRules = [
+    { id: "delivery-a", name: "Keskusta 0-3 km", fee: 2.5, active: true, minDistanceKm: 0, maxDistanceKm: 3 },
+    { id: "delivery-b", name: "Heavy orders", fee: 6, active: false, minWeightKg: 15 },
+  ];
+  await saveSettings(next, mock.db);
+  const upsert = mock.writes().find((call) => call.table === "shop_settings" && call.op === "upsert");
+  assert.deepEqual(upsert.payload.extra.deliveryRules, next.deliveryRules);
+  assert.deepEqual(mock.writes().map((call) => call.table), ["shop_settings"]);
+});
+
+test("clearing every delivery rule persists an empty snapshot instead of dropping the key", async () => {
+  const mock = makeDb(seed());
+  const next = fixture();
+  next.deliveryRules = [];
+  await saveSettings(next, mock.db);
+  const upsert = mock.writes().find((call) => call.table === "shop_settings" && call.op === "upsert");
+  assert.deepEqual(upsert.payload.extra.deliveryRules, []);
+});
