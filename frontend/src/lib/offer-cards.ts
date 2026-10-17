@@ -8,7 +8,7 @@
  * customer the offer is not usable right now.
  */
 import type { Lang, MenuItem, Settings } from "./types";
-import { activeOffers, offerBadge } from "./v3";
+import { activeOffers, applyOfferToPrice, offerBadge } from "./v3";
 
 export interface OfferCard {
   id: string;
@@ -21,6 +21,9 @@ export interface OfferCard {
   minOrder?: number;
   code?: string;
   end?: string;
+  /** cheapest dish in scope, before/after this offer (percent & override only) */
+  priceWas?: number;
+  priceNow?: number;
 }
 
 export function offerCards(
@@ -43,6 +46,18 @@ export function offerCards(
         ? item.name
         : t("offers.all");
     const desc = lang === "fi" ? o.descFi ?? o.descEn : o.descEn ?? o.descFi;
+    /* A concrete price makes an offer believable: the cheapest dish in its
+       scope with the discount already applied. */
+    const scoped = o.scope.whole
+      ? menu
+      : o.scope.category
+        ? menu.filter((entry) => entry.cat === o.scope.category)
+        : menu.filter((entry) => (o.scope.itemIds ?? []).includes(entry.id));
+    const cheapest = scoped.reduce<number | undefined>((lowest, entry) => {
+      const value = Math.min(...entry.prices.map((price) => price.value));
+      return lowest === undefined || value < lowest ? value : lowest;
+    }, undefined);
+    const reduced = cheapest === undefined || o.code ? null : applyOfferToPrice(o, cheapest);
     return {
       id: o.id,
       href,
@@ -54,6 +69,9 @@ export function offerCards(
       ...(o.minOrder !== undefined ? { minOrder: o.minOrder } : {}),
       ...(o.code ? { code: o.code } : {}),
       ...(o.end ? { end: o.end } : {}),
+      ...(cheapest !== undefined && reduced !== null && reduced < cheapest
+        ? { priceWas: cheapest, priceNow: reduced }
+        : {}),
     };
   });
 }

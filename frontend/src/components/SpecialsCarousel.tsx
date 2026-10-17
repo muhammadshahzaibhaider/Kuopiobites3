@@ -6,16 +6,23 @@ import { cx, eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
-import { isPreorderItem, trName } from "@/lib/v3";
+import { itemDeal, isPreorderItem, trName } from "@/lib/v3";
 import { MenuImage } from "./ui";
-import type { MenuItem, SpecialItem } from "@/lib/types";
+import type { MenuItem, Settings, SpecialItem } from "@/lib/types";
 
 const today = () => new Date().toLocaleDateString("en-CA", { timeZone: "Europe/Helsinki" });
 
-function cardPrice(sp: SpecialItem, m: MenuItem) {
+function cardPrice(sp: SpecialItem, m: MenuItem, settings: Settings) {
   const base = Math.min(...m.prices.map((p) => p.value));
-  const now = sp.overridePrice ?? (sp.discount ? Math.round(base * (1 - sp.discount / 100) * 100) / 100 : base);
-  return { base, now, struck: now < base };
+  /* The card's own override/discount wins. Otherwise follow the live offers,
+     so a special never shows a higher price than the same dish on /menu. */
+  if (sp.overridePrice !== undefined) return { base, now: sp.overridePrice, struck: sp.overridePrice < base };
+  if (sp.discount) {
+    const now = Math.round(base * (1 - sp.discount / 100) * 100) / 100;
+    return { base, now, struck: now < base };
+  }
+  const deal = itemDeal(settings, m, base);
+  return { base, now: deal ? deal.now : base, struck: !!deal };
 }
 
 export default function SpecialsCarousel() {
@@ -148,7 +155,7 @@ export default function SpecialsCarousel() {
           className="no-scrollbar mt-5 flex snap-x snap-mandatory gap-4 overflow-x-auto pb-2 [scrollbar-width:none]"
         >
           {cards.map(({ sp, item }) => {
-            const { base, now, struck } = cardPrice(sp, item);
+            const { base, now, struck } = cardPrice(sp, item, settings);
             const name = trName(lang, item);
             const badge = (lang === "fi" ? sp.textFi : sp.textEn) || t("hero.special");
             return (

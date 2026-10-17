@@ -81,6 +81,8 @@ interface ShopCtx {
     total: number; subtotal: number; deliveryFee: number; vat: number;
     deliveryDistanceKm?: number; weightKg?: number;
     discount?: { title: string; amount: number; offerId?: string; freeDelivery?: boolean };
+    /** cart line key → the part of `discount.amount` that belongs to that line */
+    lineDiscounts: Record<string, number>;
     /** lines the server could not price — blocked from checkout until removed */
     invalidCount: number;
     /** cart line key → contract error code (validation.* / avail.*) */
@@ -443,7 +445,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       setServerPricing({
         total: p.total, subtotal: p.subtotal, deliveryFee: p.deliveryFee, vat: p.vat,
         deliveryDistanceKm: p.deliveryDistanceKm, weightKg: p.weightKg, discount: p.discount,
-        invalidCount: p.invalidCount, lineErrors,
+        lineDiscounts: p.lineDiscounts ?? {}, invalidCount: p.invalidCount, lineErrors,
       });
       // displayed line prices come from the server too (only touch state on real change,
       // otherwise the cart pricing effect would re-trigger forever)

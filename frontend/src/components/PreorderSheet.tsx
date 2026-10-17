@@ -5,7 +5,7 @@ import { cx, eur, fmtDate } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
-import { nextPreorderSundays } from "@/lib/v3";
+import { itemDeal, nextPreorderSundays } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
 import { MenuImage, QtyStepper } from "./ui";
 import { useModalA11y } from "./useModalA11y";
@@ -26,7 +26,9 @@ export default function PreorderSheet({ item, onClose }: { item: MenuItem | null
   const pre = settings.preorder;
   const extraItem = MENU.find((m) => m.name === "Extra Puri");
   const unit = item.prices[0].value;
+  const deal = itemDeal(settings, item, unit);
   const total = unit * qty + (extraItem?.prices[0].value ?? 0.7) * extraPuri;
+  const payable = Math.round(((deal ? deal.now : unit) * qty + (extraItem?.prices[0].value ?? 0.7) * extraPuri) * 100) / 100;
   const valid = pre.enabled && date && time;
 
   return (
@@ -122,7 +124,7 @@ export default function PreorderSheet({ item, onClose }: { item: MenuItem | null
                 }}
                 className={cx("mt-6 min-h-[52px] w-full rounded-full font-black transition", valid ? "bg-cherry-bright text-cream shadow-lift hover:bg-cherry" : "cursor-not-allowed bg-cherry/20 text-cream/70")}
               >
-                {t("pre.btn")} · {eur(total)}
+                {t("pre.btn")} · {deal && <span className="mr-1.5 text-sm line-through opacity-70">{eur(total)}</span>}{eur(payable)}
               </button>
               <p className="mt-2 text-xs text-cherry/60">{t("pre.mix")}</p>
             </>

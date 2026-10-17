@@ -21,6 +21,8 @@ export interface PricedCart {
   deliveryDistanceKm?: number;
   weightKg: number;
   discount: { title: string; amount: number; offerId?: string; freeDelivery?: boolean } | undefined;
+  /** cart line key → the part of `discount.amount` that belongs to that line */
+  lineDiscounts: Record<string, number>;
   total: number;
   vat: number;
 }
@@ -37,6 +39,8 @@ export interface PricedLines {
   deliveryDistanceKm?: number;
   weightKg: number;
   discount: { title: string; amount: number; offerId?: string; freeDelivery?: boolean } | undefined;
+  /** cart line key → the part of `discount.amount` that belongs to that line */
+  lineDiscounts: Record<string, number>;
   total: number;
   vat: number;
   /** how many lines could not be priced (the UI blocks checkout while > 0) */
@@ -72,6 +76,7 @@ async function totalsFor(
     discount: disc.amount || disc.freeDelivery
       ? { title: disc.title, amount: disc.amount, offerId: disc.offer?.id, freeDelivery: disc.freeDelivery }
       : undefined,
+    lineDiscounts: disc.lineDiscounts ?? {},
   };
 }
 

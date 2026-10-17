@@ -2,6 +2,7 @@
 import { eur } from "@/lib/format";
 import { useEffect, useState } from "react";
 import { useShop } from "@/lib/store";
+import { applyOfferToPrice } from "@/lib/v3";
 import type { DeliveryRule, Offer } from "@/lib/types";
 import * as api from "@/lib/api";
 import { Drawer, Field, GhostBtn, Pill, PrimaryBtn, inputCls } from "./ui";
@@ -114,6 +115,44 @@ export function OffersView() {
               </div>
               <p className="text-[11px] text-cherry/50">Distance-limited offers only apply when the server can resolve driving distance. Weight limits use each menu item’s configured weight.</p>
             </section>
+            <section className="space-y-2 rounded-xl border border-gold/40 bg-gold/10 p-3">
+              <h3 className="text-xs font-black uppercase tracking-wide text-cherry/60">Customer prices in this scope</h3>
+              {(() => {
+                const scopedItems = adminItems.filter((item) => !item.archived && (
+                  selected.scope.whole
+                    ? true
+                    : selected.scope.category
+                      ? item.cat === selected.scope.category
+                      : (selected.scope.itemIds ?? []).includes(item.id)
+                ));
+                const sample = scopedItems.slice(0, 4);
+                if (!["percent", "override"].includes(selected.type)) {
+                  return <p className="text-xs font-bold text-cherry/60">This offer type is deducted from the cart total at checkout, so shelf prices stay unchanged.</p>;
+                }
+                if (!sample.length) return <p className="text-xs font-bold text-cherry/60">Choose a scope to preview the reduced prices.</p>;
+                return (
+                  <>
+                    <ul className="space-y-1 text-xs font-bold text-cherry/80">
+                      {sample.map((item) => {
+                        const was = Math.min(...item.prices.map((price) => price.value));
+                        const now = applyOfferToPrice(selected, was);
+                        return (
+                          <li key={item.id} className="flex items-center justify-between gap-3">
+                            <span className="min-w-0 truncate">{item.name}</span>
+                            <span className="shrink-0 tabular-nums">
+                              {now !== null && now < was ? (<><s className="mr-1 text-cherry/40">{eur(was)}</s><b className="text-gold-deep">{eur(now)}</b></>) : eur(was)}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <p className="text-[11px] text-cherry/50">
+                      {scopedItems.length} item{scopedItems.length === 1 ? "" : "s"} in scope. {selected.scope.itemIds ? "" : "Every item in this scope shows the reduced price on the menu, in the item sheet and in the cart."}
+                    </p>
+                  </>
+                );
+              })()}
+            </section>
             <div className="grid gap-3 sm:grid-cols-3">
               <Field label="Minimum order (€)">{numInput(selected.minOrder, (value) => patch({ minOrder: value }), "0.01")}</Field>
               <Field label="Start date"><input type="date" value={selected.start ?? ""} onChange={(e) => patch({ start: e.target.value || undefined })} className={inputCls} /></Field>
@@ -127,6 +166,11 @@ export function OffersView() {
               const days = e.target.checked ? [...new Set([...activeDays, index])].sort() : activeDays.filter((value) => value !== index);
               patch({ days: days.length === 0 || days.length === 7 ? undefined : days });
             }} />{day}</label>)}</div>
+            <p className="text-[11px] font-bold text-cherry/50">
+              {selected.days?.length
+                ? `Applies only on ${selected.days.map((index) => DAYS[index]).join(", ")} — customers see this in the offer's day chip.`
+                : "No day ticked = the offer applies every day."}
+            </p>
             <label className="flex items-center gap-2 text-sm font-black"><input type="checkbox" checked={selected.active} onChange={(e) => patch({ active: e.target.checked })} /> Offer is active</label>
             {error && <p role="alert" className="rounded-xl bg-brick/10 p-3 text-xs font-bold text-brick">{error}</p>}
             <div className="sticky bottom-[-1.25rem] -mx-5 flex justify-end gap-2 border-t border-cherry/10 bg-cream/95 px-5 py-4 backdrop-blur"><button type="button" onClick={() => setSelected(null)} className="min-h-[42px] rounded-lg border border-cherry/20 px-4 text-xs font-black">Cancel</button><PrimaryBtn icon="save" disabled={saving} onClick={() => { void save(); }}>{saving ? "Saving…" : "Save offer"}</PrimaryBtn></div>

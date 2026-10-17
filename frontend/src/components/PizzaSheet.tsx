@@ -6,7 +6,7 @@ import { cx, eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
 import {
-  activeToppings, builderUnitPrice, optionOff, pizzaIncluded,
+  activeToppings, builderUnitPrice, itemDeal, optionOff, pizzaIncluded,
   pizzaUnitPrice, toppingExtraPrice, toppingLabel, trLabel, trName, visibleToppingOptions,
 } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
@@ -73,6 +73,10 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
   /* The tier minimum cannot exceed what is actually orderable. */
   const min = Math.min(item.mods?.find((g) => g.id === "top")?.min ?? 0, availableToppings.length);
   const unit = isBuilder ? builderUnitPrice(item, variant, count) : pizzaUnitPrice(settings, item, variant, extraList);
+  /* Live offers reduce the pizza too — the sheet matches the menu card, and the
+     cart/server quote apply the same discount to the line. */
+  const deal = itemDeal(settings, item, unit);
+  const payable = deal ? Math.round(deal.now * qty * 100) / 100 : Math.round(unit * qty * 100) / 100;
   const valid = !isBuilder || count >= min;
   const incLabels = included.map((l) => toppingLabel(settings, lang, l));
 
@@ -243,7 +247,10 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
               )}
             >
               <span>{t("pizza.add")}</span>
-              <span className="font-display text-lg tabular-nums">{eur(unit * qty)}</span>
+              <span className="font-display text-lg tabular-nums">
+                {deal && <span className="mr-1.5 text-sm font-bold line-through opacity-70">{eur(unit * qty)}</span>}
+                {eur(payable)}
+              </span>
             </button>
           </div>
         </motion.div>

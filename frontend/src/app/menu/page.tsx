@@ -12,7 +12,7 @@ import { cx, eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
-import { isCatOff, isItemOff, isPizzaItem, isPreorderItem, offerPrice, optionOff, pizzaIncluded, toppingLabel, trDesc, trLabel, trName } from "@/lib/v3";
+import { isCatOff, isItemOff, isPizzaItem, isPreorderItem, itemDeal, optionOff, pizzaIncluded, toppingLabel, trDesc, trLabel, trName } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
 
 function MenuInner() {
@@ -201,7 +201,7 @@ function ItemGrid({ items, onAdd, highlight }: { items: MenuItem[]; onAdd: (m: M
         const off = isItemOff(settings, m.id) || isCatOff(settings, m.cat) || soldOut;
         const pre = isPreorderItem(m);
         const min = Math.min(...m.prices.map((p) => p.value));
-        const deal = offerPrice(settings, m, 0);
+        const deal = itemDeal(settings, m, min);
         const incLabels = isPizzaItem(m) ? pizzaIncluded(m).map((l) => toppingLabel(settings, lang, l)) : [];
         const desc = trDesc(lang, m) || (incLabels.length ? `${t("pizza.included")}: ${incLabels.join(", ")}` : "");
         const price = deal ? deal.now : min;

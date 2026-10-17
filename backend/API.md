@@ -46,7 +46,7 @@ The seeded local staff password is only for the local demo. It must be replaced/
 
 ## Pricing and orders
 
-- `POST /api/cart/price {lines,type,lang?,code?,address?}` returns server-repriced lines, subtotal, delivery fee, eligible discount, driving distance (when configured), cart weight, total, and VAT. Distance/weight fee rules use the first active matching `deliveryRules` entry; if none matches, the configured flat fee applies. A delivery address is sent to a provider only by the backend, and only when `DELIVERY_DISTANCE_API_KEY` is set.
+- `POST /api/cart/price {lines,type,lang?,code?,address?}` returns server-repriced lines, subtotal, delivery fee, eligible discount, `lineDiscounts` (each covered line's share of a percent/override offer, so the UI can show the reduced price per dish), driving distance (when configured), cart weight, total, and VAT. Distance/weight fee rules use the first active matching `deliveryRules` entry; if none matches, the configured flat fee applies. A delivery address is sent to a provider only by the backend, and only when `DELIVERY_DISTANCE_API_KEY` is set.
 - `POST /api/checkout/session` validates the complete order again and creates a server-priced Stripe Checkout Session when `STRIPE_SECRET_KEY` is configured. It returns a hosted URL; raw card data never reaches this API or the browser application.
 - `POST /api/webhooks/stripe` accepts Stripe's raw body, verifies the `Stripe-Signature` HMAC and a five-minute timestamp tolerance, is idempotent by event ID, and re-checks the server total/currency before marking an order paid.
 - `POST /api/orders` is available only when `ALLOW_DEMO_PAYMENTS=true` in non-production local development. Production must use the hosted checkout route; there is no fake `pi_...` payment ID.

@@ -101,3 +101,108 @@ test("price request schema accepts stale-but-shaped rows (route no longer 400s)"
   assert.throws(() => priceRequestSchema.parse({ type: "pickup", lang: "en", lines: "nope" }));
   assert.throws(() => priceRequestSchema.parse({ type: "pickup", lang: "en", lines: [] }));
 });
+
+/* ── item-level offer pricing ──────────────────────────────────────────── */
+
+const withOffers = (...offers) => ({ ...settings, offers });
+
+const baseOffer = {
+  id: "of-test",
+  type: "percent",
+  value: 20,
+  scope: { whole: true },
+  titleEn: "20% off",
+  titleFi: "−20 %",
+  active: true,
+  priority: 10,
+  uses: 0,
+};
+
+test("whole-menu percent offer reduces every quote line and sums to the basket discount", async () => {
+  const lines = [line({ key: "a", qty: 2 }), line({ key: "b", itemId: other.id, qty: 1 })];
+  const res = await priceLines(withOffers(baseOffer), lines, "pickup", "en", undefined, MENU);
+
+  assert.equal(res.invalidCount, 0);
+  const gross = res.lines.reduce((sum, entry) => sum + entry.unitPrice * entry.qty, 0);
+  assert.equal(res.subtotal, Math.round(gross * 100) / 100);
+  assert.ok(res.discount && res.discount.amount > 0, "a discount is applied");
+
+  const parts = Object.values(res.lineDiscounts);
+  assert.equal(parts.length, 2, "both lines carry their share");
+  assert.equal(
+    Math.round(parts.reduce((a, b) => a + b, 0) * 100) / 100,
+    res.discount.amount,
+    "per-line parts add up to the amount charged"
+  );
+  for (const entry of res.lines) {
+    const net = entry.unitPrice * entry.qty - res.lineDiscounts[entry.key];
+    assert.equal(Math.round(net * 100) / 100, Math.round(entry.unitPrice * entry.qty * 0.8 * 100) / 100);
+  }
+  assert.equal(res.total, Math.round((res.subtotal - res.discount.amount) * 100) / 100);
+});
+
+test("category offer only discounts dishes in that category", async () => {
+  const inCat = MENU.find((m) => m.cat === single.cat && m.id !== single.id) ?? single;
+  const outside = MENU.find((m) => m.cat !== single.cat);
+  const lines = [line({ key: "in", itemId: single.id }), line({ key: "out", itemId: outside.id })];
+  const res = await priceLines(
+    withOffers({ ...baseOffer, scope: { whole: false, category: single.cat, itemIds: undefined } }),
+    lines,
+    "pickup",
+    "en",
+    undefined,
+    MENU
+  );
+  assert.ok(res.lineDiscounts.in > 0, "scoped line is reduced");
+  assert.equal(res.lineDiscounts.out, undefined, "other category keeps its price");
+  assert.ok(inCat);
+});
+
+test("override offer prices only the selected item and keeps the rest at list price", async () => {
+  const target = MENU.find((m) => m.prices.length === 1);
+  const listPrice = target.prices[0].value;
+  const res = await priceLines(
+    withOffers({ ...baseOffer, type: "override", value: 1.5, scope: { whole: false, itemIds: [target.id] } }),
+    [line({ key: "t", itemId: target.id, qty: 2 }), line({ key: "o", itemId: other.id })],
+    "pickup",
+    "en",
+    undefined,
+    MENU
+  );
+  assert.equal(res.lineDiscounts.t, Math.round((listPrice - 1.5) * 2 * 100) / 100);
+  assert.equal(res.lineDiscounts.o, undefined);
+  assert.equal(res.discount.amount, res.lineDiscounts.t);
+});
+
+test("a live offer with no price-level effect (free delivery) leaves lines untouched", async () => {
+  const res = await priceLines(
+    withOffers({ ...baseOffer, type: "freeDelivery", value: 0, scope: { whole: true } }),
+    [line({ key: "a" })],
+    "delivery",
+    "en",
+    undefined,
+    MENU
+  );
+  assert.deepEqual(res.lineDiscounts, {});
+  assert.equal(res.discount?.freeDelivery, true);
+});
+
+test("override offer covers every line of the chosen item, not just the first", async () => {
+  const multi = MENU.find((m) => m.prices.length > 1 && m.prices.every((p) => p.value > 2));
+  const [a, b] = [multi.prices[0], multi.prices[1]];
+  const lines = [
+    line({ key: "v1", itemId: multi.id, variantLabel: a.label, qty: 1 }),
+    line({ key: "v2", itemId: multi.id, variantLabel: b.label, qty: 2 }),
+  ];
+  const res = await priceLines(
+    withOffers({ ...baseOffer, type: "override", value: 2, scope: { whole: false, itemIds: [multi.id] } }),
+    lines,
+    "pickup",
+    "en",
+    undefined,
+    MENU
+  );
+  const expected = Math.round(((a.value - 2) + (b.value - 2) * 2) * 100) / 100;
+  assert.equal(res.discount.amount, expected);
+  assert.equal(res.total, Math.round((res.subtotal - expected) * 100) / 100);
+});
