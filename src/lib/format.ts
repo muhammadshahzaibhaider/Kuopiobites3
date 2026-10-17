@@ -36,3 +36,27 @@ export function fmtDate(ts: number | string): string {
     month: "numeric",
   });
 }
+
+/** Absolute promise time (ms) for an order; falls back to created + estimate. */
+export function readyAtOf(o: { createdAt: number; etaMinutes?: number; readyAt?: number }): number {
+  return o.readyAt ?? o.createdAt + Math.max(1, o.etaMinutes ?? 25) * 60000;
+}
+
+/** Minutes remaining (rounded up), 0 once the promise time has passed. */
+export function minutesLeft(readyAt: number, now = Date.now()): number {
+  return Math.max(0, Math.ceil((readyAt - now) / 60000));
+}
+
+/** "18:45" in the browser locale — used on ETA badges. */
+export function clockLabel(ts: number): string {
+  return new Date(ts).toLocaleTimeString("fi-FI", { hour: "2-digit", minute: "2-digit" });
+}
+
+/** Compact countdown label: 14 min · 3 min 20 s · now. */
+export function countdownLabel(msLeft: number): string {
+  if (msLeft <= 0) return "now";
+  const mins = Math.floor(msLeft / 60000);
+  const secs = Math.floor((msLeft % 60000) / 1000);
+  if (mins <= 0) return `${secs} s`;
+  return secs > 0 && mins < 10 ? `${mins} min ${secs} s` : `${mins} min`;
+}

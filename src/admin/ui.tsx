@@ -1,7 +1,7 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { cx } from "@/lib/format";
+import { clockLabel, countdownLabel, cx } from "@/lib/format";
 import { Ic } from "./icons";
 
 /* ── localStorage state hook ── */
@@ -70,7 +70,7 @@ export function SkeletonRows({ n = 6 }: { n?: number }) {
   return (
     <div className="space-y-2 p-4" role="status" aria-label="Loading">
       {Array.from({ length: n }).map((_, i) => (
-        <div key={i} className="h-11 animate-pulse rounded-xl bg-cherry/8 motion-reduce:animate-none" style={{ opacity: 1 - i * 0.12 }} />
+        <div key={i} className="h-11 animate-pulse rounded-xl bg-cherry/10 motion-reduce:animate-none" style={{ opacity: 1 - i * 0.12 }} />
       ))}
     </div>
   );
@@ -385,13 +385,22 @@ export function SubTabs({ tabs, active, onChange }: { tabs: { id: string; label:
 }
 
 /* ── stat card ── */
-export function StatCard({ label, value, icon, tone = "teal", onClick }: { label: string; value: React.ReactNode; icon: string; tone?: Tone; onClick?: () => void }) {
+export function StatCard({ label, value, icon, tone = "teal", onClick, hint }: { label: string; value: React.ReactNode; icon: string; tone?: Tone; onClick?: () => void; hint?: string }) {
   return (
-    <button onClick={onClick} className="flex items-center gap-3 rounded-2xl border border-cherry/10 bg-cream-deep p-4 text-left transition hover:border-gold hover:shadow-card">
-      <span className={cx("grid h-11 w-11 shrink-0 place-items-center rounded-xl border", TONES[tone])}><Ic n={icon} size={20} /></span>
-      <span>
-        <span className="block text-[11px] font-black uppercase tracking-wide text-cherry/50">{label}</span>
-        <span className="block font-display text-xl font-black tabular-nums text-cherry">{value}</span>
+    <button
+      onClick={onClick}
+      className="group relative flex items-center gap-3 overflow-hidden rounded-3xl border border-cherry/10 bg-white/75 p-4 text-left shadow-[0_10px_24px_-22px_rgba(6,32,31,0.5)] transition hover:-translate-y-0.5 hover:border-gold/70 hover:shadow-card active:translate-y-0"
+    >
+      <span className={cx("grid h-11 w-11 shrink-0 place-items-center rounded-2xl border", TONES[tone])}>
+        <Ic n={icon} size={19} />
+      </span>
+      <span className="min-w-0">
+        <span className="block truncate text-[10px] font-black uppercase tracking-[0.14em] text-cherry/45">{label}</span>
+        <span className="block font-display text-2xl font-black leading-tight tabular-nums text-cherry">{value}</span>
+        {hint && <span className="block truncate text-[10px] font-bold text-cherry/40">{hint}</span>}
+      </span>
+      <span className="ml-auto text-cherry/20 transition group-hover:translate-x-0.5 group-hover:text-gold-deep">
+        <Ic n="chevR" size={15} />
       </span>
     </button>
   );
@@ -470,3 +479,193 @@ export function RowMenuButton() {
   return null;
 }
 export { useRef };
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Admin design kit — shared surfaces used across every admin view.
+   Keeps spacing, borders, type and status colours consistent with the
+   customer-facing panel (deep teal, warm cream, burnt-gold accent).
+   ══════════════════════════════════════════════════════════════════════════ */
+
+export function Panel({
+  children,
+  className,
+  padded = false,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  padded?: boolean;
+}) {
+  return (
+    <section className={cx("overflow-hidden rounded-3xl border border-cherry/10 bg-white/70 shadow-[0_1px_2px_rgba(6,32,31,0.04),0_12px_28px_-20px_rgba(6,32,31,0.35)] backdrop-blur-sm", padded && "p-5 sm:p-6", className)}>
+      {children}
+    </section>
+  );
+}
+
+export function PanelHead({
+  title,
+  sub,
+  icon,
+  action,
+}: {
+  title: React.ReactNode;
+  sub?: React.ReactNode;
+  icon?: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-wrap items-start justify-between gap-3 border-b border-cherry/10 px-5 py-4">
+      <div className="flex items-start gap-3">
+        {icon && (
+          <span className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-cherry/5 text-cherry/70">
+            <Ic n={icon} size={17} />
+          </span>
+        )}
+        <div>
+          <h2 className="font-display text-base font-black leading-tight text-cherry">{title}</h2>
+          {sub && <p className="mt-0.5 text-xs font-semibold text-cherry/55">{sub}</p>}
+        </div>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+export function PageHeader({
+  eyebrow,
+  title,
+  sub,
+  actions,
+}: {
+  eyebrow?: string;
+  title: string;
+  sub?: string;
+  actions?: React.ReactNode;
+}) {
+  return (
+    <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+      <div>
+        {eyebrow && <p className="mb-1 text-[10px] font-black uppercase tracking-[0.22em] text-gold-deep">{eyebrow}</p>}
+        <h1 className="font-display text-2xl font-black tracking-tight text-cherry sm:text-[28px]">{title}</h1>
+        {sub && <p className="mt-1 max-w-2xl text-sm font-semibold text-cherry/55">{sub}</p>}
+      </div>
+      {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+    </div>
+  );
+}
+
+export function IconBtn({
+  icon,
+  label,
+  onClick,
+  active,
+  tone = "default",
+  className,
+}: {
+  icon: string;
+  label: string;
+  onClick?: () => void;
+  active?: boolean;
+  tone?: "default" | "danger";
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className={cx(
+        "grid h-10 w-10 place-items-center rounded-xl border transition active:scale-95",
+        active
+          ? "border-gold bg-gold/15 text-gold-deep"
+          : tone === "danger"
+            ? "border-brick/25 text-brick hover:border-brick hover:bg-brick hover:text-cream"
+            : "border-cherry/15 bg-white/60 text-cherry/70 hover:border-cherry/35 hover:text-cherry",
+        className
+      )}
+    >
+      <Ic n={icon} size={17} />
+    </button>
+  );
+}
+
+export function SolidBtn({
+  children,
+  onClick,
+  icon,
+  tone = "teal",
+  disabled,
+  className,
+  type = "button",
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  icon?: string;
+  tone?: "teal" | "gold" | "green" | "danger";
+  disabled?: boolean;
+  className?: string;
+  type?: "button" | "submit";
+}) {
+  const tones = {
+    teal: "bg-cherry text-cream hover:bg-cherry-bright",
+    gold: "bg-gold text-cherry-dark hover:bg-gold-deep hover:text-cream",
+    green: "bg-[#2e7d32] text-cream hover:bg-[#236327]",
+    danger: "bg-brick text-cream hover:bg-[#932f1e]",
+  };
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={cx(
+        "inline-flex min-h-[40px] items-center justify-center gap-2 rounded-xl px-4 text-sm font-black shadow-sm transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40",
+        tones[tone],
+        className
+      )}
+    >
+      {icon && <Ic n={icon} size={16} />}
+      {children}
+    </button>
+  );
+}
+
+export function EtaPill({
+  readyAt,
+  createdAt,
+  etaMinutes,
+  className,
+  prefix = "ready in",
+}: {
+  readyAt?: number;
+  createdAt: number;
+  etaMinutes?: number;
+  className?: string;
+  prefix?: string;
+}) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const i = setInterval(() => setTick((x) => x + 1), 1000);
+    return () => clearInterval(i);
+  }, []);
+  const at = readyAt ?? createdAt + Math.max(1, etaMinutes ?? 25) * 60000;
+  const left = at - Date.now();
+  const late = left <= 0;
+  return (
+    <span
+      className={cx(
+        "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11px] font-black tabular-nums",
+        late ? "border-brick/30 bg-brick/10 text-brick" : left < 5 * 60000 ? "border-gold/50 bg-gold/15 text-gold-deep" : "border-[#2e7d32]/25 bg-[#e6f4e7] text-[#2e7d32]",
+        className
+      )}
+      title={`Promise time ${clockLabel(at)}`}
+    >
+      <Ic n="timer" size={12} />
+      {late ? "ready now" : prefix ? `${prefix} ${countdownLabel(left)}` : countdownLabel(left)}
+    </span>
+  );
+}
+
+export function StatusPill({ status }: { status: string }) {
+  return <Pill tone={statusTone(status)}>{status}</Pill>;
+}

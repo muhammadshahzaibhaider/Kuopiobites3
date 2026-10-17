@@ -97,6 +97,112 @@ const pa = (p: number, a: number): PriceVariant[] => [
 ];
 const one = (v: number): PriceVariant[] => [{ label: "", value: v }];
 
+/** Descriptions for dishes whose menu line does not spell them out. The
+    admin menu requires a description for every item, and the public UI always
+    renders one, so this map is the single source of truth for the defaults. */
+export const ITEM_DESC: Record<string, string> = {
+  "Shami Kebab": "Golden pan-fried chicken shami kebab with warm spices",
+  "Zinger Paratha": "Crispy zinger chicken wrapped in a flaky paratha",
+  Tea: "Hot masala chai brewed with milk and aromatic spices",
+  Lassi: "Chilled creamy yogurt drink, lightly sweetened",
+  "Margareta (tupla juusto)": "Classic double-cheese pizza with tomato sauce",
+  Jauheliha: "Ground beef, tomato sauce and melted cheese",
+  Salami: "Salami, tomato sauce and melted cheese",
+  Pepperoni: "Spicy pepperoni, tomato sauce and melted cheese",
+  Juustohampurilainen: "Beef patty, melted cheese, lettuce, tomato and house sauce",
+  "Kananmuna hampurilainen": "Beef patty, fried egg, lettuce, tomato and house sauce",
+  Aurahampurilainen: "Beef patty, blue cheese, lettuce, tomato and house sauce",
+  "Zinger Kana Burgeri": "Crispy fried chicken fillet, lettuce, tomato and creamy mayo",
+  "Peri Peri-Grillattu Kanaburgeri": "Grilled chicken fillet with peri-peri spice, salad and mayo",
+  "Tulinen Zinger Kana Burgeri": "Spicy crispy chicken fillet with hot sauce, lettuce and mayo",
+  Kanahampurilainen: "Tender grilled chicken fillet, lettuce, tomato and house sauce",
+  "Pitaleivällä Kana Kebab": "Grilled chicken kebab in fresh pita with salad, tomato, pickle and sauce",
+  "Kana Kebab Ranskalaisilla": "Chicken kebab served with crispy French fries and fresh salad",
+  "Kana Kebab Lohkoperunoilla": "Chicken kebab with oven-roasted potato wedges and salad",
+  "Kana Kebab Iskender": "Chicken kebab over bread with tomato sauce, yogurt and salad",
+  "Kana Kebab Riisillä": "Chicken kebab served with fragrant rice and salad",
+  "Kana Kebab Salaatilla": "Chicken kebab on a fresh green salad with house dressing",
+  "Kana Rullakebab": "Chicken kebab rolled in a soft wrap with salad and sauce",
+  "Kana Rullakebab Fetajuustolla": "Chicken kebab wrap with feta cheese, salad and sauce",
+  "Kana Rullakebab Aurajuustolla": "Chicken kebab wrap with blue cheese, salad and sauce",
+  "Kana Erikoisrulla": "Loaded chicken kebab special roll with salad, cheese and sauces",
+  "Shawarma Rulla": "Shawarma chicken rolled in soft flatbread with salad and garlic sauce",
+  "Spicy Shawarma Ateria": "Spicy shawarma meal with fries, salad and a drink",
+  "Spicy Shawarma Rulla": "Spicy shawarma chicken wrapped with salad and hot sauce",
+  "Napoli Shawarma Ateria": "Napoli-style shawarma meal with fries, salad and a drink",
+  "Napoli Shawarma Rulla": "Napoli-style shawarma wrap with salad and house sauce",
+  Makkaraperunat: "Grilled sausage with crispy French fries",
+  "Makkaraperunat Kebabilla": "Grilled sausage and kebab meat over French fries",
+  Juustomakkaraperunat: "Cheese sausage with crispy French fries",
+  "Jättilautanen": "Generous grill platter with sausage, kebab, fries and salad",
+  Grillilautanen: "Grill platter with sausage, chicken and fries",
+  "Talon Lautanen": "House platter with kebab, wings, fries and salad",
+  Tonnikalasalaatti: "Fresh salad with tuna, tomato, cucumber and house dressing",
+  Katkarapusalaatti: "Fresh salad with shrimp, tomato, cucumber and house dressing",
+  Fetasalaatti: "Fresh salad with feta cheese, olives, tomato and cucumber",
+  Kinkkusalaatti: "Fresh salad with ham, cheese, tomato and cucumber",
+  "Crispy Wings 4kpl": "Four crispy chicken wings with your choice of spice and dip",
+  "Crispy Wings 12kpl": "Twelve crispy chicken wings with spice choice and dips",
+  "Crispy Wings 18kpl": "Eighteen crispy chicken wings, perfect for sharing",
+  "Crispy Wings 24kpl": "Twenty-four crispy wings for a crowd, with dips",
+  "Wings×6, Legs×2, Fillet×2": "Sharing mix of 6 wings, 2 chicken legs and 2 fillet strips",
+  "Tasty Koivet 5kpl": "Five seasoned chicken legs, golden and juicy",
+  "Tasty Koivet 9kpl": "Nine seasoned chicken legs for sharing",
+  "Tasty Koivet 12kpl": "Twelve seasoned chicken legs for a crowd",
+  "Fillet Strips 8kpl": "Eight crispy chicken fillet strips with a dip of your choice",
+  "Fillet Strips 10kpl": "Ten crispy chicken fillet strips with dips",
+  "Fillet Strips 12kpl": "Twelve crispy chicken fillet strips, great for sharing",
+  "Fish & Chips + juoma 0.33l": "Fish & chips served with a 0.33 l cold drink",
+  "Chicken Chow Mein": "Stir-fried noodles with chicken and fresh vegetables",
+  "Vegetables Chow Mein": "Stir-fried noodles with crunchy vegetables",
+  "Paistettua Jauhelihamakaronia": "Fried macaroni with minced meat and spices",
+  "Boiled Rice": "Plain steamed basmati rice",
+  "Plain Naan": "Soft tandoor-baked naan bread",
+  "Onion Rings": "Crispy golden onion rings, 3 or 6 pieces",
+  "Mozzarella Sticks": "Golden breaded mozzarella sticks with a dip",
+  "Vegetarian Samosa": "Crispy pastry filled with spiced vegetables",
+  "Coca-Cola": "Coca-Cola — 0.33 l, 0.5 l or 1.5 l",
+  "Coca-Cola Zero": "Coca-Cola Zero — 0.33 l, 0.5 l or 1.5 l",
+  Pepsi: "Pepsi — 0.33 l, 0.5 l or 1.5 l",
+  "Pepsi Max": "Pepsi Max — 0.33 l, 0.5 l or 1.5 l",
+  Jaffa: "Jaffa orange soda — 0.33 l, 0.5 l or 1.5 l",
+  Sprite: "Sprite — 0.33 l or 1.5 l",
+  Fanta: "Fanta — 0.33 l or 0.5 l",
+};
+
+const CATEGORY_DESC: Record<string, string> = {
+  specials: "Freshly prepared South Asian speciality",
+  pizza1: "Stone-baked pizza with tomato sauce and melted cheese",
+  pizza2: "Stone-baked pizza with two fresh toppings",
+  pizza3: "Stone-baked pizza with three fresh toppings",
+  pizza4: "Stone-baked pizza with four fresh toppings",
+  pizza5: "Stone-baked pizza with five fresh toppings",
+  fantasia: "Build-your-own stone-baked pizza",
+  pannu: "Deep-pan pizza with a crispy golden edge",
+  burgers: "Grilled burger served in a toasted bun",
+  zinger: "Crispy chicken burger served in a toasted bun",
+  kebab: "Kebab made fresh with salad and house sauce",
+  kanakebab: "Grilled chicken kebab made fresh to order",
+  shawarma: "Shawarma made fresh with salad and sauce",
+  grilli: "Grilled favourite served hot from the kitchen",
+  falafel: "Crispy falafel with fresh salad and sauce",
+  salads: "Fresh salad made to order",
+  wings: "Crispy chicken wings tossed in your chosen spice",
+  mix: "Mixed chicken sharing platter",
+  koivet: "Seasoned chicken legs, crispy and juicy",
+  wraps: "Fresh wrap filled with salad and your choice of filling",
+  fillets: "Crispy chicken fillet strips",
+  fish: "Crispy fish served with fries",
+  buckets: "Sharing bucket loaded with chicken favourites",
+  noodles: "Wok-fried noodles made to order",
+  rice: "Fragrant rice dish made to order",
+  naan: "Freshly baked tandoori naan",
+  curries: "Slow-cooked curry served with naan and salad",
+  sides: "Crispy side made to order",
+  dips: "Fresh dip to complete your meal",
+  drinks: "Cold drink to complete your meal",
+};
+
 let seq = 0;
 function it(
   cat: string,
@@ -107,7 +213,15 @@ function it(
   mods?: ModGroup[]
 ): MenuItem {
   seq += 1;
-  return { id: `${cat}-${seq}`, cat, name, desc, prices, tags, mods };
+  return {
+    id: `${cat}-${seq}`,
+    cat,
+    name,
+    desc: desc ?? ITEM_DESC[name] ?? CATEGORY_DESC[cat] ?? "Freshly prepared in our kitchen",
+    prices,
+    tags,
+    mods,
+  };
 }
 
 export const CATEGORIES: Category[] = [
@@ -180,9 +294,21 @@ export const MENU: MenuItem[] = [
   // ── South Asian Specials ──
   { ...it("specials", "Halwa Puri Platter", one(9.9), "Puri, halwa, channa", ["popular", "veg"]), nameFi: "Halwa Puri -annos", availability: { days: [0], mode: "preorder_only", preorderCutoff: { day: 6, time: "18:00" }, leadTimeHours: 18 } },
   { ...it("specials", "Extra Puri", one(0.7), "Add-on", ["veg"]), availability: { days: [0], mode: "preorder_only", preorderCutoff: { day: 6, time: "18:00" }, leadTimeHours: 18 } },
-  it("specials", "Karachi Biryani", one(9.9), "Served with raita", ["popular", "spicy"]),
+  {
+    ...it("specials", "Karachi Biryani", [
+      { label: "Half", value: 4.9 },
+      { label: "Full", value: 9.9 },
+    ], "Fragrant Karachi-style biryani with tender chicken, basmati rice and cool raita.", ["popular", "spicy"]),
+    descByVariant: [
+      "Half plate — a lighter portion of fragrant biryani with tender chicken, served with cool raita.",
+      "Full plate — our signature Karachi biryani, generous and spicy, served with cool raita.",
+    ],
+    descFiByVariant: [
+      "Puoli annosta — kevyempi annos tuoksuvaa biryania ja mureaa kanaa, tarjoillaan raitan kanssa.",
+      "Koko annos — talon Karachi-biryani, runsas ja tulinen, tarjoillaan raitan kanssa.",
+    ],
+  },
   it("specials", "Biryani Meal", one(12.8), "Biryani + cold drink + chicken shami + raita + salad", ["popular"]),
-  it("specials", "Biryani Half Plate", one(4.9), "Served with raita"),
   it("specials", "Samosa (1 pc)", one(2.8), "Served with ketchup & raita"),
   it("specials", "Samosa (2 pcs)", one(5.2), "Served with ketchup & raita"),
   it("specials", "Shami Kebab", one(1.8)),

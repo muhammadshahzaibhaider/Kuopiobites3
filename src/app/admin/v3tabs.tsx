@@ -2,7 +2,6 @@
 import { useEffect, useState } from "react";
 import ImageUploader from "@/components/ImageUploader";
 import { cx, eur, fmtDate } from "@/lib/format";
-import { resolveImageSrc } from "@/lib/images";
 import { todayStrHelsinki } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
 import { MENU } from "@/lib/menu";
@@ -133,7 +132,7 @@ export function OptionAvailPanel() {
   const sizeItems = MENU.filter((m) => m.prices.length > 1);
   return (
     <div className="space-y-3">
-      <details className="rounded-xl border border-cherry/15 bg-cream-deep p-3">
+      <details className="rounded-2xl border border-cherry/10 bg-white/70 p-3">
         <summary className="cursor-pointer text-xs font-black uppercase text-cherry/50">Toppings availability</summary>
         <OptionAvailPanel2 />
       </details>
@@ -173,7 +172,7 @@ export function PreorderPanel() {
   const portions = preOrders.reduce((a, o) => a + o.lines.reduce((x, l) => x + l.qty, 0), 0);
 
   return (
-    <div className="rounded-xl border border-gold/60 bg-cream-deep p-4">
+    <div className="rounded-2xl border border-gold/50 bg-gold/5 p-4">
       <div className="flex items-center justify-between">
         <p className="text-[11px] font-black uppercase text-gold-deep">{t("admin.pre")}</p>
         <Switch
@@ -215,7 +214,7 @@ export function PreorderPanel() {
         <input value={pre.noteFi} onChange={(e) => saveSettings({ ...settings, preorder: { ...pre, noteFi: e.target.value } })} placeholder="Huomautus FI" className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
       </div>
 
-      <div className="mt-3 rounded-lg border border-cherry/15 bg-cream p-3 text-xs">
+      <div className="mt-3 rounded-xl border border-cherry/10 bg-cream/70 p-3 text-xs">
         <p className="font-black text-cherry">{t("admin.sundayPre")} — {sunday && fmtDate(sunday)}</p>
         <p className="mt-1 text-cherry/70">
           {preOrders.length} {t("admin.orders").toLowerCase()} · <b className="text-gold-deep">{portions} {t("admin.portions")}</b>
@@ -285,7 +284,7 @@ export function SpecialsPanel() {
         const base = item ? Math.min(...item.prices.map((p) => p.value)) : 0;
         const now = sp.overridePrice ?? (sp.discount ? Math.round(base * (1 - sp.discount / 100) * 100) / 100 : base);
         return (
-          <div key={sp.id} className="rounded-xl border border-cherry/15 bg-cream-deep p-4">
+          <div key={sp.id} className="rounded-2xl border border-cherry/10 bg-white/70 p-4">
             <div className="flex flex-wrap items-center gap-3">
               <span className="flex gap-1">
                 <button onClick={() => move(i, -1)} disabled={i === 0} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry disabled:opacity-30">↑</button>
@@ -370,7 +369,7 @@ export function ToppingsMetaPanel() {
   };
 
   return (
-    <details className="rounded-xl border border-cherry/15 bg-cream-deep p-3">
+    <details className="rounded-2xl border border-cherry/10 bg-white/70 p-3">
       <summary className="cursor-pointer text-xs font-black uppercase text-cherry/50">Topping names (EN/FI) & extra prices — defaults €1.00 Med / €2.00 Perhe</summary>
       <table className="mt-3 w-full text-left text-xs">
         <thead>
@@ -402,62 +401,6 @@ export function ToppingsMetaPanel() {
 }
 
 /* ── categories manager ──────────────────────────────── */
-
-export function CatsTab() {
-  const { settings, saveSettings, categories, overrides, toast, logAudit } = useShop();
-  const cats = categories();
-  const move = (id: string, dir: -1 | 1) => {
-    const order = settings.catOrder?.length ? settings.catOrder : cats.map((c) => c.id);
-    const i = order.indexOf(id);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= order.length) return;
-    const next = [...order];
-    [next[i], next[j]] = [next[j], next[i]];
-    saveSettings({ ...settings, catOrder: next });
-    logAudit(`category ${id} moved`);
-  };
-  const meta = (id: string) => settings.catMeta[id] ?? {};
-  const setMeta = (id: string, patch: Partial<(typeof settings.catMeta)[string]>) => {
-    saveSettings({ ...settings, catMeta: { ...settings.catMeta, [id]: { ...meta(id), ...patch } } });
-  };
-  return (
-    <div className="space-y-3">
-      <p className="text-xs text-cherry/60">Uploads feed the Home circles instantly (≤5 MB, cropped 1:1, WebP). Drag order = circle order. No image → branded placeholder.</p>
-      {cats.map((c, idx) => {
-        const m = meta(c.id);
-        const n = MENU.filter((x) => x.cat === c.id).length + (overrides.added?.[c.id]?.length ?? 0);
-        return (
-          <div key={c.id} className="flex flex-wrap items-start gap-4 rounded-xl border border-cherry/15 bg-cream-deep p-4">
-            <ImageUploader
-              preset="1:1"
-              value={m.img ? { src: resolveImageSrc(m.img) ?? m.img, altEn: m.altEn ?? "", altFi: m.altFi ?? "" } : undefined}
-              onChange={(v) => { setMeta(c.id, { img: v?.src, altEn: v?.altEn, altFi: v?.altFi }); logAudit(`category ${c.id} image ${v ? "uploaded" : "removed"}`); }}
-            />
-            <div className="min-w-[220px] flex-1 space-y-2">
-              <p className="text-xs font-black text-cherry">{c.title} <span className="text-cherry/40">· {n} items · {c.id}</span></p>
-              <div className="flex flex-wrap gap-2">
-                <input defaultValue={m.nameFi ?? ""} placeholder="Nimi FI (oletus: alkuperäinen)" onBlur={(e) => setMeta(c.id, { nameFi: e.target.value || undefined })} className="min-h-[36px] w-44 rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-                <input defaultValue={m.nameEn ?? ""} placeholder="Name EN" onBlur={(e) => setMeta(c.id, { nameEn: e.target.value || undefined })} className="min-h-[36px] w-44 rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-2 text-xs font-black text-cherry/60">
-                  Show on site
-                  <Switch on={!m.hidden} ariaLabel={`${c.title} visible`} onChange={() => setMeta(c.id, { hidden: !m.hidden })} />
-                </label>
-                <CatAvailSwitch id={c.id} title={c.title} />
-                <span className="ml-auto flex gap-1">
-                  <button onClick={() => move(c.id, -1)} disabled={idx === 0} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry disabled:opacity-30">↑</button>
-                  <button onClick={() => move(c.id, 1)} disabled={idx === cats.length - 1} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry disabled:opacity-30">↓</button>
-                </span>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-      <button onClick={() => toast("Category order saved")} className="min-h-[40px] rounded-lg bg-cherry px-4 text-xs font-black text-cream">Done</button>
-    </div>
-  );
-}
 
 /* ── audit log ───────────────────────────────────────── */
 

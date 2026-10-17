@@ -25,6 +25,7 @@ export const DEFAULT_SETTINGS: Settings = {
   minOrder: 15,
   radiusKm: 6,
   vatRate: 0.14,
+  prepTimeMinutes: 25,
   toppings: DEFAULT_TOPPINGS,
   special: { itemId: "specials-3", active: true }, // Karachi Biryani
   blockedSlots: [],
@@ -47,7 +48,7 @@ export const DEFAULT_SETTINGS: Settings = {
   todaysSpecials: [
     { id: "ts-1", itemId: "specials-3", discount: 10, textEn: "Today's Special", textFi: "Päivän annos", sortOrder: 0, active: true },
     { id: "ts-2", itemId: "specials-1", textEn: "Sunday pre-order", textFi: "Sunnuntain ennakkotilaus", sortOrder: 1, active: true },
-    { id: "ts-3", itemId: "specials-11", overridePrice: 2.5, textEn: "Cool down", textFi: "Viilennä", sortOrder: 2, active: true },
+    { id: "ts-3", itemId: "specials-10", overridePrice: 2.5, textEn: "Cool down", textFi: "Viilennä", sortOrder: 2, active: true },
   ],
   toppingMeta: {},
   itemImages: {},

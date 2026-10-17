@@ -2,7 +2,7 @@
 import { motion } from "framer-motion";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { cx, eur, fmtTime } from "@/lib/format";
+import { clockLabel, countdownLabel, cx, eur, fmtTime, readyAtOf } from "@/lib/format";
 import { RESTAURANT } from "@/lib/menu";
 import { fmtDate } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
@@ -19,9 +19,9 @@ const STEPS: { id: OrderStatus; icon: string }[] = [
 
 export default function TrackPage() {
   const { id } = useParams<{ id: string }>();
-  const { orders, orderStatus } = useShop();
+  const { orders, orderStatus, settings } = useShop();
   const { t } = useLang();
-  useTick(2000); // re-derive time-based status
+  useTick(1000); // live promise-time countdown
 
   const order = orders.find((o) => o.id === id);
   if (!order)
@@ -34,7 +34,17 @@ export default function TrackPage() {
     );
 
   const status = orderStatus(order);
+  const cancelled = status === "cancelled";
   const idx = STEPS.findIndex((s) => s.id === status);
+  const promiseAt = readyAtOf({ createdAt: order.createdAt, etaMinutes: order.etaMinutes ?? settings.prepTimeMinutes, readyAt: order.readyAt });
+  const msLeft = promiseAt - Date.now();
+  const etaMinutes = order.etaMinutes ?? settings.prepTimeMinutes;
+  const statusLine =
+    status === "placed" ? "Waiting for the kitchen to confirm your order" :
+    status === "accepted" ? "Kitchen confirmed — we've started on it" :
+    status === "preparing" ? "Your food is being prepared right now" :
+    status === "ready" ? (order.type === "delivery" ? "Out for delivery" : "Ready for pickup") :
+    status === "completed" ? "Order completed — enjoy!" : "This order was cancelled";
   const label = (s: OrderStatus) =>
     s === "ready"
       ? order.type === "delivery"
@@ -57,7 +67,60 @@ export default function TrackPage() {
         </p>
       </motion.div>
 
-      <div className="mt-8 rounded-3xl border-2 border-gold/50 bg-cream-deep p-6 sm:p-8 shadow-lift">
+      {/* live promise timer */}
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.08 }}
+        className={cx(
+          "mt-6 overflow-hidden rounded-3xl border-2 shadow-card",
+          cancelled ? "border-brick/40 bg-brick/5" : status === "completed" ? "border-[#2e7d32]/40 bg-[#e6f4e7]" : "border-gold/60 bg-cherry-deep text-cream"
+        )}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6">
+          <div>
+            <p className={cx("flex items-center gap-1.5 text-[10px] font-black uppercase tracking-[0.22em]", cancelled ? "text-brick" : status === "completed" ? "text-[#2e7d32]" : "text-gold-soft")}>
+              <span className={cx("grid h-6 w-6 place-items-center rounded-full", cancelled ? "bg-brick/10" : status === "completed" ? "bg-[#2e7d32]/10" : "bg-gold/15")}>
+                <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="13" r="8" /><path d="M12 9v4l3 2M9 2h6" /></svg>
+              </span>
+              {t("order.eta")}
+            </p>
+            <p className={cx("mt-1 font-display text-4xl font-black tabular-nums sm:text-5xl", cancelled ? "text-brick" : status === "completed" ? "text-[#2e7d32]" : "text-cream")}>
+              {cancelled ? "—" : status === "completed" ? "Enjoy!" : msLeft <= 0 ? "Any minute" : countdownLabel(msLeft)}
+            </p>
+            <p className={cx("mt-1 text-sm font-bold", cancelled ? "text-brick/70" : status === "completed" ? "text-[#2e7d32]/75" : "text-cream/65")}>
+              {cancelled
+                ? order.cancelledReason || "Please call us if you have any questions."
+                : `Promise time ${clockLabel(promiseAt)} · about ${etaMinutes} min`}
+            </p>
+          </div>
+          <span className={cx(
+            "rounded-full px-3 py-1.5 text-[11px] font-black",
+            cancelled ? "bg-brick text-cream" : status === "completed" ? "bg-[#2e7d32] text-cream" : "bg-gold text-cherry-dark"
+          )}>
+            {statusLine}
+          </span>
+        </div>
+        {!cancelled && (
+          <div className={cx("h-1.5 w-full", status === "completed" ? "bg-[#2e7d32]/15" : "bg-cream/10")}>
+            <motion.div
+              className={cx("h-full", status === "completed" ? "bg-[#2e7d32]" : "bg-gold")}
+              initial={{ width: 0 }}
+              animate={{ width: `${status === "completed" ? 100 : Math.max(4, Math.min(100, (1 - msLeft / (etaMinutes * 60000)) * 100))}%` }}
+              transition={{ duration: 0.6 }}
+            />
+          </div>
+        )}
+      </motion.div>
+
+      <div className="mt-6 rounded-3xl border-2 border-gold/50 bg-cream-deep p-6 sm:p-8 shadow-lift">
+        {cancelled ? (
+          <div className="py-4 text-center">
+            <p className="text-3xl">😔</p>
+            <p className="mt-2 font-display text-xl font-black text-brick">This order was cancelled</p>
+            <p className="mt-1 text-sm font-bold text-cherry/55">If this looks wrong, call us on {RESTAURANT.phone} and we'll sort it out.</p>
+          </div>
+        ) : (
         <ol className="relative space-y-7">
           {STEPS.map((s, i) => {
             const done = i <= idx;
@@ -101,6 +164,7 @@ export default function TrackPage() {
             );
           })}
         </ol>
+        )}
       </div>
 
       <div className="mt-6 rounded-3xl border border-cherry/10 bg-cream-deep p-6 shadow-card">

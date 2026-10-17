@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cx, eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
-import { offerPrice, optionOff, trDesc, trIng, trLabel, trName } from "@/lib/v3";
+import { offerPrice, optionOff, trIng, trLabel, trName, trVariantDesc } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
 import { MenuImage, QtyStepper, TagBadge } from "./ui";
 import { useModalA11y } from "./useModalA11y";
@@ -53,7 +53,7 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
   }, [item, variant, sel]);
 
   if (!item) return null;
-  const description = trDesc(lang, item);
+  const description = trVariantDesc(lang, item, variant);
   const off = offerPrice(settings, item, variant);
 
   const optKey = (g: { id: string }) =>
@@ -101,7 +101,20 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
               <MenuImage item={item} sizes="96px" className="h-24 w-24 shrink-0 rounded-2xl" />
               <div className="min-w-0">
                 <h3 className="font-display text-2xl font-black text-cherry">{trName(lang, item)}</h3>
-                {description && <p className="mt-1 text-sm text-cherry/70">{description}</p>}
+                {description && (
+                  <AnimatePresence mode="wait" initial={false}>
+                    <motion.p
+                      key={`${item.id}-${variant}`}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -4 }}
+                      transition={{ duration: 0.18 }}
+                      className="mt-1 text-sm text-cherry/70"
+                    >
+                      {description}
+                    </motion.p>
+                  </AnimatePresence>
+                )}
                 <div className="mt-2 flex flex-wrap gap-2">{item.tags?.map((tag) => <TagBadge key={tag} tag={tag} />)}</div>
               </div>
             </div>
@@ -113,7 +126,9 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
 
           {item.prices.length > 1 && (
             <div className="mt-5">
-              <p className="text-xs font-black uppercase tracking-wide text-cherry/60">{t("menu.size")}</p>
+              <p className="text-xs font-black uppercase tracking-wide text-cherry/60">
+                {item.prices.some((p) => p.label === "Half" || p.label === "Full") ? "Portion" : t("menu.size")}
+              </p>
               <div className="mt-2 flex flex-wrap gap-2">
                 {item.prices.map((p, i) => {
                   const sizeOff = optionOff(settings, `size:${item.id}`, p.label);
