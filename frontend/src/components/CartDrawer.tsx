@@ -1,8 +1,10 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
+import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { eur, fmtDate, vatPct } from "@/lib/format";
+import { lineErrorKey } from "@/lib/cart-errors";
 import { cartOptionLabel, isItemOff } from "@/lib/v3";
 import { whatsappUrl } from "@/lib/menu";
 import { useLang } from "@/lib/i18n";
@@ -11,10 +13,27 @@ import { LineThumb, QtyStepper } from "./ui";
 import WhatsAppIcon from "./WhatsAppIcon";
 
 export default function CartDrawer() {
-  const { cart, cartOpen, setCartOpen, setQty, removeLine, cartSubtotal, settings, adminItems } = useShop();
+  const {
+    cart, cartOpen, setCartOpen, setQty, removeLine, cartSubtotal, settings, adminItems,
+    priceCart, serverPricing, cartIssuesDismissed, dismissCartIssues,
+  } = useShop();
   const { t, lang } = useLang();
   const router = useRouter();
   const pathname = usePathname();
+
+  /* The order page owns the quote while it is mounted (it knows pickup/delivery
+     and the postcode). Everywhere else, quote once when the drawer opens so a
+     stale row is flagged before the customer reaches checkout. */
+  useEffect(() => {
+    if (!cartOpen || !cart.length || pathname === "/order") return;
+    const timer = window.setTimeout(() => { void priceCart("pickup", undefined, undefined, lang); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [cartOpen, cart.length, pathname, lang, priceCart]);
+
+  const invalidCount = serverPricing?.invalidCount ?? 0;
+  const subtotalShown = serverPricing?.subtotal ?? cartSubtotal;
+  const lineErrors = serverPricing?.lineErrors ?? {};
+  const showIssues = invalidCount > 0 && !cartIssuesDismissed;
   const scheduled = cart.find((l) => l.preorder)?.preorder;
   const unavailable = cart.filter((l) => isItemOff(settings, l.itemId));
   const whatsappMessage = [
@@ -70,6 +89,23 @@ export default function CartDrawer() {
                   </Link>
                 </div>
               ) : (
+                <>
+                {showIssues && (
+                  <div role="status" className="mb-4 flex items-start gap-3 rounded-2xl border border-gold-deep/30 bg-gold/15 p-3 text-xs text-cherry">
+                    <div className="min-w-0">
+                      <p className="font-black">{t("cart.issuesTitle")}</p>
+                      <p className="mt-1 leading-snug text-cherry/80">{t("cart.issuesBody")}</p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={dismissCartIssues}
+                      aria-label={t("cart.issuesDismiss")}
+                      className="ml-auto shrink-0 rounded-full px-1.5 text-base leading-none text-cherry/60 hover:text-cherry"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                )}
                 <ul className="space-y-4">
                   <AnimatePresence initial={false}>
                     {cart.map((l) => (
@@ -97,6 +133,18 @@ export default function CartDrawer() {
                                 {t("avail.unavailable")} — {t("cart.unavailNote")}
                               </p>
                             )}
+                            {lineErrors[l.key] && !isItemOff(settings, l.itemId) && (
+                              <div className="mt-1 flex flex-wrap items-center gap-2 rounded-lg bg-brick/10 px-2 py-1 text-[11px] font-black text-brick">
+                                <span>{t(lineErrorKey(lineErrors[l.key]))}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => removeLine(l.key)}
+                                  className="rounded-full border border-brick/40 px-2 py-0.5 underline-offset-2 hover:bg-brick hover:text-cream"
+                                >
+                                  {t("cart.removeBtn")}
+                                </button>
+                              </div>
+                            )}
                             {l.options.length > 0 && (
                               <ul className="mt-1 space-y-0.5 text-xs text-cherry/70">
                                 {l.options.map((o, i) => (
@@ -117,13 +165,14 @@ export default function CartDrawer() {
                         <div className="mt-3 flex items-center justify-between">
                           <QtyStepper small qty={l.qty} onChange={(q) => setQty(l.key, q)} />
                           <span className="font-black tabular-nums text-cherry">
-                            {eur(l.unitPrice * l.qty)}
+                            {lineErrors[l.key] ? "—" : eur(l.unitPrice * l.qty)}
                           </span>
                         </div>
                       </motion.li>
                     ))}
                   </AnimatePresence>
                 </ul>
+                </>
               )}
             </div>
 
@@ -131,7 +180,7 @@ export default function CartDrawer() {
               <div className="border-t-2 border-gold/40 p-5">
                 <div className="flex justify-between text-sm text-cherry/80">
                   <span>{t("cart.subtotal")}</span>
-                  <span className="font-black text-cherry">{eur(cartSubtotal)}</span>
+                  <span className="font-black text-cherry">{eur(subtotalShown)}</span>
                 </div>
                 {scheduled && (
                   <p className="mt-1 text-sm font-black text-gold-deep">
@@ -150,8 +199,13 @@ export default function CartDrawer() {
                   <WhatsAppIcon />
                   Chat on WhatsApp
                 </a>
+                {invalidCount > 0 && (
+                  <p className="mt-2 rounded-xl bg-brick/10 p-3 text-xs font-black text-brick">
+                    {t("cart.issuesBlock")}
+                  </p>
+                )}
                 <button
-                  disabled={unavailable.length > 0}
+                  disabled={unavailable.length > 0 || invalidCount > 0}
                   onClick={() => {
                     setCartOpen(false);
                     router.push("/order");

@@ -70,9 +70,28 @@ export const apiCustomers = () =>
   api<{ id: string; name: string; email: string; phone: string; marketing: number; created_at: number; orderCount: number; lifetimeSpend: number }[]>("/api/customers", { staff: true });
 
 /* ── pricing (server is the price authority) ───────────────────────────── */
+
+/** A quoted line. `unitPrice` is null when the row could not be priced —
+    `error` then carries the contract code (validation.* / avail.*). */
+export type CartQuoteLine = Omit<CartLine, "unitPrice"> & { unitPrice: number | null; error: string | null };
+
+export type CartQuote = {
+  lines: CartQuoteLine[];
+  subtotal: number;
+  deliveryFee: number;
+  deliveryDistanceKm?: number;
+  weightKg: number;
+  total: number;
+  vat: number;
+  /** number of lines excluded from the totals; checkout is blocked while > 0 */
+  invalidCount: number;
+  discount?: { title: string; amount: number; offerId?: string; freeDelivery?: boolean };
+};
+
+/** Lenient quote: always 200, prices what it can and reports each bad line.
+    Checkout (/api/checkout/session) remains strict — see apiCreateCheckoutSession. */
 export const apiPriceCart = (lines: CartLine[], type: "pickup" | "delivery", lang: "en" | "fi", code?: string, address?: string) =>
-  api<{ lines: CartLine[]; subtotal: number; deliveryFee: number; deliveryDistanceKm?: number; weightKg: number; total: number; vat: number; discount?: { title: string; amount: number; offerId?: string; freeDelivery?: boolean } }>(
-    "/api/cart/price", { method: "POST", body: { lines, type, lang, code, address } });
+  api<CartQuote>("/api/cart/price", { method: "POST", body: { lines, type, lang, code, address } });
 
 /* ── orders ────────────────────────────────────────────────────────────── */
 export type CheckoutInput = {
