@@ -7,7 +7,7 @@ import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
 import {
   activeToppings, builderUnitPrice, optionOff, pizzaIncluded,
-  pizzaUnitPrice, toppingExtraPrice, toppingLabel, trLabel, trName,
+  pizzaUnitPrice, toppingExtraPrice, toppingLabel, trLabel, trName, visibleToppingOptions,
 } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
 import { PizzaImage, QtyStepper } from "./ui";
@@ -17,7 +17,8 @@ import FavoriteButton from "./FavoriteButton";
 /**
  * Wolt-style pizza sheet: size + extra toppings with live total.
  * Bottom sheet on mobile, centered modal on desktop.
- * Classic pizzas: included toppings shown (never double-charged, can be doubled as extras).
+ * Classic pizzas: included toppings shown as INCLUDED; the shop owner controls
+ * which toppings may be added per item (Menu -> item -> Options -> shop toppings).
  * Fantasia/Pannu: SELECT TOPPING tier logic (extras beyond the tier min).
  */
 export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; onClose: () => void }) {
@@ -39,9 +40,19 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
 
   const isBuilder = !!item?.mods?.some((g) => g.id === "top");
   const included = useMemo(() => (item && !isBuilder ? pizzaIncluded(item) : []), [item, isBuilder]);
+  const ownToppings = item?.mods?.find((g) => g.id === "topping");
   /* Only toppings that still exist in the master list and are not switched off.
-     A removed topping must disappear here — greyed-out ghosts confuse customers. */
-  const availableToppings = useMemo(() => activeToppings(settings), [settings]);
+     A removed topping must disappear here — greyed-out ghosts confuse customers.
+
+     A classic pizza may also carry its own topping group: the owner ticks which
+     shop toppings may be added to that item, so e.g. a pizza that already comes
+     with mozzarella does not offer it again as an extra. Follow that list when
+     it exists and fall back to the full shop list otherwise (older items have
+     no group yet and must keep working unchanged). */
+  const availableToppings = useMemo(() => {
+    if (!item || isBuilder || !ownToppings) return activeToppings(settings);
+    return visibleToppingOptions(settings, ownToppings).map((option) => option.label);
+  }, [item, isBuilder, settings, ownToppings]);
   const allowedToppings = useMemo(() => new Set(availableToppings), [availableToppings]);
 
   /* Settings can refresh while the sheet is open (tab focus); drop picks that
