@@ -114,13 +114,40 @@ export interface OpenInfo {
   nextDay?: number;
 }
 
-export function openInfo(hours: Hours): OpenInfo {
-  const { day, minutes } = helsinkiNow();
+/**
+ * Close time in minutes counted from the *opening day's* midnight.
+ * A close at or before the opening time means the kitchen runs past midnight
+ * (10:00–00:00, 10:00–02:00), so it is moved to the next day — comparing it
+ * directly against the opening time would make the shop look closed all day.
+ */
+export function closeMinutes(entry: { open: string; close: string }): number {
+  const open = toMin(entry.open);
+  const close = toMin(entry.close);
+  return close <= open ? close + 1440 : close;
+}
+
+export function openInfo(hours: Hours, now: { day: number; minutes: number } = helsinkiNow()): OpenInfo {
+  const { day, minutes } = now;
+
+  /* 1 · last night's window can still be running (Fri 10:00–02:00 → open at
+     Sat 01:30). Checked before today's entry: after midnight today has not
+     opened yet, so the plain comparison would wrongly report "closed". */
+  const previous = hours[(day + 6) % 7];
+  if (previous) {
+    const previousClose = closeMinutes(previous);
+    if (previousClose > 1440 && minutes < previousClose - 1440) return { open: true, closeAt: previous.close };
+  }
+
+  /* 2 · today's own window (close may spill past midnight) */
   const today = hours[day];
-  if (today && minutes >= toMin(today.open) && minutes < toMin(today.close))
-    return { open: true, closeAt: today.close };
-  if (today && minutes < toMin(today.open))
-    return { open: false, openAt: today.open, nextDay: 0 };
+  if (today) {
+    const open = toMin(today.open);
+    const close = closeMinutes(today);
+    if (minutes >= open && minutes < close) return { open: true, closeAt: today.close };
+    if (minutes < open) return { open: false, openAt: today.open, nextDay: 0 };
+  }
+
+  /* 3 · next opening within the coming week */
   for (let i = 1; i <= 7; i++) {
     const d = (day + i) % 7;
     const h = hours[d];
@@ -129,8 +156,12 @@ export function openInfo(hours: Hours): OpenInfo {
   return { open: false };
 }
 
-export function orderingInfo(settings: Settings): { open: boolean; info: OpenInfo; paused: boolean } {
-  return { open: !settings.paused && openInfo(settings.hours).open, info: openInfo(settings.hours), paused: settings.paused };
+export function orderingInfo(
+  settings: Settings,
+  now?: { day: number; minutes: number }
+): { open: boolean; info: OpenInfo; paused: boolean } {
+  const info = openInfo(settings.hours, now);
+  return { open: !settings.paused && info.open, info, paused: settings.paused };
 }
 
 /** Available reservation slots for a date (30 min steps, last seating 60 min before close). */
@@ -157,7 +188,9 @@ export function slotsFor(
   );
   const slots: string[] = [];
   const open = toMin(entry.open);
-  const close = toMin(entry.close);
+  /* Table slots stay inside the calendar day: an overnight close (00:00/02:00)
+     still means the last seating is before midnight, never a 25:00 slot. */
+  const close = Math.min(closeMinutes(entry), 1440);
   for (let t = open; t <= close - 60; t += 30) {
     const hh = String(Math.floor(t / 60)).padStart(2, "0");
     const mm = String(t % 60).padStart(2, "0");

@@ -24,6 +24,9 @@ export interface Toast { id: string; msg: string; kind: "ok" | "err" }
 
 interface ShopCtx {
   settings: Settings;
+  /** True once settings came back from the backend at least once. Pages that
+      print opening hours wait for this so build-time defaults never flash. */
+  settingsReady: boolean;
   saveSettings: (s: Settings) => Promise<boolean>;
   adminItems: MenuItem[];
   overrides: Overrides; // compat shim — backend data is already effective
@@ -140,6 +143,7 @@ const clearPending = () => { try { sessionStorage.removeItem(PENDING_ACTION_KEY)
 
 export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
+  const [settingsReady, setSettingsReady] = useState(false);
   const [adminItems, setAdminItems] = useState<MenuItem[]>(BASE_ITEMS);
   /* Session identity comes from the HttpOnly cookie via /api/auth/session;
      profile data is in memory only, not localStorage. */
@@ -266,10 +270,30 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       // offline first-paint fallback (bundled data) stays in place
       console.warn("backend unreachable, using bundled fallback", e);
     } finally {
+      setSettingsReady(true);
       setAuthChecked(true);
     }
   }, [hydrateUser]);
   useEffect(() => { void refresh(); }, [refresh]);
+
+  /* Settings are edited from another tab (/admin). Re-read them when this tab
+     becomes visible again — throttled, so tab-flipping stays cheap. */
+  useEffect(() => {
+    let last = 0;
+    const sync = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      const now = Date.now();
+      if (now - last < 30_000) return;
+      last = now;
+      api.fetchSettings().then(setSettings).catch(() => { /* keep the last good copy */ });
+    };
+    document.addEventListener("visibilitychange", sync);
+    window.addEventListener("focus", sync);
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      window.removeEventListener("focus", sync);
+    };
+  }, []);
 
   /* ── auth: identity is maintained by HttpOnly cookies, never localStorage ── */
   const register: ShopCtx["register"] = async (d) => {
@@ -686,7 +710,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   };
 
   const value: ShopCtx = {
-    settings, saveSettings, adminItems,
+    settings, settingsReady, saveSettings, adminItems,
     overrides: { items: {}, order: {} },
     patchItem, saveMenuItem, archiveMenuItem, moveItem, moveItemTo, addItem, removeAdded, addCat, updateCat, deleteCat, setItemText,
     effectiveMenu, categories,

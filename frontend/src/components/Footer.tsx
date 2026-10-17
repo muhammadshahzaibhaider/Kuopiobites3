@@ -11,7 +11,7 @@ import { apiSubscribeNewsletter } from "@/lib/api";
 
 export default function Footer() {
   const pathname = usePathname();
-  const { settings, toast } = useShop();
+  const { settings, settingsReady, toast } = useShop();
   const { t, dayName } = useLang();
   const [email, setEmail] = useState("");
   const [done, setDone] = useState(false);
@@ -40,7 +40,7 @@ export default function Footer() {
               <li key={d} className="flex justify-between gap-6 text-cream/85">
                 <span>{dayName(d)}</span>
                 <span className="font-bold tabular-nums">
-                  {settings.hours[d] ? `${settings.hours[d]!.open} – ${settings.hours[d]!.close}` : t("hours.closed")}
+                  {!settingsReady ? "—" : settings.hours[d] ? `${settings.hours[d]!.open} – ${settings.hours[d]!.close}` : t("hours.closed")}
                 </span>
               </li>
             ))}

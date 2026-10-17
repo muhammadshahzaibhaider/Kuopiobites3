@@ -8,7 +8,7 @@ import { useShop } from "@/lib/store";
 import WhatsAppIcon from "@/components/WhatsAppIcon";
 
 export default function AboutPage() {
-  const { settings, toast } = useShop();
+  const { settings, settingsReady, toast } = useShop();
   const { t, dayName } = useLang();
   const [f, setF] = useState({ name: "", email: "", msg: "" });
 
@@ -74,7 +74,7 @@ export default function AboutPage() {
                 <li key={d} className="flex justify-between">
                   <span>{dayName(d)}</span>
                   <span className="font-bold tabular-nums">
-                    {settings.hours[d] ? `${settings.hours[d]!.open} – ${settings.hours[d]!.close}` : t("hours.closed")}
+                    {!settingsReady ? "—" : settings.hours[d] ? `${settings.hours[d]!.open} – ${settings.hours[d]!.close}` : t("hours.closed")}
                   </span>
                 </li>
               ))}

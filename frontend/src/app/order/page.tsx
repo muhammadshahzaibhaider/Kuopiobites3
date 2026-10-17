@@ -16,7 +16,7 @@ import { useShop } from "@/lib/store";
 export default function OrderPage() {
   const shop = useShop();
   const router = useRouter();
-  const { cart, cartSubtotal, settings, user, setQty, removeLine, clearCart, startCheckout, toast, updateUser, priceCart, serverPricing } = shop;
+  const { cart, cartSubtotal, settings, settingsReady, user, setQty, removeLine, clearCart, startCheckout, toast, updateUser, priceCart, serverPricing } = shop;
 
   const [type, setType] = useState<"pickup" | "delivery">("pickup");
   const [address, setAddress] = useState("");
@@ -27,12 +27,14 @@ export default function OrderPage() {
   const [code, setCode] = useState("");
 
   /* Opening hours are time-of-day data: never render them during prerender or
-     the first client pass (#418). The mounted flag keeps both passes identical
-     and the closed banner space reserved, so nothing jumps once it resolves. */
+     the first client pass (#418), and never from the bundled defaults while the
+     real settings are still loading. `hoursReady` keeps both passes identical;
+     the text stays hidden until it is true, so nothing wrong ever flashes. */
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
-  const open = useMemo(() => orderingInfo(settings), [settings, mounted]);
-  const openLabel = !mounted
+  const hoursReady = mounted && settingsReady;
+  const open = useMemo(() => orderingInfo(settings), [settings, mounted, settingsReady]);
+  const openLabel = !hoursReady
     ? ""
     : open.paused
       ? t("open.paused")
@@ -76,7 +78,7 @@ export default function OrderPage() {
   const lineErrors = serverPricing?.lineErrors ?? {};
   /* `mounted` keeps the SSR/first-client button state identical; `invalidCount`
      blocks checkout until the affected rows are removed (server stays strict). */
-  const canPay = mounted && (open.open || !!scheduled) && user && cart.length > 0 && phoneOk && postalOk && minOk && !tooFar && unavailable.length === 0 && invalidCount === 0 && !preErr && !paying;
+  const canPay = hoursReady && (open.open || !!scheduled) && user && cart.length > 0 && phoneOk && postalOk && minOk && !tooFar && unavailable.length === 0 && invalidCount === 0 && !preErr && !paying;
 
   const pay = async () => {
     if (!user) return;
@@ -141,7 +143,7 @@ export default function OrderPage() {
         <div className="gold-rule mt-4 w-24" />
       </motion.div>
 
-      {mounted && !open.open && (
+      {hoursReady && !open.open && (
         <div className="mt-6 rounded-2xl border-2 border-cherry-bright/40 bg-cherry-bright/10 p-4 font-bold text-cherry-bright">
           ⏸ {openLabel} — {t("order.closedNote")}.
         </div>

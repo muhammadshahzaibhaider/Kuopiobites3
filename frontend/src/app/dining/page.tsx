@@ -9,7 +9,7 @@ import { useShop } from "@/lib/store";
 
 export default function DiningPage() {
   const { t, dayName } = useLang();
-  const { settings } = useShop();
+  const { settings, settingsReady } = useShop();
   const flowRef = useRef<HTMLDivElement>(null);
 
   return (
@@ -48,7 +48,7 @@ export default function DiningPage() {
             <li key={d} className="flex justify-between">
               <span>{dayName(d)}</span>
               <span className="font-bold tabular-nums">
-                {settings.hours[d] ? `${settings.hours[d]!.open}–${settings.hours[d]!.close}` : t("hours.closed")}
+                {!settingsReady ? "—" : settings.hours[d] ? `${settings.hours[d]!.open}–${settings.hours[d]!.close}` : t("hours.closed")}
               </span>
             </li>
           ))}
