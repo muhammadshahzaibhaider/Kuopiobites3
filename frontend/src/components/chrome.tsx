@@ -17,12 +17,14 @@ export function FixedBackgroundGate() {
 
 /* Branded initial loader: pizza slice orbit + steam */
 export function Splash() {
+  const pathname = usePathname();
   const reduce = useReducedMotion();
   const [show, setShow] = useState(true);
   useEffect(() => {
     const t = setTimeout(() => setShow(false), reduce ? 200 : 1100);
     return () => clearTimeout(t);
   }, [reduce]);
+  if (pathname.startsWith("/admin")) return null;
   return (
     <AnimatePresence>
       {show && (

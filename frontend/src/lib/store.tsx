@@ -619,16 +619,9 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       return false;
     }
   };
-  const orderStatus = (o: Order): OrderStatus => {
-    if (o.statusOverride) return o.statusOverride;
-    const el = (Date.now() - o.createdAt) / 1000;
-    if (el < 45) return "placed";
-    if (el < 120) return "accepted";
-    if (o.estimatedReadyAt) return Date.now() < o.estimatedReadyAt ? "preparing" : "ready";
-    if (el < 300) return "preparing";
-    if (el < 720) return "ready";
-    return "completed";
-  };
+  /* Manual only: a new order stays "placed" until the kitchen accepts,
+     declines or moves it forward explicitly. Nothing advances on a timer. */
+  const orderStatus = (o: Order): OrderStatus => o.statusOverride ?? "placed";
 
   /* ── reservations ── */
   const addReservation: ShopCtx["addReservation"] = async (r) => {

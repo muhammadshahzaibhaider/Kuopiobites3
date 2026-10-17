@@ -9,7 +9,7 @@ import type { Order, OrderStatus, Reservation } from "@/lib/types";
 import { Ic } from "./icons";
 import { Bars, Confirm, DataTable, Drawer, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, Toolbar, downloadCSV, fmtDT, inputCls, statusTone, useDelayedReady, SkeletonRows, type Col, type FilterDef } from "./ui";
 
-const NEXT: Record<OrderStatus, OrderStatus> = { placed: "accepted", accepted: "preparing", preparing: "ready", ready: "completed", completed: "completed" };
+const NEXT: Record<OrderStatus, OrderStatus> = { placed: "accepted", accepted: "preparing", preparing: "ready", ready: "completed", completed: "completed", cancelled: "cancelled" };
 
 /* ══ DASHBOARD ══ */
 export function DashboardView({ go }: { go: (v: string) => void }) {

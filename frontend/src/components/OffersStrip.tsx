@@ -27,7 +27,7 @@ export default function OffersStrip() {
           >
             {o.scope.itemIds?.[0] && (() => {
               const itm = MENU.find((m) => m.id === o.scope.itemIds![0]);
-              return itm ? <MenuImage item={itm} sizes="80px" className="h-11 w-11 shrink-0 rounded-xl" /> : null;
+              return itm ? <MenuImage item={itm} sizes="44px" className="h-11 w-11 shrink-0 rounded-xl" caption={false} /> : null;
             })()}
             <span className="grid h-9 min-w-[36px] place-items-center rounded-full bg-gold px-1 font-display text-sm font-black text-cherry-dark">
               {lang === "fi" ? o.badgeFi ?? o.badgeEn : o.badgeEn ?? o.badgeFi}

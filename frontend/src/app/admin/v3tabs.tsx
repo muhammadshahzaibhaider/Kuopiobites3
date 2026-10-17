@@ -377,18 +377,27 @@ export function CatsTab() {
   const [adding, setAdding] = useState(false);
   const [savingNames, setSavingNames] = useState<string | null>(null);
   const [nameDrafts, setNameDrafts] = useState<Record<string, { fi: string; en: string }>>({});
+  const [query, setQuery] = useState("");
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [overId, setOverId] = useState<string | null>(null);
   const cats = categories();
-  const move = async (id: string, dir: -1 | 1) => {
-    const order = settings.catOrder?.length ? settings.catOrder : cats.map((c) => c.id);
-    const i = order.indexOf(id);
-    const j = i + dir;
-    if (i < 0 || j < 0 || j >= order.length) return;
-    const next = [...order];
-    [next[i], next[j]] = [next[j], next[i]];
+
+  const order = settings.catOrder?.length ? [...settings.catOrder] : cats.map((c) => c.id);
+  cats.forEach((c) => { if (!order.includes(c.id)) order.push(c.id); });
+
+  const moveTo = async (id: string, index: number) => {
+    const next = order.filter((x) => x !== id);
+    next.splice(Math.max(0, Math.min(next.length, index)), 0, id);
     if (await saveSettings({ ...settings, catOrder: next })) {
       logAudit(`category ${id} moved`);
       toast("Category order saved");
     }
+  };
+  const move = async (id: string, dir: -1 | 1) => {
+    const i = order.indexOf(id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= order.length) return;
+    await moveTo(id, j);
   };
   const meta = (id: string) => settings.catMeta[id] ?? {};
   const updateNameDraft = (id: string, patch: Partial<{ fi: string; en: string }>) => {
@@ -401,7 +410,7 @@ export function CatsTab() {
     const saved = await saveSettings({ ...settings, catMeta: { ...settings.catMeta, [id]: { ...meta(id), ...patch } } });
     if (saved) {
       logAudit(`category ${id} settings updated`);
-      toast("Category settings saved and reloaded from the database");
+      toast("Category settings saved");
     }
     return saved;
   };
@@ -414,52 +423,170 @@ export function CatsTab() {
     setSavingNames(null);
     if (saved) setNameDrafts((current) => { const next = { ...current }; delete next[id]; return next; });
   };
+
+  const visible = cats.filter((c) => !settings.catMeta[c.id]?.hidden).length;
+  const totalItems = cats.reduce((n, c) => n + adminItems.filter((x) => x.cat === c.id).length, 0);
+  const q = query.trim().toLowerCase();
+  const shown = q
+    ? cats.filter((c) => c.id.toLowerCase().includes(q) || c.title.toLowerCase().includes(q) || (c.en ?? "").toLowerCase().includes(q))
+    : cats;
+
   return (
-    <div className="space-y-3">
-      <p className="text-xs text-cherry/60">Uploads feed the Home circles instantly (≤5 MB, cropped 1:1, WebP). Drag order = circle order. No image → branded placeholder.</p>
-      <form className="grid gap-2 rounded-xl border border-gold/50 bg-gold/10 p-3 sm:grid-cols-[1fr_1fr_auto]" onSubmit={async (event) => {
-        event.preventDefault();
-        if (!newFi.trim() || !newEn.trim()) { toast("Enter both Finnish and English category names", "err"); return; }
-        setAdding(true); const ok = await addCat(newFi.trim(), newEn.trim()); setAdding(false);
-        if (ok) { setNewFi(""); setNewEn(""); toast("Category created"); }
-      }}>
-        <input value={newFi} onChange={(event) => setNewFi(event.target.value)} maxLength={60} required placeholder="Category name (Finnish)" className={inputCls} />
-        <input value={newEn} onChange={(event) => setNewEn(event.target.value)} maxLength={60} required placeholder="Category name (English)" className={inputCls} />
-        <PrimaryBtn icon="plus" disabled={adding}>{adding ? "Adding…" : "Add category"}</PrimaryBtn>
-      </form>
-      {cats.map((c, idx) => {
-        const m = meta(c.id);
-        const n = adminItems.filter((x) => x.cat === c.id).length;
-        return (
-          <div key={c.id} className="flex flex-wrap items-start gap-4 rounded-xl border border-cherry/15 bg-cream-deep p-4">
-            <ImageUploader
-              preset="1:1"
-              value={m.img ? { src: resolveImageSrc(m.img) ?? m.img, altEn: m.altEn ?? "", altFi: m.altFi ?? "" } : undefined}
-              onChange={(v) => { void saveMeta(c.id, { img: v?.src, altEn: v?.altEn, altFi: v?.altFi }); }}
+    <div className="space-y-4">
+      {/* summary */}
+      <div className="grid gap-2.5 sm:grid-cols-3">
+        {[
+          { label: "Categories", value: cats.length, icon: "group", tone: "text-cherry" },
+          { label: "Visible on site", value: visible, icon: "eye", tone: "text-[#2e7d32]" },
+          { label: "Items across menus", value: totalItems, icon: "list", tone: "text-gold-deep" },
+        ].map((stat) => (
+          <div key={stat.label} className="flex items-center gap-3 rounded-2xl border border-cherry/10 bg-cream p-3.5">
+            <span className="grid h-10 w-10 place-items-center rounded-xl bg-cherry/5 text-cherry/60">{stat.icon === "group" ? "▦" : stat.icon === "eye" ? "◉" : "≡"}</span>
+            <span>
+              <span className="block text-[10px] font-black uppercase tracking-[0.14em] text-cherry/40">{stat.label}</span>
+              <span className={cx("block font-display text-xl font-black tabular-nums", stat.tone)}>{stat.value}</span>
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* toolbar */}
+      <div className="rounded-2xl border border-cherry/10 bg-cream p-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="relative min-w-[180px] flex-1 sm:max-w-xs">
+            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cherry/40">⌕</span>
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search categories…"
+              className="min-h-[38px] w-full rounded-xl border border-cherry/15 bg-white pl-9 pr-3 text-sm font-bold text-cherry placeholder:text-cherry/35 focus:border-gold focus:outline-none"
             />
-            <div className="min-w-[220px] flex-1 space-y-2">
-              <p className="text-xs font-black text-cherry">{c.title} <span className="text-cherry/40">· {n} items · {c.id}</span></p>
-              <div className="flex flex-wrap gap-2">
-                <input value={nameDrafts[c.id]?.fi ?? m.nameFi ?? ""} placeholder="Nimi FI (oletus: alkuperäinen)" onChange={(e) => updateNameDraft(c.id, { fi: e.target.value })} className="min-h-[36px] w-44 rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-                <input value={nameDrafts[c.id]?.en ?? m.nameEn ?? ""} placeholder="Name EN" onChange={(e) => updateNameDraft(c.id, { en: e.target.value })} className="min-h-[36px] w-44 rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold" />
-                {nameDrafts[c.id] && <PrimaryBtn disabled={savingNames === c.id} onClick={() => { void saveNames(c.id); }}>{savingNames === c.id ? "Saving…" : "Save names"}</PrimaryBtn>}
+          </label>
+          <span className="hidden items-center gap-1.5 rounded-full border border-cherry/10 bg-white/70 px-2.5 py-1 text-[10px] font-black uppercase tracking-wide text-cherry/45 sm:inline-flex">
+            ⋮⋮ Drag a card to re-order
+          </span>
+        </div>
+        <form
+          className="mt-2 flex flex-wrap items-center gap-2 border-t border-cherry/10 pt-2"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (!newFi.trim() || !newEn.trim()) { toast("Enter both Finnish and English category names", "err"); return; }
+            setAdding(true);
+            const ok = await addCat(newFi.trim(), newEn.trim());
+            setAdding(false);
+            if (ok) { setNewFi(""); setNewEn(""); toast("Category created"); }
+          }}
+        >
+          <input value={newFi} onChange={(e) => setNewFi(e.target.value)} maxLength={60} required placeholder="New category — Finnish name" className={cx(inputCls, "sm:w-56")} />
+          <input value={newEn} onChange={(e) => setNewEn(e.target.value)} maxLength={60} required placeholder="English name" className={cx(inputCls, "sm:w-56")} />
+          <PrimaryBtn icon="plus" disabled={adding}>{adding ? "Adding…" : "Add category"}</PrimaryBtn>
+        </form>
+      </div>
+
+      {/* cards */}
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {shown.map((c) => {
+          const m = meta(c.id);
+          const idx = order.indexOf(c.id);
+          const n = adminItems.filter((x) => x.cat === c.id).length;
+          const draft = nameDrafts[c.id];
+          return (
+            <div
+              key={c.id}
+              draggable
+              onDragStart={() => setDragId(c.id)}
+              onDragEnd={() => { setDragId(null); setOverId(null); }}
+              onDragOver={(e) => { e.preventDefault(); setOverId(c.id); }}
+              onDragLeave={() => setOverId((x) => (x === c.id ? null : x))}
+              onDrop={(e) => { e.preventDefault(); if (dragId && dragId !== c.id) void moveTo(dragId, idx); setDragId(null); setOverId(null); }}
+              className={cx(
+                "rounded-3xl border bg-white p-3.5 shadow-[0_10px_24px_-24px_rgba(6,32,31,0.55)] transition",
+                dragId === c.id ? "opacity-50" : "hover:-translate-y-0.5 hover:border-gold/60 hover:shadow-card",
+                overId === c.id && dragId !== c.id ? "border-gold ring-2 ring-gold/30" : "border-cherry/10",
+                m.hidden && "bg-cherry/[0.03]"
+              )}
+            >
+              <div className="flex items-start gap-3">
+                <div className="relative shrink-0">
+                  <ImageUploader
+                    preset="1:1"
+                    value={m.img ? { src: resolveImageSrc(m.img) ?? m.img, altEn: m.altEn ?? "", altFi: m.altFi ?? "" } : undefined}
+                    onChange={(v) => { void saveMeta(c.id, { img: v?.src, altEn: v?.altEn, altFi: v?.altFi }); }}
+                  />
+                  <span className="absolute -left-1 -top-1 grid h-5 min-w-[20px] place-items-center rounded-md bg-cherry px-1 text-[10px] font-black text-cream" title="Position on the public menu">
+                    {idx + 1}
+                  </span>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-display text-base font-black text-cherry">{m.nameEn ?? c.en ?? c.title}</p>
+                      <p className="truncate text-[11px] font-bold text-cherry/45">{m.nameFi ?? c.title}</p>
+                    </div>
+                    <span className={cx("shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black", m.hidden ? "bg-brick/10 text-brick" : "bg-[#e6f4e7] text-[#2e7d32]")}>
+                      {m.hidden ? "Hidden" : "Live"}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 flex items-center gap-2 text-[10px] font-black uppercase tracking-wide text-cherry/35">
+                    <span className="rounded bg-cherry/5 px-1.5 py-0.5">{c.id}</span>
+                    <span>{n} item{n === 1 ? "" : "s"}</span>
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <label className="flex items-center gap-1.5 text-[11px] font-black text-cherry/60">
+                      Show
+                      <Switch on={!m.hidden} ariaLabel={`${c.title} visible`} onChange={() => { void saveMeta(c.id, { hidden: !m.hidden }); }} />
+                    </label>
+                    <CatAvailSwitch id={c.id} title={c.title} />
+                  </div>
+                </div>
               </div>
-              <div className="flex flex-wrap items-center gap-3">
-                <label className="flex items-center gap-2 text-xs font-black text-cherry/60">
-                  Show on site
-                  <Switch on={!m.hidden} ariaLabel={`${c.title} visible`} onChange={() => { void saveMeta(c.id, { hidden: !m.hidden }); }} />
-                </label>
-                <CatAvailSwitch id={c.id} title={c.title} />
-                {n === 0 && <button onClick={async () => { if (window.confirm(`Delete empty category “${c.title}”?`)) { if (await deleteCat(c.id)) toast("Category deleted", "ok"); } }} className="min-h-[32px] rounded-lg border border-brick/30 px-2 text-[11px] font-black text-brick">Delete empty category</button>}
-                <span className="ml-auto flex gap-1">
-                  <button onClick={() => move(c.id, -1)} disabled={idx === 0} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry disabled:opacity-30">↑</button>
-                  <button onClick={() => move(c.id, 1)} disabled={idx === cats.length - 1} className="min-h-[32px] rounded-lg border border-cherry/30 px-2 text-xs font-black text-cherry disabled:opacity-30">↓</button>
-                </span>
+
+              <div className="mt-3 space-y-2 border-t border-cherry/10 pt-3">
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  <input
+                    value={draft?.fi ?? m.nameFi ?? ""}
+                    placeholder={c.title}
+                    aria-label={`${c.title} Finnish name`}
+                    onChange={(e) => updateNameDraft(c.id, { fi: e.target.value })}
+                    className="min-h-[34px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold"
+                  />
+                  <input
+                    value={draft?.en ?? m.nameEn ?? ""}
+                    placeholder={c.en ?? c.title}
+                    aria-label={`${c.title} English name`}
+                    onChange={(e) => updateNameDraft(c.id, { en: e.target.value })}
+                    className="min-h-[34px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold"
+                  />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  {draft && (
+                    <button
+                      onClick={() => { void saveNames(c.id); }}
+                      disabled={savingNames === c.id}
+                      className="min-h-[30px] rounded-lg bg-cherry px-2.5 text-[11px] font-black text-cream disabled:opacity-60"
+                    >
+                      {savingNames === c.id ? "Saving…" : "Save names"}
+                    </button>
+                  )}
+                  <span className="ml-auto flex gap-1">
+                    <button onClick={() => { void move(c.id, -1); }} disabled={idx <= 0} aria-label={`Move ${c.title} up`} className="grid h-8 w-8 place-items-center rounded-lg border border-cherry/25 text-xs font-black text-cherry disabled:opacity-30">↑</button>
+                    <button onClick={() => { void move(c.id, 1); }} disabled={idx >= order.length - 1} aria-label={`Move ${c.title} down`} className="grid h-8 w-8 place-items-center rounded-lg border border-cherry/25 text-xs font-black text-cherry disabled:opacity-30">↓</button>
+                    {n === 0 && (
+                      <button
+                        onClick={async () => { if (window.confirm(`Delete empty category “${c.title}”?`)) { if (await deleteCat(c.id)) toast("Category deleted", "ok"); } }}
+                        className="h-8 rounded-lg border border-brick/30 px-2 text-[11px] font-black text-brick"
+                      >
+                        Delete
+                      </button>
+                    )}
+                  </span>
+                </div>
               </div>
             </div>
-          </div>
-        );
-      })}
+          );
+        })}
+      </div>
+      {shown.length === 0 && <p className="rounded-2xl border border-cherry/10 bg-cream py-8 text-center text-sm font-bold text-cherry/50">No categories match “{query}”.</p>}
     </div>
   );
 }

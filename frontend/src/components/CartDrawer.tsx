@@ -1,7 +1,7 @@
 "use client";
 import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { eur, fmtDate, vatPct } from "@/lib/format";
 import { cartOptionLabel, isItemOff } from "@/lib/v3";
 import { whatsappUrl } from "@/lib/menu";
@@ -14,6 +14,7 @@ export default function CartDrawer() {
   const { cart, cartOpen, setCartOpen, setQty, removeLine, cartSubtotal, settings, adminItems } = useShop();
   const { t, lang } = useLang();
   const router = useRouter();
+  const pathname = usePathname();
   const scheduled = cart.find((l) => l.preorder)?.preorder;
   const unavailable = cart.filter((l) => isItemOff(settings, l.itemId));
   const whatsappMessage = [
@@ -21,6 +22,8 @@ export default function CartDrawer() {
     ...cart.map((l) => `- ${l.name} | ${l.variantLabel || "standard"} | ${l.options.length ? l.options.map((option) => cartOptionLabel(adminItems.find((item) => item.id === l.itemId), settings, lang, option)).join(", ") : "no options"} | qty ${l.qty} | ${eur(l.unitPrice * l.qty)}`),
     `Total: ${eur(cartSubtotal)}`,
   ].join("\n");
+
+  if (pathname.startsWith("/admin")) return null;
 
   return (
     <AnimatePresence>

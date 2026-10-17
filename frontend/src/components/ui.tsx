@@ -261,11 +261,14 @@ export function MenuImage({
   className,
   sizes = "(max-width: 640px) 96px, 200px",
   srcOverride,
+  caption = true,
 }: {
   item: import("@/lib/types").MenuItem;
   className?: string;
   sizes?: string;
   srcOverride?: string;
+  /** Show the small "illustrative product image" note. Off for thumbnails. */
+  caption?: boolean;
 }) {
   const { settings } = useShop();
   const { t } = useLang();
@@ -273,8 +276,12 @@ export function MenuImage({
   const src = resolveImageSrc(srcOverride ?? settings.itemImages[item.id]?.src ?? item.imageUrl) ?? itemImagePath(item);
   const external = /^(?:https?:\/\/|data:|blob:)/i.test(src);
   const icon = CATEGORY_ICON[CATEGORY_SLUG[item.cat] ?? ""] ?? "🍽";
+  /* Callers that pass their own width/height (thumbnails, sheets, carousels)
+     must win over the card defaults — otherwise `w-full` stretches a 44px
+     thumbnail into a full-width strip and crops the photo. */
+  const sized = /(^|\s)(w-|h-|size-|aspect-)/.test(className ?? "");
   return (
-    <div className={cx("relative aspect-square w-full overflow-hidden bg-[#F4F4F2]", className)}>
+    <div className={cx("relative overflow-hidden bg-[#F4F4F2]", !sized && "aspect-square w-full", className)}>
       {failed ? (
         <div className="grid h-full w-full place-items-center bg-cream-deep" role="img" aria-label={item.name}>
           <span aria-hidden className="grid h-[62%] w-[62%] place-items-center rounded-full bg-cream text-3xl shadow-card">
@@ -298,9 +305,11 @@ export function MenuImage({
           className="h-full w-full object-cover"
         />
       )}
-      <span className="pointer-events-none absolute inset-x-1 bottom-0.5 text-right text-[8px] font-bold leading-[1.15] text-cherry/50">
-        {t("img.caption")}
-      </span>
+      {caption && (
+        <span className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-cherry-dark/60 to-transparent pb-0.5 pr-1 pt-3 text-right text-[8px] font-bold leading-[1.15] text-cream/90">
+          {t("img.caption")}
+        </span>
+      )}
     </div>
   );
 }
