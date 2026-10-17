@@ -99,6 +99,15 @@ export const cartLineSchema = z.object({
   pizza: pizzaSchema.optional(),
 }).strict();
 
+/** POST /api/cart/price only: individual lines stay `unknown` on purpose so a
+    single stale row is reported per line instead of 400-ing the whole cart.
+    Standard validation still applies to every line inside priceEachLine(). */
+export const priceRequestSchema = z.object({
+  lines: z.array(z.unknown()).min(1).max(100),
+  type: z.enum(["pickup", "delivery"]).default("pickup"),
+  lang: z.enum(["en", "fi"]).default("en"), code: text(40).optional(), address: text(200).optional(),
+}).strict();
+
 export const cartSchema = z.object({
   lines: z.array(cartLineSchema).min(1).max(100),
   type: z.enum(["pickup", "delivery"]).default("pickup"),
