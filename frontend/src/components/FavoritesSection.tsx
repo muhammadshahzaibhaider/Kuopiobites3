@@ -26,7 +26,7 @@ export default function FavoritesSection() {
   return <section className="mt-6 rounded-3xl border border-cherry/10 bg-cream-deep p-6 shadow-card">
     <div className="flex items-end justify-between gap-4"><div><p className="font-script text-xl text-gold-deep">saved for later</p><h2 className="font-display text-lg font-black text-cherry">Favorites</h2></div><span className="text-sm font-black text-cherry/50">{items.length}</span></div>
     {items.length === 0 ? <p className="mt-4 text-sm text-cherry/60">Your favorite dishes will appear here.</p> : <ul className="mt-4 grid gap-3 sm:grid-cols-2">{items.map((item) => <li key={item.id} className="flex items-center gap-3 rounded-2xl bg-cream p-3">
-      <MenuImage item={item} sizes="56px" className="h-14 w-14 shrink-0 rounded-xl" />
+      <MenuImage item={item} sizes="56px" className="h-14 w-14 shrink-0 rounded-xl" caption={false} />
       <div className="min-w-0 flex-1"><p className="truncate font-display font-black text-cherry">{trName(lang, item)}</p><button type="button" onClick={() => setOpen(item)} className="mt-1 text-xs font-black text-cherry-bright underline underline-offset-2">View and add to cart</button></div>
       <FavoriteButton itemId={item.id} className="h-10 w-10 shrink-0 border-cherry/10 bg-cream-deep text-lg" />
     </li>)}</ul>}

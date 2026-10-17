@@ -234,7 +234,7 @@ export const settingsSchema = z.object({
 
 export const categoryCreateSchema = z.object({ title: text(60).min(1), en: text(60).optional() }).strict();
 export const categoryPatchSchema = z.object({ title: text(60).min(1).optional(), en: text(60).optional() }).strict();
-export const statusSchema = z.object({ status: z.enum(["placed", "accepted", "preparing", "ready", "completed"]) }).strict();
+export const statusSchema = z.object({ status: z.enum(["placed", "accepted", "preparing", "ready", "completed", "cancelled"]) }).strict();
 export const readyTimeSchema = z.object({ minutes: z.number().int().min(5).max(240).nullable() }).strict();
 export const reorderSchema = z.object({ cat: text(40).min(1), order: z.array(text(60).min(1)).min(1).max(1000) }).strict();
 export const accountPatchSchema = z.object({

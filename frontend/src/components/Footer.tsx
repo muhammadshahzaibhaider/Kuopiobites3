@@ -1,5 +1,6 @@
 "use client";
 import { motion } from "framer-motion";
+import { usePathname } from "next/navigation";
 import Link from "next/link";
 import { useState } from "react";
 import { useLang } from "@/lib/i18n";
@@ -9,10 +10,13 @@ import SocialLinks from "./SocialLinks";
 import { apiSubscribeNewsletter } from "@/lib/api";
 
 export default function Footer() {
+  const pathname = usePathname();
   const { settings, toast } = useShop();
   const { t, dayName } = useLang();
   const [email, setEmail] = useState("");
   const [done, setDone] = useState(false);
+
+  if (pathname.startsWith("/admin")) return null;
 
   return (
     <footer className="mt-20 bg-cherry-deep text-cream">

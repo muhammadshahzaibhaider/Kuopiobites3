@@ -65,6 +65,9 @@ export default function Header() {
     return () => { document.removeEventListener("pointerdown", onPointer); document.removeEventListener("keydown", onKey); };
   }, [accountOpen]);
 
+  /* The admin panel has its own chrome — never render the shop header there. */
+  if (pathname.startsWith("/admin")) return null;
+
   return (
     <>
       <header

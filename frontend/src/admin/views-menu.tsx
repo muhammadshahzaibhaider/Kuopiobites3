@@ -74,13 +74,13 @@ export function MenuItemsView({ initialAvailability = "all" }: { initialAvailabi
     {
       key: "item", label: "Item", sort: (r) => r.name,
       render: (r) => (
-        <span className="flex items-center gap-3">
-          <MenuImage item={r} srcOverride={settings.itemImages[r.id]?.src} className="h-11 w-11 shrink-0 rounded-xl" />
-          <span>
-            <span className="block font-black text-cherry">{r.name}</span>
-            <span className="block max-w-[240px] truncate text-[11px] text-cherry/50">{r.desc}</span>
-          </span>
-        </span>
+        <div className="flex min-w-0 items-center gap-3">
+          <MenuImage item={r} srcOverride={settings.itemImages[r.id]?.src} className="h-11 w-11 shrink-0 rounded-xl" caption={false} sizes="44px" />
+          <div className="min-w-0 flex-1">
+            <span className="block truncate font-black text-cherry">{r.name}</span>
+            {r.desc && <span className="block truncate text-[11px] leading-snug text-cherry/50">{r.desc}</span>}
+          </div>
+        </div>
       ),
     },
     { key: "cat", label: "Category", sort: (r) => r.cat, render: (r) => <Pill tone="teal">{r.cat}</Pill> },
@@ -397,7 +397,7 @@ function ItemEditor({ item, onClose }: { item: MenuItem; onClose: () => void }) 
               </div>
             </div>
             <div className="flex items-start gap-3 rounded-xl border border-cherry/10 bg-cream p-3">
-              <MenuImage item={draft} srcOverride={settings.itemImages[item.id]?.src} className="h-20 w-20 shrink-0 rounded-xl" />
+              <MenuImage item={draft} srcOverride={settings.itemImages[item.id]?.src} className="h-20 w-20 shrink-0 rounded-xl" caption={false} sizes="80px" />
               <div className="min-w-0 flex-1">
                 <p className="text-xs font-black text-cherry/60">Product image</p>
                 <p className="mb-2 break-all text-[11px] text-cherry/40">

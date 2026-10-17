@@ -141,16 +141,10 @@ export async function validateOrder(
   return priced;
 }
 
-/** time-based progression (moved from the old client store) */
+/** Status is driven only by explicit kitchen actions — never by a timer.
+    A brand-new order stays "placed" until staff accept or decline it. */
 export function orderStatus(o: Order): string {
-  if (o.statusOverride) return o.statusOverride;
-  const el = (Date.now() - o.createdAt) / 1000;
-  if (el < 45) return "placed";
-  if (el < 120) return "accepted";
-  if (o.estimatedReadyAt) return Date.now() < o.estimatedReadyAt ? "preparing" : "ready";
-  if (el < 300) return "preparing";
-  if (el < 720) return "ready";
-  return "completed";
+  return o.statusOverride ?? "placed";
 }
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;

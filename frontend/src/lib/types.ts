@@ -87,7 +87,8 @@ export type OrderStatus =
   | "accepted"
   | "preparing"
   | "ready"
-  | "completed";
+  | "completed"
+  | "cancelled";
 
 export interface Order {
   id: string;
