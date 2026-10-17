@@ -1,6 +1,6 @@
 import { helsinkiNow, todayStrHelsinki, toMin } from "./hours";
 import { MENU } from "./menu";
-import type { CartLine, Lang, MenuItem, Offer, Settings } from "./types";
+import type { CartLine, Lang, MenuItem, ModGroup, Offer, Settings } from "./types";
 
 /* ── ingredient glossary (fi key → en) ── */
 export const ING: Record<string, string> = {
@@ -138,6 +138,54 @@ export function isCatOff(s: Settings, cat: string): boolean {
 
 export function optionOff(s: Settings, key: string, label: string): boolean {
   return (s.offOptions[key] ?? []).includes(label);
+}
+
+/* ── topping availability (single source of truth) ─────────────────────
+   A topping "exists" when it is in the master list (settings.toppings) and
+   "is sellable" when it is also not switched off (offOptions.topping).
+   Both the customer-facing selectors and the admin editor use these so a
+   removed or switched-off topping can never linger in a pizza dialog. */
+export function activeToppings(s: Settings): string[] {
+  return s.toppings.filter((label) => !optionOff(s, "topping", label));
+}
+
+/** Options a topping-fed group may offer. Builder (`top`) and per-item
+    (`topping`) groups hold a copy of the master list, so their stored options
+    can outlive a topping — filter them at render time. */
+export function visibleToppingOptions(s: Settings, group: ModGroup): ModGroup["options"] {
+  if (group.id !== "top" && group.id !== "topping") return group.options;
+  const allowed = new Set(activeToppings(s));
+  return group.options.filter((option) => allowed.has(option.label));
+}
+
+/**
+ * Drop topping options that no longer exist and clamp the selection limits to
+ * what is left. Pure: returns the same array when nothing changes.
+ *
+ * Only toppings *removed* from the master list are deleted — a topping that is
+ * merely switched off stays in the item data (hidden at render time), so
+ * switching it back on restores it everywhere.
+ *
+ * Builder (`top`) groups are left alone: their options are filled from the
+ * master list at render time and their tier (`min`) is part of the product
+ * (Fantasia 3 / 4 / 5 täytettä). Lowering a tier here because the list is
+ * temporarily short would permanently damage the menu.
+ */
+export function sanitizeToppingGroups(s: Settings, mods: ModGroup[] | undefined): ModGroup[] | undefined {
+  if (!mods) return mods;
+  const allowed = new Set(s.toppings);
+  let changed = false;
+  const next = mods.map((group) => {
+    if (group.id !== "topping") return group;
+    const options = group.options.filter((option) => allowed.has(option.label));
+    const maxAvailable = Math.max(options.length, group.required || group.exact ? 1 : 0);
+    const min = group.min === undefined ? undefined : Math.min(group.min, maxAvailable);
+    const max = group.max === undefined ? undefined : Math.max(Math.min(group.max, Math.max(options.length, 1)), min ?? 0);
+    if (options.length === group.options.length && min === group.min && max === group.max) return group;
+    changed = true;
+    return { ...group, options, ...(min !== undefined ? { min } : {}), ...(max !== undefined ? { max } : {}) };
+  });
+  return changed ? next : mods;
 }
 
 export const isPreorderItem = (m: MenuItem) => m.availability?.mode === "preorder_only";

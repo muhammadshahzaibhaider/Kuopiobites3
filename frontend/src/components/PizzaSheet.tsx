@@ -6,7 +6,7 @@ import { cx, eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
 import {
-  builderUnitPrice, optionOff, pizzaIncluded,
+  activeToppings, builderUnitPrice, optionOff, pizzaIncluded,
   pizzaUnitPrice, toppingExtraPrice, toppingLabel, trLabel, trName,
 } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
@@ -39,18 +39,34 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
 
   const isBuilder = !!item?.mods?.some((g) => g.id === "top");
   const included = useMemo(() => (item && !isBuilder ? pizzaIncluded(item) : []), [item, isBuilder]);
+  /* Only toppings that still exist in the master list and are not switched off.
+     A removed topping must disappear here — greyed-out ghosts confuse customers. */
+  const availableToppings = useMemo(() => activeToppings(settings), [settings]);
+  const allowedToppings = useMemo(() => new Set(availableToppings), [availableToppings]);
+
+  /* Settings can refresh while the sheet is open (tab focus); drop picks that
+     are no longer sellable so they can never reach the cart. */
+  useEffect(() => {
+    setExtras((current) => {
+      const kept = Object.entries(current).filter(([label]) => allowedToppings.has(label));
+      return kept.length === Object.keys(current).length ? current : Object.fromEntries(kept);
+    });
+  }, [allowedToppings]);
 
   if (!item) return null;
 
-  const extraList = Object.entries(extras).filter(([, c]) => c > 0).map(([label, count]) => ({ label, count }));
+  const extraList = Object.entries(extras)
+    .filter(([label, c]) => c > 0 && allowedToppings.has(label))
+    .map(([label, count]) => ({ label, count }));
   const count = extraList.reduce((a, e) => a + e.count, 0);
-  const min = item.mods?.find((g) => g.id === "top")?.min ?? 0;
+  /* The tier minimum cannot exceed what is actually orderable. */
+  const min = Math.min(item.mods?.find((g) => g.id === "top")?.min ?? 0, availableToppings.length);
   const unit = isBuilder ? builderUnitPrice(item, variant, count) : pizzaUnitPrice(settings, item, variant, extraList);
   const valid = !isBuilder || count >= min;
   const incLabels = included.map((l) => toppingLabel(settings, lang, l));
 
   const toggleExtra = (label: string) => {
-    if (optionOff(settings, "topping", label)) return;
+    if (optionOff(settings, "topping", label) || !allowedToppings.has(label)) return;
     setExtras((e) => {
       const c = (e[label] ?? 0) + 1;
       const next = { ...e, [label]: c };
@@ -156,13 +172,13 @@ export default function PizzaSheet({ item, onClose }: { item: MenuItem | null; o
                 {isBuilder && ` / ${min}+`}
               </span>
             </p>
-            {!isBuilder && (
+            {!isBuilder && availableToppings.length > 0 && (
               <p className="mt-1 text-xs text-cherry/60">
-                +{eur(toppingExtraPrice(settings, settings.toppings[0] ?? "", variant))} / {lang === "fi" ? "kpl (Med / Perhe)" : "each (Med / Perhe)"}
+                +{eur(toppingExtraPrice(settings, availableToppings[0], variant))} / {lang === "fi" ? "kpl (Med / Perhe)" : "each (Med / Perhe)"}
               </p>
             )}
             <div className="mt-2 flex flex-wrap gap-2">
-              {settings.toppings.map((tp) => {
+              {availableToppings.map((tp) => {
                 const n = extras[tp] ?? 0;
                 const off = optionOff(settings, "topping", tp);
                 const inc = included.includes(tp.toLowerCase());

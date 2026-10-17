@@ -6,7 +6,7 @@
  * `expectedUnitPrice` is the same function the checkout path uses, so a line
  * priced here is priced exactly like it would be at checkout.
  */
-import { builderUnitPrice, isCatOff, isItemOff, optionOff, pizzaUnitPrice } from "./v3";
+import { activeToppings, builderUnitPrice, isCatOff, isItemOff, optionOff, pizzaUnitPrice } from "./v3";
 import type { CartLine, MenuItem, Settings } from "./types";
 
 /** Error codes the cart/checkout contract already defines. */
@@ -47,6 +47,7 @@ export function expectedUnitPrice(s: Settings, items: MenuItem[], line: CartLine
   }
   const selected = new Set<string>();
   const groups = m.mods ?? [];
+  const sellableToppings = new Set(activeToppings(s));
   let price = m.prices[vi]?.value ?? 0;
   for (const opt of line.options) {
     if (selected.has(opt)) throw new Error("validation.duplicateOption");
@@ -54,16 +55,21 @@ export function expectedUnitPrice(s: Settings, items: MenuItem[], line: CartLine
     const group = groups.find((g) => g.options.some((o) => o.label === opt));
     const found = group?.options.find((o) => o.label === opt);
     if (!group || !found) throw new Error("validation.invalidOption");
-    if (group.id === "topping") {
+    /* A topping can be removed from the master list or switched off after the
+       item was authored — either way it must not be orderable. */
+    if (group.id === "topping" || group.id === "top") {
       if (!s.toppings.includes(opt)) throw new Error("validation.invalidOption");
-      if (optionOff(s, "topping", opt)) throw new Error("avail.unavailable");
+      if (!sellableToppings.has(opt)) throw new Error("avail.unavailable");
     }
     if (optionOff(s, `mod:${m.id}:${group.id}`, opt) || optionOff(s, "dip", opt)) throw new Error("avail.unavailable");
     price += found.price;
   }
   for (const group of groups) {
     const count = line.options.filter((opt) => group.options.some((o) => o.label === opt)).length;
-    const minimum = group.exact ?? (group.required ? (group.min ?? 1) : (group.min ?? 0));
+    let minimum = group.exact ?? (group.required ? (group.min ?? 1) : (group.min ?? 0));
+    /* Never demand more toppings than the shop can actually put on the pizza:
+       a builder tier above the size of the master list would be unorderable. */
+    if (group.id === "topping") minimum = Math.min(minimum, group.options.filter((option) => sellableToppings.has(option.label)).length);
     const maximum = group.exact ?? group.max ?? (group.type === "single" ? 1 : Number.POSITIVE_INFINITY);
     if (count < minimum || count > maximum) throw new Error("validation.invalidOptions");
   }
