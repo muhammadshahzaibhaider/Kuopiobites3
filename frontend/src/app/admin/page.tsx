@@ -44,29 +44,101 @@ function Gate({ onOk }: { onOk: () => void }) {
   const { adminLogin } = useShop();
   const [u, setU] = useState("");
   const [p, setP] = useState("");
+  const [show, setShow] = useState(false);
   const [err, setErr] = useState(false);
   const [busy, setBusy] = useState(false);
   return (
-    <div className="grid min-h-[80vh] place-items-center px-4">
-      <div className="w-full max-w-sm">
-        <h1 className="font-display text-2xl font-black text-cherry">Kuopio Bites · Staff login</h1>
-        <p className="mt-1 text-xs text-cherry/60">Admin area — function over fashion.</p>
-        <form
-          className="mt-6 space-y-3 rounded-2xl border border-cherry/15 bg-cream-deep p-5 shadow-card"
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setBusy(true);
-            const problem = await adminLogin(u, p); // POST /api/auth/admin-login
-            setBusy(false);
-            if (problem) setErr(true);
-            else onOk();
-          }}
-        >
-          <input className="min-h-[44px] w-full rounded-lg border border-cherry/20 bg-cream px-3 text-sm font-bold" placeholder="Username" value={u} onChange={(e) => setU(e.target.value)} />
-          <input type="password" className="min-h-[44px] w-full rounded-lg border border-cherry/20 bg-cream px-3 text-sm font-bold" placeholder="Password" value={p} onChange={(e) => setP(e.target.value)} />
-          {err && <p className="text-xs font-bold text-brick">Wrong credentials</p>}
-          <button disabled={busy} className="min-h-[44px] w-full rounded-lg bg-cherry font-black text-cream hover:bg-cherry-bright disabled:opacity-60">Sign in</button>
-        </form>
+    <div className="grid min-h-screen place-items-center bg-[#F6F1E4] px-4 py-10">
+      <div className="grid w-full max-w-4xl overflow-hidden rounded-[28px] border border-cherry/10 bg-white/70 shadow-lift md:grid-cols-[1.05fr_1fr]">
+        {/* brand panel */}
+        <div className="relative hidden overflow-hidden bg-cherry-deep p-8 text-cream md:block">
+          <span className="pointer-events-none absolute -bottom-24 -right-24 h-72 w-72 rounded-full bg-gold/15 blur-3xl" />
+          <div className="relative flex h-full flex-col">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logo.png" alt="" className="h-16 w-16 rounded-full border-2 border-gold/70 bg-cream object-cover" />
+            <p className="mt-5 font-display text-3xl font-black leading-tight">
+              Kuopio Bites<br /><span className="text-gold">Kitchen admin</span>
+            </p>
+            <p className="mt-3 max-w-xs text-sm font-semibold text-cream/65">
+              Live orders, menu availability and service timing — one calm place for the whole team.
+            </p>
+            <ul className="mt-auto space-y-2.5 text-xs font-bold text-cream/75">
+              {[
+                ["bell", "Instant sound + takeover for new orders"],
+                ["clock", "Promise time visible to every customer"],
+                ["menu", "Menu, portions and descriptions in one editor"],
+              ].map(([icon, text]) => (
+                <li key={text} className="flex items-center gap-2.5">
+                  <span className="grid h-8 w-8 place-items-center rounded-xl border border-cream/15 bg-cream/10 text-gold"><Ic n={icon} size={15} /></span>
+                  {text}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-6 text-[10px] font-black uppercase tracking-[0.22em] text-cream/35">Jalkasenkatu 7 · Kuopio</p>
+          </div>
+        </div>
+
+        {/* form */}
+        <div className="p-6 sm:p-9">
+          <p className="text-[10px] font-black uppercase tracking-[0.24em] text-gold-deep">Staff access</p>
+          <h1 className="mt-1 font-display text-3xl font-black text-cherry">Welcome back</h1>
+          <p className="mt-1 text-sm font-semibold text-cherry/55">Sign in to open today&apos;s kitchen.</p>
+          <form
+            className="mt-6 space-y-3"
+            autoComplete="off"
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setBusy(true);
+              setErr(false);
+              const problem = await adminLogin(u, p); // POST /api/auth/admin-login
+              setBusy(false);
+              if (problem) setErr(true);
+              else onOk();
+            }}
+          >
+            <label className="block text-[11px] font-black uppercase tracking-wide text-cherry/50">
+              Username
+              <input
+                className="mt-1 min-h-[46px] w-full rounded-xl border border-cherry/20 bg-white px-3.5 text-sm font-bold text-cherry outline-none transition focus:border-gold"
+                placeholder="admin"
+                name="admin_username"
+                autoComplete="off"
+                value={u}
+                onChange={(e) => { setU(e.target.value); setErr(false); }}
+              />
+            </label>
+            <label className="block text-[11px] font-black uppercase tracking-wide text-cherry/50">
+              Password
+              <span className="relative mt-1 block">
+                <input
+                  type={show ? "text" : "password"}
+                  className="min-h-[46px] w-full rounded-xl border border-cherry/20 bg-white pl-3.5 pr-11 text-sm font-bold text-cherry outline-none transition focus:border-gold"
+                  placeholder="••••••••"
+                  name="admin_password"
+                  autoComplete="current-password"
+                  value={p}
+                  onChange={(e) => { setP(e.target.value); setErr(false); }}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShow((v) => !v)}
+                  aria-label={show ? "Hide password" : "Show password"}
+                  className="absolute right-1.5 top-1/2 grid h-9 w-9 -translate-y-1/2 place-items-center rounded-lg text-cherry/45 hover:bg-cherry/5 hover:text-cherry"
+                >
+                  <Ic n="eye" size={16} />
+                </button>
+              </span>
+            </label>
+            {err && <p className="rounded-xl border border-brick/25 bg-brick/5 px-3 py-2 text-xs font-black text-brick">Wrong username or password.</p>}
+            <button
+              disabled={busy}
+              className="min-h-[46px] w-full rounded-xl bg-gold font-display text-sm font-black text-cherry-dark shadow-card transition hover:bg-gold-deep hover:text-cream disabled:opacity-60"
+            >
+              {busy ? "Signing in…" : "Sign in to admin"}
+            </button>
+          </form>
+          <p className="mt-4 text-center text-[11px] font-semibold text-cherry/40">Staff accounts are managed by the owner.</p>
+        </div>
       </div>
     </div>
   );
