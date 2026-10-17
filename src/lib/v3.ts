@@ -75,8 +75,8 @@ export const NAME_EN: Record<string, string> = {
 
 /* size/variant labels per language */
 const VLABEL: Record<Lang, Record<string, string>> = {
-  en: { Med: "Medium", Perhe: "Family", Pelkkä: "Single", Ateria: "Meal", "3pc": "3 pc", "6pc": "6 pc", "1pc": "1 pc", "2pc": "2 pc", Large: "Large" },
-  fi: { Med: "Med", Perhe: "Perhe", Pelkkä: "Pelkkä", Ateria: "Ateria", "3pc": "3 kpl", "6pc": "6 kpl", "1pc": "1 kpl", "2pc": "2 kpl", Large: "Large" },
+  en: { Med: "Medium", Perhe: "Family", Pelkkä: "Single", Ateria: "Meal", Half: "Half", Full: "Full", "3pc": "3 pc", "6pc": "6 pc", "1pc": "1 pc", "2pc": "2 pc", Large: "Large" },
+  fi: { Med: "Med", Perhe: "Perhe", Pelkkä: "Pelkkä", Ateria: "Ateria", Half: "Puoli", Full: "Koko", "3pc": "3 kpl", "6pc": "6 kpl", "1pc": "1 kpl", "2pc": "2 kpl", Large: "Large" },
 };
 
 export function trLabel(lang: Lang, label: string): string {
@@ -108,6 +108,15 @@ export function trDesc(lang: Lang, m: MenuItem): string | undefined {
   if (looksLikeIngredients(raw))
     return raw.split(",").map((p) => ING[p.trim()] ?? p.trim()).join(", ");
   return raw;
+}
+
+/** Description for the currently selected size/variant (e.g. biryani half vs full). */
+export function trVariantDesc(lang: Lang, m: MenuItem, variant: number): string | undefined {
+  const arr = lang === "fi" ? m.descFiByVariant : m.descByVariant;
+  const raw = arr?.[variant];
+  if (!raw) return trDesc(lang, m);
+  if (lang === "fi") return raw;
+  return DESC[raw]?.en ?? raw;
 }
 
 export function trName(lang: Lang, m: MenuItem): string {

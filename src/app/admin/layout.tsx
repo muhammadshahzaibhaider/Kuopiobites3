@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Staff login",
+  title: "Kitchen admin",
+  description: "Kuopio Bites staff panel — orders, menu and service timing.",
   robots: {
     index: false,
     follow: false,

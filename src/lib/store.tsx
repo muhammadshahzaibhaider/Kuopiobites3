@@ -72,7 +72,7 @@ interface ShopCtx {
   addItem: (cat: string, name: string, price: number, desc?: string, image?: import("./types").UploadedImg) => void;
   removeAdded: (id: string) => void;
   addCat: (title: string, en: string) => void;
-  setItemText: (lang: Lang, id: string, text: { name?: string; desc?: string }) => void;
+  setItemText: (lang: Lang, id: string, text: { name?: string; desc?: string; descByVariant?: string[]; descFiByVariant?: string[] }) => void;
   effectiveMenu: (items: MenuItem[], lang?: Lang) => MenuItem[];
   categories: () => Category[];
 
@@ -103,6 +103,12 @@ interface ShopCtx {
   orders: Order[];
   placeOrder: (o: Omit<Order, "id" | "createdAt" | "paymentId">) => Promise<Order>;
   setOrderStatus: (id: string, s: OrderStatus) => Promise<void>;
+  /** Set/replace the kitchen estimate shown to the customer. */
+  setOrderEta: (id: string, minutes: number) => Promise<void>;
+  /** Kitchen accepts a new order and confirms the preparation time. */
+  acceptOrder: (id: string, minutes?: number) => Promise<void>;
+  /** Kitchen declines a new order with an optional reason. */
+  declineOrder: (id: string, reason?: string) => Promise<void>;
   refundOrder: (id: string) => Promise<void>;
   orderStatus: (o: Order) => OrderStatus;
 
@@ -142,6 +148,30 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [pulse, setPulse] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [guestFavorites, setGuestFavorites] = useStored<string[]>(api.db.K.favorites, []);
+
+  /* One-time migration for orders created before manual status + promise
+     times existed. New orders always receive statusOverride "placed" and an
+     estimated readyAt when they are created, so from here on the status only
+     changes when a member of staff changes it. */
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (localStorage.getItem("kb_orders_manual_v1") === "1") return;
+    localStorage.setItem("kb_orders_manual_v1", "1");
+    setOrders((prev) =>
+      prev.map((o) => {
+        if (o.statusOverride) return o;
+        const age = Date.now() - o.createdAt;
+        const eta = o.etaMinutes ?? 25;
+        return {
+          ...o,
+          statusOverride: age > 3 * 3600_000 ? "completed" : "placed",
+          etaMinutes: eta,
+          readyAt: o.readyAt ?? o.createdAt + eta * 60000,
+        };
+      })
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* merge defaults so older stored settings gain new fields (toppings, special…) */
   const settings = useMemo<Settings>(
@@ -359,7 +389,9 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
         let patched: MenuItem = {
           ...m,
           name: tx?.name ?? o?.name ?? m.name,
-          desc: tx?.desc ?? m.desc,
+          desc: tx?.desc?.trim() || m.desc || "Freshly prepared in our kitchen",
+          descByVariant: tx?.descByVariant ?? m.descByVariant,
+          descFiByVariant: tx?.descFiByVariant ?? m.descFiByVariant,
           prices: o?.prices
             ? m.prices.map((p, i) => ({ ...p, value: o.prices![i] ?? p.value }))
             : m.prices,
@@ -425,10 +457,15 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
         offers: p.offers.map((of) => (of.id === oid ? { ...of, uses: (of.uses ?? 0) + 1 } : of)),
       }));
     }
+    const etaMinutes = settings.prepTimeMinutes || 25;
+    const now = Date.now();
     const order: Order = {
       ...o,
       id: api.newId("KB"),
-      createdAt: Date.now(),
+      createdAt: now,
+      statusOverride: "placed",
+      etaMinutes,
+      readyAt: now + etaMinutes * 60000,
       paymentId: "pi_" + uid(),
     };
     const created = await api.apiCreateOrder(order);
@@ -436,8 +473,34 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     return created;
   };
   const setOrderStatus: ShopCtx["setOrderStatus"] = async (id, s) => {
-    await api.apiPatchOrder(id, { statusOverride: s });
-    setOrders((p) => p.map((x) => (x.id === id ? { ...x, statusOverride: s } : x)));
+    const patch: Partial<Order> = { statusOverride: s };
+    if (s === "accepted") patch.acceptedAt = Date.now();
+    await api.apiPatchOrder(id, patch);
+    setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  };
+  const setOrderEta: ShopCtx["setOrderEta"] = async (id, minutes) => {
+    const mins = Math.max(1, Math.round(minutes));
+    const patch: Partial<Order> = { etaMinutes: mins, readyAt: Date.now() + mins * 60000 };
+    await api.apiPatchOrder(id, patch);
+    setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  };
+  const acceptOrder: ShopCtx["acceptOrder"] = async (id, minutes) => {
+    const existing = orders.find((o) => o.id === id);
+    const mins = Math.max(1, Math.round(minutes ?? existing?.etaMinutes ?? settings.prepTimeMinutes ?? 25));
+    const patch: Partial<Order> = {
+      statusOverride: "accepted",
+      etaMinutes: mins,
+      acceptedAt: Date.now(),
+      readyAt: Date.now() + mins * 60000,
+      cancelledReason: undefined,
+    };
+    await api.apiPatchOrder(id, patch);
+    setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...patch } : x)));
+  };
+  const declineOrder: ShopCtx["declineOrder"] = async (id, reason) => {
+    const patch: Partial<Order> = { statusOverride: "cancelled", cancelledReason: reason, readyAt: undefined };
+    await api.apiPatchOrder(id, patch);
+    setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...patch } : x)));
   };
   const refundOrder: ShopCtx["refundOrder"] = async (id) => {
     await api.apiPatchOrder(id, { refunded: true, statusOverride: "completed" });
@@ -446,15 +509,8 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     );
   };
 
-  const orderStatus = (o: Order): OrderStatus => {
-    if (o.statusOverride) return o.statusOverride;
-    const el = (Date.now() - o.createdAt) / 1000;
-    if (el < 45) return "placed";
-    if (el < 120) return "accepted";
-    if (el < 300) return "preparing";
-    if (el < 720) return "ready";
-    return "completed";
-  };
+  /* Status is driven only by explicit kitchen actions — never by a timer. */
+  const orderStatus = (o: Order): OrderStatus => o.statusOverride ?? "placed";
 
   /* reservations */
   const addReservation: ShopCtx["addReservation"] = async (r) => {
@@ -514,6 +570,9 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     orders,
     placeOrder,
     setOrderStatus,
+    setOrderEta,
+    acceptOrder,
+    declineOrder,
     refundOrder,
     orderStatus,
     logAudit,

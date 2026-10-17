@@ -33,7 +33,7 @@ export function CustomersView() {
         <StatCard label="Ordered at least once" value={rows.filter((r) => r.orders > 0).length} icon="orders" tone="green" />
         <StatCard label="Avg lifetime spend" value={eur(rows.length ? rows.reduce((a, r) => a + r.spend, 0) / rows.length : 0)} icon="analytics" tone="gold" />
       </div>
-      <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
+      <div className="overflow-hidden rounded-3xl border border-cherry/10 bg-white/70">
         <DataTable rows={rows} cols={cols} id={(r) => r.id} loading={!ready} search={(r, q) => r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q)} empty={<EmptyState icon="users" title="No customers yet" sub="Account sign-ups on the public site appear here." />} />
       </div>
     </div>
@@ -84,7 +84,7 @@ export function AnalyticsView({ mode }: { mode: "sales" | "items" | "peaks" }) {
 
   if (mode === "items")
     return (
-      <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
+      <div className="overflow-hidden rounded-3xl border border-cherry/10 bg-white/70">
         <div className="flex items-center justify-between border-b border-cherry/10 px-4 py-3">
           <p className="text-sm font-black text-cherry">Item performance · {range}d</p>
           <span className="flex items-center gap-3">{rangeBtns}<GhostBtn onClick={() => downloadCSV("item-perf.csv", [["item", "qty", "revenue"], ...items.map(([n, v]) => [n, v.qty, v.rev.toFixed(2)])])}><Ic n="csv" size={13} /> CSV</GhostBtn></span>
@@ -106,7 +106,7 @@ export function AnalyticsView({ mode }: { mode: "sales" | "items" | "peaks" }) {
 
   if (mode === "peaks")
     return (
-      <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
+      <div className="rounded-3xl border border-cherry/10 bg-white/70 p-4">
         <div className="flex items-center justify-between">
           <p className="text-sm font-black text-cherry">Order volume by hour (Helsinki) · {range}d</p>
           {rangeBtns}
@@ -124,7 +124,7 @@ export function AnalyticsView({ mode }: { mode: "sales" | "items" | "peaks" }) {
         <StatCard label="Avg order value" value={eur(aov)} icon="cash" tone="gold" />
         <StatCard label="Refunds" value={refundCount} icon="trash" tone={refundCount ? "red" : "gray"} />
       </div>
-      <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
+      <div className="rounded-3xl border border-cherry/10 bg-white/70 p-4">
         <div className="flex items-center justify-between">
           <p className="text-sm font-black text-cherry">Revenue trend</p>
           <span className="flex items-center gap-3">{rangeBtns}<GhostBtn onClick={() => downloadCSV("sales.csv", [["day", "revenue"], ...days.map((d) => [d.label, d.value])])}><Ic n="csv" size={13} /> CSV</GhostBtn></span>
@@ -132,7 +132,7 @@ export function AnalyticsView({ mode }: { mode: "sales" | "items" | "peaks" }) {
         <div className="mt-3"><Bars data={days} height={150} /></div>
       </div>
       <div className="grid gap-3 sm:grid-cols-2">
-        <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
+        <div className="rounded-3xl border border-cherry/10 bg-white/70 p-4">
           <p className="text-[11px] font-black uppercase text-cherry/50">Delivery vs pickup</p>
           <div className="mt-3 flex h-4 overflow-hidden rounded-full">
             <span className="bg-cherry-bright" style={{ width: `${deliveryShare}%` }} />
@@ -140,10 +140,10 @@ export function AnalyticsView({ mode }: { mode: "sales" | "items" | "peaks" }) {
           </div>
           <p className="mt-2 text-xs font-bold text-cherry/70">{deliveryShare}% delivery · {100 - deliveryShare}% pickup</p>
         </div>
-        <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
+        <div className="rounded-3xl border border-cherry/10 bg-white/70 p-4">
           <p className="text-[11px] font-black uppercase text-cherry/50">Status mix (all time)</p>
           <ul className="mt-2 space-y-1 text-xs font-bold text-cherry/70">
-            {["completed", "ready", "preparing", "accepted", "placed"].map((s) => (
+            {["completed", "ready", "preparing", "accepted", "placed", "cancelled"].map((s) => (
               <li key={s} className="flex justify-between"><span className="capitalize">{s}</span><span className="tabular-nums">{orders.filter((o) => orderStatus(o) === s).length}</span></li>
             ))}
           </ul>
@@ -161,7 +161,7 @@ export function AdminStaffView() {
   const { settings } = useShop();
   return (
     <div className="space-y-4">
-      <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
+      <div className="overflow-hidden rounded-3xl border border-cherry/10 bg-white/70">
         <p className="border-b border-cherry/10 px-4 py-3 text-sm font-black text-cherry">Staff accounts</p>
         <table className="w-full text-left text-sm">
           <thead><tr className="border-b border-cherry/10 text-[11px] font-black uppercase text-cherry/50"><th className="px-4 py-2">Name</th><th className="px-3 py-2">Role</th><th className="px-3 py-2">Since</th><th className="px-3 py-2" /></tr></thead>
@@ -199,7 +199,7 @@ export function AdminStaffView() {
         </form>
         <p className="px-4 pb-3 text-[11px] text-cherry/40">Roles: Owner = everything · Manager = no Settings/Admin · Kitchen = Orders + Menu availability only. Demo storage — wire to auth in production.</p>
       </div>
-      <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
+      <div className="overflow-hidden rounded-3xl border border-cherry/10 bg-white/70">
         <AuditTab />
       </div>
     </div>
@@ -216,7 +216,7 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
 
   if (mode === "restaurant")
     return (
-      <div className="max-w-2xl space-y-4 rounded-2xl border border-cherry/10 bg-cream-deep/40 p-5">
+      <div className="max-w-2xl space-y-4 rounded-3xl border border-cherry/10 bg-white/70 p-5">
         <p className="text-sm font-black text-cherry">Restaurant info (shown site-wide)</p>
         {[["Name", RESTAURANT.name], ["Address", RESTAURANT.address], ["Phone", RESTAURANT.phone], ["Email", RESTAURANT.email], ["Instagram", RESTAURANT.instagram], ["Facebook", RESTAURANT.facebook]].map(([k, v]) => (
           <div key={k} className="flex justify-between border-b border-cherry/5 pb-2 text-sm">
@@ -224,7 +224,7 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
           </div>
         ))}
         <p className="text-[11px] text-cherry/40">Contact details live in <code>src/lib/menu.ts</code> (RESTAURANT) and map links — editing them here ships with the next deploy; everything else on this page is live.</p>
-        <div className="rounded-xl border border-cherry/10 bg-cream p-4">
+        <div className="rounded-2xl border border-cherry/10 bg-cream/70 p-4">
           <p className="mb-2 text-sm font-black text-cherry">Announcement strip</p>
           <label className="flex items-center justify-between text-xs font-bold text-cherry/70">
             Show announcement banner on the site
@@ -241,7 +241,7 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
 
   return (
     <div className="max-w-2xl space-y-4">
-      <div className="flex items-center justify-between rounded-2xl border border-cherry/10 bg-cream-deep/40 px-4 py-3">
+      <div className="flex items-center justify-between rounded-3xl border border-cherry/10 bg-white/70 px-4 py-3">
         <span>
           <span className="block text-sm font-black text-cherry">Pause online ordering</span>
           <span className="text-xs text-cherry/60">Emergency switch — site shows closed for orders</span>
@@ -258,7 +258,7 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
         />
       </div>
 
-      <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
+      <div className="rounded-3xl border border-cherry/10 bg-white/70 p-4">
         <h3 className="text-sm font-black text-cherry">Opening hours</h3>
         <div className="mt-3 space-y-2">
           {[1, 2, 3, 4, 5, 6, 0].map((d) => (
@@ -280,13 +280,50 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
         </div>
       </div>
 
-      <div className="grid gap-3 rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4 sm:grid-cols-3">
+      <div className="rounded-2xl border-2 border-gold/50 bg-gold/5 p-4">
+        <h3 className="flex items-center gap-2 text-sm font-black text-cherry"><Ic n="timer" size={16} className="text-gold-deep" /> Kitchen timer</h3>
+        <p className="mt-1 text-xs font-semibold text-cherry/55">
+          The default promise time applied to every new order. The kitchen can still fine-tune each order in the live queue before accepting it; customers see the confirmed timer as a live countdown.
+        </p>
+        <div className="mt-3 grid gap-3 sm:grid-cols-[160px_1fr] sm:items-end">
+          <Field label="Default prep time (min)">
+            <input
+              type="number"
+              min={1}
+              max={240}
+              step={1}
+              value={s.prepTimeMinutes}
+              onChange={(e) => setS({ ...s, prepTimeMinutes: Math.max(1, Math.min(240, parseInt(e.target.value) || 1)) })}
+              className={inputCls + " font-display text-lg font-black tabular-nums"}
+            />
+          </Field>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {[10, 15, 20, 25, 30, 40, 45, 60].map((m) => (
+              <button
+                key={m}
+                onClick={() => setS({ ...s, prepTimeMinutes: m })}
+                className={m === s.prepTimeMinutes ? "rounded-lg border border-cherry bg-cherry px-3 py-1.5 text-xs font-black text-cream" : "rounded-lg border border-cherry/20 bg-white/70 px-3 py-1.5 text-xs font-black text-cherry hover:border-cherry"}
+              >
+                {m} min
+              </button>
+            ))}
+            <button
+              onClick={() => { saveSettings({ ...settings, prepTimeMinutes: s.prepTimeMinutes }); logAudit(`default prep time set to ${s.prepTimeMinutes} min`); toast("Kitchen timer saved"); }}
+              className="ml-auto min-h-[34px] rounded-lg bg-cherry px-3 text-xs font-black text-cream hover:bg-cherry-bright"
+            >
+              Save timer
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 rounded-3xl border border-cherry/10 bg-white/70 p-4 sm:grid-cols-3">
         <Field label="Delivery fee (€)"><input type="number" step="0.5" value={s.deliveryFee} onChange={(e) => setS({ ...s, deliveryFee: parseFloat(e.target.value) || 0 })} className={inputCls} /></Field>
         <Field label="Min delivery order (€)"><input type="number" step="1" value={s.minOrder} onChange={(e) => setS({ ...s, minOrder: parseFloat(e.target.value) || 0 })} className={inputCls} /></Field>
         <Field label="Radius (km)"><input type="number" step="1" value={s.radiusKm} onChange={(e) => setS({ ...s, radiusKm: parseFloat(e.target.value) || 0 })} className={inputCls} /></Field>
       </div>
 
-      <div className="space-y-3 rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
+      <div className="space-y-3 rounded-3xl border border-cherry/10 bg-white/70 p-4">
         <h3 className="text-sm font-black text-cherry">Ordering platforms & display</h3>
         <Field label="Wolt URL"><input value={s.platforms.wolt} onChange={(e) => setS({ ...s, platforms: { ...s.platforms, wolt: e.target.value } })} className={inputCls} /></Field>
         <Field label="Uber Eats URL"><input value={s.platforms.uberEats} onChange={(e) => setS({ ...s, platforms: { ...s.platforms, uberEats: e.target.value } })} className={inputCls} /></Field>
@@ -303,7 +340,7 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
         </label>
       </div>
 
-      <div className="flex items-center justify-between rounded-2xl border border-cherry/10 bg-cream-deep/40 px-4 py-3 text-sm">
+      <div className="flex items-center justify-between rounded-3xl border border-cherry/10 bg-white/70 px-4 py-3 text-sm">
         <span className="font-black text-cherry">Today ({today}) — quick availability</span>
         <GhostBtn onClick={() => { const map = { ...s.offItems }; for (const k of Object.keys(map)) if (map[k].offToday === today) delete map[k]; setS({ ...s, offItems: map }); saveSettings({ ...s, offItems: map }); toast("Today's sold-outs reset"); }}>Reset today's sold-outs</GhostBtn>
       </div>

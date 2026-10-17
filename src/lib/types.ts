@@ -38,6 +38,9 @@ export interface MenuItem {
   nameFi?: string;
   desc?: string;
   descFi?: string;
+  /** Optional per-portion description shown when a size/variant is selected. */
+  descByVariant?: string[];
+  descFiByVariant?: string[];
   prices: PriceVariant[];
   tags?: Tag[];
   mods?: ModGroup[];
@@ -78,7 +81,8 @@ export type OrderStatus =
   | "accepted"
   | "preparing"
   | "ready"
-  | "completed";
+  | "completed"
+  | "cancelled";
 
 export interface Order {
   id: string;
@@ -95,6 +99,13 @@ export interface Order {
   vat: number;
   scheduled?: { date: string; time: string };
   statusOverride?: OrderStatus;
+  /** Kitchen estimate promised to the customer, in minutes. */
+  etaMinutes?: number;
+  /** Timestamp when the kitchen accepted the order. */
+  acceptedAt?: number;
+  /** Absolute promise time shown as a live countdown to the customer. */
+  readyAt?: number;
+  cancelledReason?: string;
   refunded?: boolean;
   paymentId: string;
   userId: string;
@@ -219,6 +230,8 @@ export interface Settings {
   minOrder: number;
   radiusKm: number;
   vatRate: number;
+  /** Default kitchen preparation time for new orders (minutes). */
+  prepTimeMinutes: number;
   toppings: string[];
   special: SpecialCfg;
   blockedSlots: string[];
@@ -258,6 +271,9 @@ export interface MenuOverride {
 export interface ItemText {
   name?: string;
   desc?: string;
+  /** Editable per-portion descriptions (e.g. biryani Half / Full). */
+  descByVariant?: string[];
+  descFiByVariant?: string[];
 }
 
 export interface Overrides {
