@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cx, eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
-import { modOptionLabel, offerPrice, optionOff, trDesc, trLabel, trName } from "@/lib/v3";
+import { activeToppings, modOptionLabel, offerPrice, optionOff, trDesc, trLabel, trName, visibleToppingOptions } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
 import { MenuImage, QtyStepper, TagBadge } from "./ui";
 import { useModalA11y } from "./useModalA11y";
@@ -28,20 +28,58 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
   }, [item?.id]);
 
   const isBuilder = !!item?.mods?.some((group) => group.id === "top");
+  /* A topping group can outlive the topping itself (options are copied from the
+     master list when the group is created). Only offer what is still sellable,
+     and hide a topping group entirely when nothing is left. */
+  const availableToppings = useMemo(() => new Set(activeToppings(settings)), [settings]);
+  const groups = useMemo(() => {
+    const total = availableToppings.size;
+    const mapped = (item?.mods ?? []).map((group) => {
+      const options = visibleToppingOptions(settings, group);
+      /* Builder (`top`) groups keep their options at runtime, so their tier
+         minimum is bounded by the master list; per-item groups by what is left
+         in the group itself. A minimum above what can be picked would make the
+         item impossible to order after a topping is removed. */
+      const pickable = group.id === "top" ? total : group.id === "topping" ? options.length : Number.POSITIVE_INFINITY;
+      const bound = (value: number | undefined) => value === undefined ? undefined : Math.min(value, pickable);
+      return { ...group, options, min: bound(group.min), exact: bound(group.exact) };
+    });
+    return mapped.filter((group) => group.id !== "topping" || group.options.length > 0);
+  }, [item, settings, availableToppings]);
+
+  /* Live settings refresh while the dialog is open (drops an ingredient from
+     the catalogue): forget picks that are no longer offerable, so a hidden
+     label can never be submitted with the line. */
+  useEffect(() => {
+    setSel((current) => {
+      let changed = false;
+      const next: Record<string, string[]> = { ...current };
+      for (const group of groups) {
+        const picks = current[group.id] ?? [];
+        const kept = picks.filter((label) => group.options.some((option) => option.label === label));
+        if (kept.length !== picks.length) { next[group.id] = kept; changed = true; }
+      }
+      for (const id of Object.keys(next)) {
+        if (!groups.some((group) => group.id === id) && next[id].length) { next[id] = []; changed = true; }
+      }
+      return changed ? next : current;
+    });
+  }, [groups]);
+
   const valid = useMemo(() => {
     if (!item) return false;
-    return (item.mods ?? []).every((group) => {
+    return groups.every((group) => {
       const count = (sel[group.id] ?? []).length;
       const min = group.exact ?? (group.required ? group.min ?? 1 : group.min ?? 0);
       const max = group.exact ?? group.max ?? (group.type === "single" ? 1 : 99);
       return count >= min && count <= max;
     });
-  }, [item, sel]);
+  }, [groups, item, sel]);
 
   const unit = useMemo(() => {
     if (!item) return 0;
     let price = item.prices[variant]?.value ?? 0;
-    for (const group of item.mods ?? []) {
+    for (const group of groups) {
       const picks = sel[group.id] ?? [];
       for (const label of picks) price += group.options.find((option) => option.label === label)?.price ?? 0;
       if (group.perVariantExtra) {
@@ -50,7 +88,7 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
       }
     }
     return Math.round(price * 100) / 100;
-  }, [item, variant, sel]);
+  }, [groups, item, variant, sel]);
 
   if (!item) return null;
   const description = trDesc(lang, item);
@@ -76,7 +114,7 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
   const add = () => {
     /* Keep option labels raw, with no display prefixes. Notes have their own field. */
     const options: string[] = [];
-    for (const group of item.mods ?? []) {
+    for (const group of groups) {
       const picks = sel[group.id] ?? [];
       if (picks.length) options.push(...picks);
     }
@@ -161,7 +199,7 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
               </section>
             )}
 
-            {(item.mods ?? []).map((group) => {
+            {groups.map((group) => {
               const picks = sel[group.id] ?? [];
               const minimum = group.exact ?? (group.required ? group.min ?? 1 : group.min ?? 0);
               const extraCount = Math.max(0, picks.length - minimum);

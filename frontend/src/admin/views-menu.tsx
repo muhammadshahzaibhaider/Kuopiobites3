@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { MenuImage } from "@/components/ui";
 import ImageUploader from "@/components/ImageUploader";
 import { CATEGORY_SLUG } from "@/lib/images";
@@ -7,6 +7,7 @@ import { eur, cx } from "@/lib/format";
 import { todayStrHelsinki } from "@/lib/hours";
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
+import { activeToppings, sanitizeToppingGroups } from "@/lib/v3";
 import type { MenuItem, ModGroup, UploadedImg } from "@/lib/types";
 import { CatsTab, SpecialsPanel, ToppingsMetaPanel } from "@/app/admin/v3tabs";
 import { Ic } from "./icons";
@@ -289,7 +290,18 @@ function ItemEditor({ item, onClose }: { item: MenuItem; onClose: () => void }) 
   const [error, setError] = useState("");
   const [confirmOff, setConfirmOff] = useState(false);
 
-  useEffect(() => setDraft(structuredClone(item)), [item]);
+  /* Groups copy the master topping list when they are created, so an item can
+     carry options for toppings the owner has since removed. Drop them on open:
+     otherwise the editor shows ghosts and refuses to save its own data.
+     Reads settings through a ref so a background settings refresh can never
+     wipe unsaved edits in the open drawer. */
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  useEffect(() => {
+    const next = structuredClone(item);
+    next.mods = sanitizeToppingGroups(settingsRef.current, next.mods);
+    setDraft(next);
+  }, [item]);
   const offRec = settings.offItems[item.id];
   const isOff = !!offRec && (offRec.off === true || offRec.offToday === TODAY());
   const update = (patch: Partial<MenuItem>) => setDraft((current) => ({ ...current, ...patch }));
@@ -355,8 +367,9 @@ function ItemEditor({ item, onClose }: { item: MenuItem; onClose: () => void }) 
   const addOptionGroup = (toppings = false) => {
     const id = toppings ? "topping" : `extra-${Math.random().toString(36).slice(2, 8)}`;
     if ((draft.mods ?? []).some((group) => group.id === id)) { setError("This topping option group already exists."); return; }
-    const options = toppings ? settings.toppings.map((label) => ({ label, price: 0 })) : [{ label: "", labelFi: "", labelEn: "", price: 0 }];
-    update({ mods: [...(draft.mods ?? []), { id, name: toppings ? "Toppings" : "Extras", nameEn: toppings ? "Toppings" : "Extras", nameFi: toppings ? "Täytteet" : "Lisät", type: "multi", required: false, min: 0, max: toppings ? settings.toppings.length : 1, options }] });
+    const allowed = toppings ? activeToppings(settings) : [];
+    const options = toppings ? allowed.map((label) => ({ label, price: 0 })) : [{ label: "", labelFi: "", labelEn: "", price: 0 }];
+    update({ mods: [...(draft.mods ?? []), { id, name: toppings ? "Toppings" : "Extras", nameEn: toppings ? "Toppings" : "Extras", nameFi: toppings ? "Täytteet" : "Lisät", type: "multi", required: false, min: 0, max: toppings ? allowed.length : 1, options }] });
     setError("");
   };
   const setOffMode = async (mode: "on" | "until" | "today") => {

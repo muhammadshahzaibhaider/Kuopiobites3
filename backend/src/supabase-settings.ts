@@ -1,5 +1,6 @@
 import { db } from "./supabase";
 import { DEFAULT_SETTINGS } from "./lib/hours";
+import { sanitizeToppingGroups } from "./lib/v3";
 import type { CatMeta, Offer, Settings, SpecialItem, ToppingMeta, UploadedImg } from "./lib/types";
 
 const slug = (value: string) => value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -148,6 +149,11 @@ export async function loadSettings(): Promise<Settings> {
     end: special.active_to ?? undefined,
   }));
 
+  /* A topping removed from the master list is archived in the toppings table;
+     never fall back to archived rows when the list itself is missing. */
+  const toppingList = (extra.toppingList as string[] | undefined)
+    ?? toppings.filter((topping) => topping.active).map((topping) => topping.name_fi);
+
   return {
     ...DEFAULT_SETTINGS,
     paused: row.paused,
@@ -169,12 +175,15 @@ export async function loadSettings(): Promise<Settings> {
     special: (extra.special as Settings["special"] | undefined) ?? DEFAULT_SETTINGS.special,
     offers,
     todaysSpecials,
-    toppings: (extra.toppingList as string[] | undefined) ?? toppings.map((topping) => topping.name_fi),
+    toppings: toppingList,
     toppingMeta,
     offOptions: {
       ...DEFAULT_SETTINGS.offOptions,
       ...(extra.offOptions as Settings["offOptions"] | undefined),
-      topping: [...new Set([...(extra.offOptions as Settings["offOptions"] | undefined)?.topping ?? [], ...disabledToppings])],
+      /* Only labels that still exist in the master list can be "off" — this keeps
+         removed toppings from resurrecting as greyed-out ghosts in the UI. */
+      topping: [...new Set([...(extra.offOptions as Settings["offOptions"] | undefined)?.topping ?? [], ...disabledToppings])]
+        .filter((label) => toppingList.includes(label)),
     },
     catMeta,
     catOrder: categories.map((category) => category.id),
@@ -184,6 +193,11 @@ export async function loadSettings(): Promise<Settings> {
 }
 
 export async function saveSettings(settings: Settings): Promise<void> {
+  /* Storage must not accumulate "off" labels for toppings that no longer exist:
+     re-adding a topping later should bring it back available, not still off. */
+  const sellableOffToppings = (settings.offOptions.topping ?? []).filter((label) => settings.toppings.includes(label));
+  const offOptions = { ...settings.offOptions, topping: sellableOffToppings };
+
   const extra = {
     platforms: settings.platforms,
     headerLogo: settings.headerLogo,
@@ -194,7 +208,7 @@ export async function saveSettings(settings: Settings): Promise<void> {
     itemImages: settings.itemImages,
     offItems: settings.offItems,
     offCats: settings.offCats,
-    offOptions: settings.offOptions,
+    offOptions,
     toppingMeta: settings.toppingMeta,
     deliveryRules: settings.deliveryRules,
     readyTimeMinutes: settings.readyTimeMinutes,
@@ -231,16 +245,21 @@ export async function saveSettings(settings: Settings): Promise<void> {
     }).eq("id", category.id), "category");
   }
 
-  const items = await settingsPersistRead(db.from("menu_items").select("id"), "menu_items_read");
+  const items = await settingsPersistRead(db.from("menu_items").select("id, mods"), "menu_items_read");
   for (const item of items) {
     const availability = settings.offItems[item.id];
     const image = settings.itemImages[item.id];
+    /* Item topping groups copy the master list when they are created. When a
+       topping is removed here, strip it from every item in the same write so
+       the public menu can never show an ingredient the kitchen no longer has. */
+    const mods = sanitizeToppingGroups({ ...settings, offOptions }, item.mods ?? undefined);
     await check(db.from("menu_items").update({
       available: !availability?.off,
       sold_out_on: availability?.offToday ?? null,
       photo_url: image?.src ?? null,
       photo_alt_fi: image?.altFi ?? null,
       photo_alt_en: image?.altEn ?? null,
+      ...(mods !== (item.mods ?? undefined) ? { mods: mods ?? [] } : {}),
     }).eq("id", item.id), "menu_item");
   }
 
@@ -254,7 +273,7 @@ export async function saveSettings(settings: Settings): Promise<void> {
       name_en: meta.en ?? null,
       surcharge_med: meta.priceMed ?? 1,
       surcharge_perhe: meta.pricePerhe ?? 2,
-      active: !settings.offOptions.topping?.includes(label),
+      active: !offOptions.topping?.includes(label),
       sort_order: sortOrder,
     }), "topping");
   }

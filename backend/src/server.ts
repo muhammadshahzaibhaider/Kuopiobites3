@@ -10,6 +10,7 @@ import { authClient, codeFlowAuthClient, db as supabaseDb, logActivity } from ".
 import { getItem, listCategories, listItems, toDatabaseItem } from "./supabase-menu";
 import { getOrder, listCustomerOrders, listOrders } from "./supabase-orders";
 import { saveSettings } from "./supabase-settings";
+import { sanitizeToppingGroups } from "./lib/v3";
 import {
   clearSessionCookies, currentAuth, customerRow, ensureCsrfCookie, ensureCustomerRow, issueCustomerSession, issueStaffSession,
   readAuth, requireCustomer, requireStaff, staffById, staffRow, csrfCookie,
@@ -181,21 +182,32 @@ app.get("/api/health", wrap(async (_req, res) => {
 }));
 
 app.get("/api/categories", wrap(async (_req, res) => ok(res, await listCategories())));
+/* Item topping groups store a copy of the master topping list. Filter that copy
+   against the current list on the way out, so a topping deleted from the master
+   list can never reach a customer dialog even before the stored rows are healed. */
+function publicItem(item: MenuItem, settings: Settings): MenuItem {
+  const mods = sanitizeToppingGroups(settings, item.mods);
+  return mods === item.mods ? item : { ...item, mods };
+}
+
 app.get("/api/items", wrap(async (req, res) => {
   const query = z.object({ cat: z.string().max(40).optional() }).strict().parse(req.query);
-  ok(res, await listItems(query.cat));
+  const settings = await loadSettings();
+  ok(res, (await listItems(query.cat)).map((item) => publicItem(item, settings)));
 }));
 
 app.get("/api/admin/items", requireStaff("manager"), wrap(async (req, res) => {
   const query = z.object({ includeArchived: z.enum(["true", "false"]).optional() }).strict().parse(req.query);
-  ok(res, await listItems(undefined, query.includeArchived !== "false"));
+  const settings = await loadSettings();
+  ok(res, (await listItems(undefined, query.includeArchived !== "false")).map((item) => publicItem(item, settings)));
 }));
 
 app.get("/api/items/:id", wrap(async (req, res) => {
     const id = paramId.parse(req.params.id);
     const item = await getItem(id);
     if (!item) return fail(res, 404, "item.notFound");
-    ok(res, item);
+    const settings = await loadSettings();
+    ok(res, publicItem(item, settings));
   }));
 
   app.get("/api/settings", wrap(async (_req, res) => {
@@ -963,7 +975,10 @@ app.delete("/api/categories/:id", requireStaff("manager"), wrap(async (req, res)
 }));
 
 app.post("/api/items", requireStaff("manager"), wrap(async (req, res) => {
-  const m = menuItemSchema.parse(req.body) as MenuItem;
+  const parsed = menuItemSchema.parse(req.body) as MenuItem;
+  /* Item topping groups are copies of the master list; strip anything the
+     kitchen has since removed so a stale editor tab cannot resurrect it. */
+  const m: MenuItem = { ...parsed, mods: sanitizeToppingGroups(await loadSettings(), parsed.mods) };
   const { data: last, error: readError } = await supabaseDb.from("menu_items").select("sort_order").eq("category_id", m.cat).order("sort_order", { ascending: false }).limit(1).maybeSingle();
   if (readError) throw readError;
   const { error } = await supabaseDb.from("menu_items").insert(toDatabaseItem(m, (last?.sort_order ?? -1) + 1));
@@ -973,7 +988,9 @@ app.post("/api/items", requireStaff("manager"), wrap(async (req, res) => {
 }));
 
 app.put("/api/items/:id", requireStaff("manager"), wrap(async (req, res) => {
-  const id = paramId.parse(req.params.id); const m = menuItemSchema.parse({ ...req.body, id }) as MenuItem;
+  const id = paramId.parse(req.params.id);
+  const parsed = menuItemSchema.parse({ ...req.body, id }) as MenuItem;
+  const m: MenuItem = { ...parsed, mods: sanitizeToppingGroups(await loadSettings(), parsed.mods) };
   const { data: row, error: readError } = await supabaseDb.from("menu_items").select("sort_order").eq("id", id).maybeSingle();
   if (readError) throw readError;
   if (!row) return fail(res, 404, "item.notFound");

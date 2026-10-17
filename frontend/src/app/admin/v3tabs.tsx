@@ -140,6 +140,7 @@ export function OptionAvailPanel() {
     <div className="space-y-3">
       <details className="rounded-xl border border-cherry/15 bg-cream-deep p-3">
         <summary className="cursor-pointer text-xs font-black uppercase text-cherry/50">Toppings availability</summary>
+        <p className="mt-2 text-[11px] text-cherry/50">A topping switched off here disappears from every pizza dialog for customers (it is not shown greyed out). To remove it permanently, delete it from the topping list in Menu → Toppings.</p>
         <OptionAvailPanel2 />
       </details>
     </div>
