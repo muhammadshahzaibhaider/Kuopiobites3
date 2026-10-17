@@ -76,6 +76,11 @@ export default function OrderPage() {
   const phoneOk = phone.trim().length >= 3;
   const invalidCount = serverPricing?.invalidCount ?? 0;
   const lineErrors = serverPricing?.lineErrors ?? {};
+  /* The server splits the live offer over the covered lines, so each dish can
+     show its reduced price instead of one discount row at the very bottom. */
+  const lineDiscounts = serverPricing?.lineDiscounts ?? {};
+  const lineNet = (key: string, gross: number) =>
+    Math.max(0, Math.round((gross - (lineDiscounts[key] ?? 0)) * 100) / 100);
   /* `mounted` keeps the SSR/first-client button state identical; `invalidCount`
      blocks checkout until the affected rows are removed (server stays strict). */
   const canPay = hoursReady && (open.open || !!scheduled) && user && cart.length > 0 && phoneOk && postalOk && minOk && !tooFar && unavailable.length === 0 && invalidCount === 0 && !preErr && !paying;
@@ -278,7 +283,16 @@ export default function OrderPage() {
                     </div>
                   )}
                 </div>
-                <span className="font-black tabular-nums">{lineErrors[l.key] ? "—" : eur(l.unitPrice * l.qty)}</span>
+                <span className="text-right font-black tabular-nums">
+                  {lineErrors[l.key] ? "—" : (
+                    <>
+                      {(lineDiscounts[l.key] ?? 0) > 0 && (
+                        <span className="mr-1 text-xs font-bold text-cherry/40 line-through">{eur(l.unitPrice * l.qty)}</span>
+                      )}
+                      {eur(lineNet(l.key, l.unitPrice * l.qty))}
+                    </>
+                  )}
+                </span>
               </li>
             ))}
           </ul>

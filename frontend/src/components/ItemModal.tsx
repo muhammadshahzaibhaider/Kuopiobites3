@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cx, eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
-import { activeToppings, modOptionLabel, offerPrice, optionOff, trDesc, trLabel, trName, visibleToppingOptions } from "@/lib/v3";
+import { activeToppings, itemDeal, modOptionLabel, optionOff, trDesc, trLabel, trName, visibleToppingOptions } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
 import { MenuImage, QtyStepper, TagBadge } from "./ui";
 import { useModalA11y } from "./useModalA11y";
@@ -92,7 +92,11 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
 
   if (!item) return null;
   const description = trDesc(lang, item);
-  const offer = offerPrice(settings, item, variant);
+  /* Discount on the whole unit (variant + chosen options) so the sheet, the
+     cart line and the server quote all show the same reduced price. */
+  const deal = itemDeal(settings, item, unit);
+  const totalNow = Math.round((deal ? deal.now : unit) * qty * 100) / 100;
+  const totalWas = Math.round(unit * qty * 100) / 100;
   const itemName = trName(lang, item);
 
   const optKey = (group: { id: string }) =>
@@ -123,7 +127,7 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
       name: itemName,
       variantLabel: item.prices[variant]?.label ?? "",
       qty,
-      unitPrice: offer ? offer.now : unit,
+      unitPrice: unit,
       options,
       note: note.trim() || undefined,
       img: settings.itemImages[item.id]?.src,
@@ -179,6 +183,7 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
                 <div className="mt-2 flex flex-wrap gap-2">
                   {item.prices.map((price, index) => {
                     const sizeOff = optionOff(settings, `size:${item.id}`, price.label);
+                    const variantDeal = itemDeal(settings, item, price.value);
                     return (
                       <button
                         key={`${price.label}-${index}`}
@@ -191,7 +196,14 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
                           sizeOff && "cursor-not-allowed opacity-40 line-through"
                         )}
                       >
-                        {trLabel(lang, price.label)} · {eur(price.value)}
+                        {trLabel(lang, price.label)} ·{" "}
+                        {variantDeal ? (
+                          <>
+                            <span className="text-xs line-through opacity-70">{eur(price.value)}</span> {eur(variantDeal.now)}
+                          </>
+                        ) : (
+                          eur(price.value)
+                        )}
                       </button>
                     );
                   })}
@@ -246,14 +258,17 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
           <footer className="shrink-0 border-t-2 border-gold/40 bg-cream px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-5">
             <div className="flex items-center justify-between gap-3">
               <QtyStepper qty={qty} onChange={(next) => setQty(Math.max(1, next))} />
-              <p className="text-sm font-black text-cherry/70">{t("order.total")}: {offer && <span className="mr-1 text-cherry/40 line-through">{eur(offer.was * qty)}</span>}<span className="font-display text-xl text-cherry">{eur((offer ? offer.now : unit) * qty)}</span></p>
+              <div className="min-w-0 text-right">
+                {deal && <p className="truncate text-[11px] font-black text-[#2e7d32]">{lang === "fi" ? deal.offer.titleFi : deal.offer.titleEn}</p>}
+                <p className="text-sm font-black text-cherry/70">{t("order.total")}: {deal && <span className="mr-1 text-cherry/40 line-through">{eur(totalWas)}</span>}<span className="font-display text-xl text-cherry">{eur(totalNow)}</span></p>
+              </div>
             </div>
             <button
               disabled={!valid}
               onClick={add}
               className={cx("mt-3 min-h-[50px] w-full rounded-full font-black transition", valid ? "bg-cherry-bright text-cream shadow-lift hover:bg-cherry active:scale-[0.98]" : "cursor-not-allowed bg-cherry/20 text-cream/70")}
             >
-              {t("menu.add")} · {eur((offer ? offer.now : unit) * qty)}
+              {t("menu.add")} · {eur(totalNow)}
             </button>
           </footer>
         </motion.div>

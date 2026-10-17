@@ -86,6 +86,8 @@ export type CartQuote = {
   /** number of lines excluded from the totals; checkout is blocked while > 0 */
   invalidCount: number;
   discount?: { title: string; amount: number; offerId?: string; freeDelivery?: boolean };
+  /** cart line key → the part of `discount.amount` that belongs to that line */
+  lineDiscounts?: Record<string, number>;
 };
 
 /** Lenient quote: always 200, prices what it can and reports each bad line.

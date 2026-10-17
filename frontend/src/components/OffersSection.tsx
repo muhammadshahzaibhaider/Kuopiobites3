@@ -57,6 +57,13 @@ export default function OffersSection() {
                     {t("offers.min")} {eur(card.minOrder)}
                   </span>
                 )}
+                {card.priceNow !== undefined && (
+                  <span className="rounded-full bg-[#2e7d32]/10 px-2.5 py-1 text-[#2e7d32]">
+                    <s className="opacity-60">{eur(card.priceWas ?? 0)}</s>
+                    {" → "}
+                    {eur(card.priceNow)}
+                  </span>
+                )}
                 {card.code && (
                   <span className="rounded-full bg-cherry px-2.5 py-1 uppercase tracking-wide text-cream">
                     {t("offers.code")} {card.code}

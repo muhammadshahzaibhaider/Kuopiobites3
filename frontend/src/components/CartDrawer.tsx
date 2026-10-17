@@ -33,6 +33,12 @@ export default function CartDrawer() {
   const invalidCount = serverPricing?.invalidCount ?? 0;
   const subtotalShown = serverPricing?.subtotal ?? cartSubtotal;
   const lineErrors = serverPricing?.lineErrors ?? {};
+  /* Per-line share of the live offer, sent by the server with the quote — the
+     drawer can then show the reduced price next to each dish. */
+  const lineDiscounts = serverPricing?.lineDiscounts ?? {};
+  const activeDiscount = serverPricing?.discount;
+  const lineNet = (key: string, gross: number) =>
+    Math.max(0, Math.round((gross - (lineDiscounts[key] ?? 0)) * 100) / 100);
   const showIssues = invalidCount > 0 && !cartIssuesDismissed;
   const scheduled = cart.find((l) => l.preorder)?.preorder;
   const unavailable = cart.filter((l) => isItemOff(settings, l.itemId));
@@ -164,8 +170,15 @@ export default function CartDrawer() {
                         </div>
                         <div className="mt-3 flex items-center justify-between">
                           <QtyStepper small qty={l.qty} onChange={(q) => setQty(l.key, q)} />
-                          <span className="font-black tabular-nums text-cherry">
-                            {lineErrors[l.key] ? "—" : eur(l.unitPrice * l.qty)}
+                          <span className="text-right font-black tabular-nums text-cherry">
+                            {lineErrors[l.key] ? "—" : (
+                              <>
+                                {(lineDiscounts[l.key] ?? 0) > 0 && (
+                                  <span className="mr-1 text-xs font-bold text-cherry/40 line-through">{eur(l.unitPrice * l.qty)}</span>
+                                )}
+                                {eur(lineNet(l.key, l.unitPrice * l.qty))}
+                              </>
+                            )}
                           </span>
                         </div>
                       </motion.li>
@@ -182,6 +195,18 @@ export default function CartDrawer() {
                   <span>{t("cart.subtotal")}</span>
                   <span className="font-black text-cherry">{eur(subtotalShown)}</span>
                 </div>
+                {activeDiscount && activeDiscount.amount > 0 && (
+                  <div className="mt-1 flex justify-between text-sm font-black text-[#2e7d32]">
+                    <span className="min-w-0 truncate">− {activeDiscount.title}</span>
+                    <span className="tabular-nums">−{eur(activeDiscount.amount)}</span>
+                  </div>
+                )}
+                {activeDiscount && activeDiscount.amount > 0 && serverPricing && (
+                  <div className="mt-1 flex justify-between text-sm font-black text-cherry">
+                    <span>{t("order.total")}</span>
+                    <span className="tabular-nums">{eur(serverPricing.total)}</span>
+                  </div>
+                )}
                 {scheduled && (
                   <p className="mt-1 text-sm font-black text-gold-deep">
                     {t("pre.scheduled")} {fmtDate(scheduled.date)} {t("pre.at")} {scheduled.time}

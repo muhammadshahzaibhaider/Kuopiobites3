@@ -294,8 +294,10 @@ export function computeDiscount(
     if (o.type === "percent") amount = (scopedTotal * o.value) / 100;
     if (o.type === "fixed") amount = Math.min(o.value, scopedTotal);
     if (o.type === "override") {
-      const l = lines.find((x) => (o.scope.itemIds ?? []).includes(x.itemId));
-      if (l) amount = Math.max(0, (l.unitPrice - o.value) * l.qty);
+      /* Every line of a chosen item pays the offer price (see backend). */
+      amount = lines
+        .filter((x) => (o.scope.itemIds ?? []).includes(x.itemId))
+        .reduce((sum, l) => sum + Math.max(0, (l.unitPrice - o.value) * l.qty), 0);
     }
     if (o.type === "bundle") {
       const ids = o.scope.itemIds ?? [];
@@ -311,17 +313,64 @@ export function computeDiscount(
   return best;
 }
 
-/** struck-through price for an item when an override/percent offer is live */
-export function offerPrice(s: Settings, m: MenuItem, variant: number): { now: number; was: number } | null {
-  const live = liveOffers(s);
-  for (const o of live.sort((a, b) => b.priority - a.priority)) {
-    const hit = o.scope.itemIds?.includes(m.id);
-    if (!hit) continue;
-    const was = m.prices[variant]?.value ?? 0;
-    if (o.type === "override") return { now: o.value, was };
-    if (o.type === "percent") return { now: Math.round(was * (1 - o.value / 100) * 100) / 100, was };
+/**
+ * Does this offer reduce the shelf price of one menu item?
+ *
+ * Whole-menu and category offers count too — not just hand-picked item lists —
+ * so a “20 % off everything” offer visibly lowers every price in its scope.
+ * Basket-only offers (code, delivery distance/weight, fixed, bundle, free
+ * item, free delivery) are excluded: they cannot be shown as an item price.
+ */
+function itemOfferEligible(o: Offer, m: MenuItem): boolean {
+  if (o.code) return false; // only after the customer types the code
+  if (o.scope.deliveryOnly) return false;
+  if (o.scope.minDistanceKm !== undefined || o.scope.maxDistanceKm !== undefined) return false;
+  if (o.scope.minWeightKg !== undefined || o.scope.maxWeightKg !== undefined) return false;
+  if (o.maxUses && (o.uses ?? 0) >= o.maxUses) return false;
+  const picked = (o.scope.itemIds ?? []).includes(m.id);
+  if (o.type === "override") return picked;
+  if (o.type !== "percent") return false;
+  return o.scope.whole === true || o.scope.category === m.cat || picked;
+}
+
+/** The offer price for one unit priced at `was` (variant price + options). */
+export function applyOfferToPrice(o: Pick<Offer, "type" | "value">, was: number): number | null {
+  if (o.type === "override") return Math.max(0, o.value);
+  if (o.type !== "percent") return null;
+  const percent = Math.min(100, Math.max(0, o.value));
+  return Math.round(was * (1 - percent / 100) * 100) / 100;
+}
+
+export interface ItemDeal {
+  was: number;
+  now: number;
+  offer: Offer;
+}
+
+/**
+ * Best per-unit deal for an item priced at `was`, or null when no live offer
+ * makes it cheaper. The same rule is used by the menu cards, the item sheet
+ * and the Today's Specials carousel, so one item never shows two prices.
+ */
+export function itemDeal(s: Settings, m: MenuItem, was: number): ItemDeal | null {
+  if (!(was > 0)) return null;
+  let best: ItemDeal | null = null;
+  for (const o of liveOffers(s)) {
+    if (!itemOfferEligible(o, m)) continue;
+    const now = applyOfferToPrice(o, was);
+    if (now === null || now >= was) continue;
+    if (!best || now < best.now || (now === best.now && o.priority > best.offer.priority)) {
+      best = { was, now, offer: o };
+    }
   }
-  return null;
+  return best;
+}
+
+/** struck-through price for a menu card (price of the variant shown) */
+export function offerPrice(s: Settings, m: MenuItem, variant: number): { now: number; was: number } | null {
+  const was = m.prices[variant]?.value ?? 0;
+  const deal = itemDeal(s, m, was);
+  return deal ? { now: deal.now, was: deal.was } : null;
 }
 
 export function etaLabel(lang: Lang, type: "pickup" | "delivery"): string {

@@ -244,6 +244,50 @@ export interface DiscountResult {
   title: string;
   freeDelivery: boolean;
   offer?: Offer;
+  /** cart line key → part of `amount` that belongs to that line (percent/override) */
+  lineDiscounts?: Record<string, number>;
+}
+
+/**
+ * Split an offer's basket discount across the lines it covers, so the cart can
+ * show the reduced price next to each item instead of a single bottom-line
+ * number. Only percent and override offers have a per-unit price; fixed,
+ * bundle and free-item discounts stay basket-level.
+ *
+ * The parts are rounded to cents and the last line absorbs the rounding
+ * difference, so their sum is exactly `amount` — what the customer pays.
+ */
+function lineDiscountAllocation(
+  o: Offer,
+  lines: CartLine[],
+  scoped: CartLine[],
+  amount: number
+): Record<string, number> | undefined {
+  if (o.type !== "percent" && o.type !== "override") return undefined;
+  const targets = o.type === "override"
+    ? lines.filter((line) => (o.scope.itemIds ?? []).includes(line.itemId))
+    : scoped;
+  const out: Record<string, number> = {};
+  let allocated = 0;
+  for (const line of targets) {
+    const raw = o.type === "percent"
+      ? (line.qty * line.unitPrice * o.value) / 100
+      : Math.max(0, (line.unitPrice - o.value) * line.qty);
+    if (raw <= 0) continue;
+    const value = Math.round(raw * 100) / 100;
+    out[line.key] = value;
+    allocated = Math.round((allocated + value) * 100) / 100;
+  }
+  const keys = Object.keys(out);
+  if (!keys.length) return undefined;
+  const diff = Math.round((amount - allocated) * 100) / 100;
+  if (diff !== 0) {
+    const last = keys[keys.length - 1];
+    const adjusted = Math.round((out[last] + diff) * 100) / 100;
+    if (adjusted > 0) out[last] = adjusted;
+    else delete out[last];
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 export interface OfferContext {
@@ -291,8 +335,11 @@ export function computeDiscount(
     if (o.type === "percent") amount = (scopedTotal * o.value) / 100;
     if (o.type === "fixed") amount = Math.min(o.value, scopedTotal);
     if (o.type === "override") {
-      const l = lines.find((x) => (o.scope.itemIds ?? []).includes(x.itemId));
-      if (l) amount = Math.max(0, (l.unitPrice - o.value) * l.qty);
+      /* Every line of a selected item pays the offer price — not just the
+         first one, otherwise adding the same dish twice silently loses the
+         discount on the second variant. */
+      const picked = lines.filter((x) => (o.scope.itemIds ?? []).includes(x.itemId));
+      amount = picked.reduce((sum, l) => sum + Math.max(0, (l.unitPrice - o.value) * l.qty), 0);
     }
     if (o.type === "bundle") {
       const ids = o.scope.itemIds ?? [];
@@ -303,7 +350,10 @@ export function computeDiscount(
       if (l) amount = l.unitPrice;
     }
     amount = Math.round(amount * 100) / 100;
-    if (amount > best.amount) best = { amount, title, freeDelivery: best.freeDelivery, offer: o };
+    if (amount > best.amount) {
+      const lineDiscounts = lineDiscountAllocation(o, lines, scoped, amount);
+      best = { amount, title, freeDelivery: best.freeDelivery, offer: o, ...(lineDiscounts ? { lineDiscounts } : {}) };
+    }
   }
   return best;
 }
