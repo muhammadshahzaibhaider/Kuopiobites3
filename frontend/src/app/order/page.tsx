@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import AuthForm from "@/components/AuthForm";
 import { LineThumb, QtyStepper } from "@/components/ui";
 import { cx, eur, fmtDate, vatPct } from "@/lib/format";
+import { lineErrorKey } from "@/lib/cart-errors";
 import { cartOptionLabel, computeDiscount, etaLabel, isItemOff, validatePreorder } from "@/lib/v3";
 import { orderingInfo } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
@@ -25,14 +26,21 @@ export default function OrderPage() {
   const { t, dayName, lang } = useLang();
   const [code, setCode] = useState("");
 
-  const open = orderingInfo(settings);
-  const openLabel = open.paused
-    ? t("open.paused")
-    : open.open
-      ? `${t("open.now")} ${open.info.closeAt}`
-      : open.info.nextDay === 0
-        ? `${t("open.closed")} ${open.info.openAt}`
-        : `${t("open.closedDay")} ${open.info.nextDay === 1 ? t("open.tomorrow") : dayName(open.info.nextDay!)} ${open.info.openAt}`;
+  /* Opening hours are time-of-day data: never render them during prerender or
+     the first client pass (#418). The mounted flag keeps both passes identical
+     and the closed banner space reserved, so nothing jumps once it resolves. */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const open = useMemo(() => orderingInfo(settings), [settings, mounted]);
+  const openLabel = !mounted
+    ? ""
+    : open.paused
+      ? t("open.paused")
+      : open.open
+        ? `${t("open.now")} ${open.info.closeAt}`
+        : open.info.nextDay === 0
+          ? `${t("open.closed")} ${open.info.openAt}`
+          : `${t("open.closedDay")} ${open.info.nextDay === 1 ? t("open.tomorrow") : dayName(open.info.nextDay!)} ${open.info.openAt}`;
   const scheduled = cart.find((l) => l.preorder)?.preorder;
   const unavailable = cart.filter((l) => isItemOff(settings, l.itemId));
   const preErr = validatePreorder(settings, cart, scheduled);
@@ -43,6 +51,8 @@ export default function OrderPage() {
   /* local math is a first-paint fallback only — checkout and the live quote use server pricing */
   const localTotal = Math.round((cartSubtotal + deliveryFee - activeDiscount.amount) * 100) / 100;
   const total = serverPricing?.total ?? localTotal;
+  /* When rows are excluded the local sum is stale — show the quoted subtotal. */
+  const subtotalShown = serverPricing?.subtotal ?? cartSubtotal;
   const vat = serverPricing?.vat ?? Math.round((total * (settings.vatRate / (1 + settings.vatRate))) * 100) / 100;
 
   useEffect(() => {
@@ -62,7 +72,11 @@ export default function OrderPage() {
   const minOk = type !== "delivery" || cartSubtotal >= settings.minOrder;
   const tooFar = type === "delivery" && serverPricing?.deliveryDistanceKm !== undefined && settings.radiusKm > 0 && serverPricing.deliveryDistanceKm > settings.radiusKm;
   const phoneOk = phone.trim().length >= 3;
-  const canPay = (open.open || !!scheduled) && user && cart.length > 0 && phoneOk && postalOk && minOk && !tooFar && unavailable.length === 0 && !preErr && !paying;
+  const invalidCount = serverPricing?.invalidCount ?? 0;
+  const lineErrors = serverPricing?.lineErrors ?? {};
+  /* `mounted` keeps the SSR/first-client button state identical; `invalidCount`
+     blocks checkout until the affected rows are removed (server stays strict). */
+  const canPay = mounted && (open.open || !!scheduled) && user && cart.length > 0 && phoneOk && postalOk && minOk && !tooFar && unavailable.length === 0 && invalidCount === 0 && !preErr && !paying;
 
   const pay = async () => {
     if (!user) return;
@@ -127,9 +141,17 @@ export default function OrderPage() {
         <div className="gold-rule mt-4 w-24" />
       </motion.div>
 
-      {!open.open && (
+      {mounted && !open.open && (
         <div className="mt-6 rounded-2xl border-2 border-cherry-bright/40 bg-cherry-bright/10 p-4 font-bold text-cherry-bright">
           ⏸ {openLabel} — {t("order.closedNote")}.
+        </div>
+      )}
+      {invalidCount > 0 && (
+        <div role="status" className="mt-6 flex flex-wrap items-center gap-3 rounded-2xl border-2 border-gold-deep/40 bg-gold/15 p-4 text-sm font-bold text-cherry">
+          <div className="min-w-0">
+            <p className="font-black">{t("cart.issuesTitle")}</p>
+            <p className="mt-1 text-cherry/80">{t("cart.issuesBody")}</p>
+          </div>
         </div>
       )}
 
@@ -245,13 +267,21 @@ export default function OrderPage() {
                     <QtyStepper small qty={l.qty} onChange={(q) => setQty(l.key, q)} />
                     <button onClick={() => removeLine(l.key)} className="text-xs font-bold text-cherry/50 underline hover:text-cherry-bright">{t("cart.remove")}</button>
                   </div>
+                  {lineErrors[l.key] && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-2 rounded-lg bg-brick/10 px-2 py-1 text-[11px] font-black text-brick">
+                      <span>{t(lineErrorKey(lineErrors[l.key]))}</span>
+                      <button type="button" onClick={() => removeLine(l.key)} className="rounded-full border border-brick/40 px-2 py-0.5 hover:bg-brick hover:text-cream">
+                        {t("cart.removeBtn")}
+                      </button>
+                    </div>
+                  )}
                 </div>
-                <span className="font-black tabular-nums">{eur(l.unitPrice * l.qty)}</span>
+                <span className="font-black tabular-nums">{lineErrors[l.key] ? "—" : eur(l.unitPrice * l.qty)}</span>
               </li>
             ))}
           </ul>
           <dl className="mt-5 space-y-1.5 border-t-2 border-gold/40 pt-4 text-sm font-bold text-cherry/80">
-            <div className="flex justify-between"><dt>{t("cart.subtotal")}</dt><dd className="tabular-nums">{eur(cartSubtotal)}</dd></div>
+            <div className="flex justify-between"><dt>{t("cart.subtotal")}</dt><dd className="tabular-nums">{eur(subtotalShown)}</dd></div>
             <div className="flex justify-between"><dt>{t("order.fee")}</dt><dd className="tabular-nums">{type === "delivery" ? (activeDiscount.freeDelivery ? t("order.free") : eur(deliveryFee)) : "—"}</dd></div>
             {activeDiscount.amount > 0 && (
               <div className="flex justify-between text-[#2e7d32]"><dt>− {activeDiscount.title}</dt><dd className="tabular-nums">−{eur(activeDiscount.amount)}</dd></div>
@@ -281,6 +311,9 @@ export default function OrderPage() {
             <p className="mt-2 rounded-xl bg-brick/10 p-3 text-xs font-black text-brick">{t("cart.unavailBlock")} {unavailable.map((l) => l.name).join(", ")}</p>
           )}
           {preErr && <p className="mt-2 rounded-xl bg-brick/10 p-3 text-xs font-black text-brick">{t(preErr)}</p>}
+          {invalidCount > 0 && (
+            <p className="mt-2 rounded-xl bg-brick/10 p-3 text-xs font-black text-brick">{t("cart.issuesBlock")}</p>
+          )}
           {(settings.platforms.wolt || settings.platforms.uberEats) && (
             <p className="mt-3 text-xs text-cherry/60">
               {t("order.platforms")}:{" "}

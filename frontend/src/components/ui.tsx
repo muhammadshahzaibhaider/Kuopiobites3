@@ -1,7 +1,7 @@
 "use client";
 import { motion, useReducedMotion } from "framer-motion";
 import Image from "next/image";
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { cx } from "@/lib/format";
 import { orderingInfo } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
@@ -133,7 +133,14 @@ export function TagBadge({ tag }: { tag: Tag }) {
 export function OpenBadge({ big }: { big?: boolean }) {
   const { settings } = useShop();
   const { t, dayName } = useLang();
-  const st = orderingInfo(settings);
+  /* The label depends on the current Helsinki time. `/` and the other marketing
+     pages are prerendered, so the server HTML can never carry today's text.
+     Recompute right after mount; the text node is a leaf and hydration is
+     suppressed there so React #418 cannot fire on it. */
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const st = useMemo(() => orderingInfo(settings), [settings, mounted]);
   const label = st.paused
     ? t("open.paused")
     : st.open
@@ -143,6 +150,7 @@ export function OpenBadge({ big }: { big?: boolean }) {
         : `${t("open.closedDay")} ${st.info.nextDay === 1 ? t("open.tomorrow") : dayName(st.info.nextDay!)} ${st.info.openAt}`;
   return (
     <span
+      suppressHydrationWarning
       className={cx(
         "inline-flex items-center gap-2 rounded-full border font-bold",
         big ? "px-4 py-2 text-sm" : "px-3 py-1 text-xs",
