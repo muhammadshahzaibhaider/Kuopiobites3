@@ -219,17 +219,28 @@ export function QtyStepper({
   onChange: (q: number) => void;
   small?: boolean;
 }) {
+  /* Rapid clicks can fire before React re-renders, so both would send the same
+     `qty ± 1`. Keep a live counter so +++++ actually steps 5 times. */
+  const qtyRef = React.useRef(qty);
+  const onChangeRef = React.useRef(onChange);
+  qtyRef.current = qty;
+  onChangeRef.current = onChange;
+  const bump = (delta: number) => {
+    const next = Math.max(0, Math.min(99, qtyRef.current + delta));
+    qtyRef.current = next;
+    onChangeRef.current(next);
+  };
   const btn = cx(
     "grid place-items-center rounded-full border border-cherry/25 bg-cream text-cherry font-black transition hover:bg-cherry hover:text-cream active:scale-90",
     small ? "h-8 w-8 min-h-[32px]" : "h-11 w-11 min-h-[44px]"
   );
   return (
     <div className="inline-flex items-center gap-2">
-      <button type="button" aria-label="Decrease" className={btn} onClick={() => onChange(qty - 1)}>
+      <button type="button" aria-label="Decrease" className={btn} onClick={() => bump(-1)}>
         −
       </button>
       <span className="min-w-[1.5rem] text-center font-black tabular-nums">{qty}</span>
-      <button type="button" aria-label="Increase" className={btn} onClick={() => onChange(qty + 1)}>
+      <button type="button" aria-label="Increase" className={btn} onClick={() => bump(1)}>
         +
       </button>
     </div>

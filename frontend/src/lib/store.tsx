@@ -6,7 +6,7 @@
  * prices/availability/pre-order rules execute in /backend (src/logic.ts).
  */
 import React, {
-  createContext, useCallback, useContext, useEffect, useMemo, useState,
+  createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from "react";
 import * as api from "./api";
 import { DEFAULT_SETTINGS } from "./hours";
@@ -162,8 +162,12 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [pulse, setPulse] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [favorites, setFavorites] = useState<string[]>([]);
-  const [serverPricing, setServerPricing] = useState<ShopCtx["serverPricing"]>(null);
+  const [quoted, setQuoted] = useState<(NonNullable<ShopCtx["serverPricing"]> & { cartSig: string }) | null>(null);
   const [cartIssuesDismissed, setCartIssuesDismissed] = useState(false);
+  const cartMutGen = useRef(0);
+  const priceGen = useRef(0);
+  const cartSig = cart.map((line) => `${line.key}:${line.qty}`).join("|");
+  const serverPricing = quoted && quoted.cartSig === cartSig ? quoted : null;
   const allItems = BASE_ITEMS; // live array, hydrated in place from the backend
   const allCats = BASE_CATS;
 
@@ -400,7 +404,9 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       return [...p, line];
     });
     setPulse((p) => p + 1);
-    api.apiAddCartLine(line).then(setCart).catch((e) => {
+    const gen = ++cartMutGen.current;
+    api.apiAddCartLine(line).then((next) => { if (gen === cartMutGen.current) setCart(sanitizeCartLines(next)); }).catch((e) => {
+      if (gen !== cartMutGen.current) return;
       toast((e as Error).message || "Cart could not be updated", "err");
       syncCart();
     });
@@ -408,8 +414,10 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const setQty = (key: string, qty: number) => {
     if (!user) return;
     if (qty <= 0) { removeLine(key); return; }
-    setCart((p) => p.map((x) => (x.key === key ? { ...x, qty } : x)));
-    api.apiSetCartQty(key, qty).then(setCart).catch(syncCart);
+    const nextQty = Math.min(99, qty);
+    setCart((p) => p.map((x) => (x.key === key ? { ...x, qty: nextQty } : x)));
+    const gen = ++cartMutGen.current;
+    api.apiSetCartQty(key, nextQty).then((next) => { if (gen === cartMutGen.current) setCart(sanitizeCartLines(next)); }).catch(() => { if (gen === cartMutGen.current) syncCart(); });
   };
   /* Keep the "some items changed" banner relevant: a new set of broken rows
      always re-opens it, and it closes itself when the cart is clean again. */
@@ -420,36 +428,43 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const removeLine = (key: string) => {
     if (!user) return;
     setCart((p) => p.filter((x) => x.key !== key));
-    api.apiRemoveCartLine(key).then(setCart).catch(syncCart);
+    const gen = ++cartMutGen.current;
+    api.apiRemoveCartLine(key).then((next) => { if (gen === cartMutGen.current) setCart(sanitizeCartLines(next)); }).catch(() => { if (gen === cartMutGen.current) syncCart(); });
   };
   const clearCart = () => {
     setCart([]);
-    if (user) api.apiClearCart().then(setCart).catch(syncCart);
+    if (!user) return;
+    const gen = ++cartMutGen.current;
+    api.apiClearCart().then((next) => { if (gen === cartMutGen.current) setCart(sanitizeCartLines(next)); }).catch(() => { if (gen === cartMutGen.current) syncCart(); });
   };
   const cartCount = cart.reduce((a, l) => a + l.qty, 0);
   const cartSubtotal = cart.reduce((a, l) => a + l.qty * l.unitPrice, 0);
 
   const priceCart = useCallback<ShopCtx["priceCart"]>(async (type, code, address, lang = "en") => {
-    if (!cart.length) { setServerPricing(null); return; }
-    setServerPricing(null);
+    const snapshot = cart;
+    const sig = snapshot.map((line) => `${line.key}:${line.qty}`).join("|");
+    const gen = ++priceGen.current;
+    if (!snapshot.length) { setQuoted(null); return; }
     try {
       /* The quote is lenient: it always answers 200 and reports unsellable
-         rows per line instead of failing the whole cart. */
-      const p = await api.apiPriceCart(cart, type, lang, code, address);
+         rows per line instead of failing the whole cart. Never drop the last
+         quote before this one lands — a null flash made totals lag and jump. */
+      const p = await api.apiPriceCart(snapshot, type, lang, code, address);
+      if (gen !== priceGen.current) return;
       const lineErrors: Record<string, string> = {};
       p.lines.forEach((entry, index) => {
         if (!entry.error) return;
-        const key = cart[index]?.key ?? entry.key;
+        const key = snapshot[index]?.key ?? entry.key;
         if (key) lineErrors[key] = entry.error;
       });
-      setServerPricing({
+      setQuoted({
         total: p.total, subtotal: p.subtotal, deliveryFee: p.deliveryFee, vat: p.vat,
         deliveryDistanceKm: p.deliveryDistanceKm, weightKg: p.weightKg, discount: p.discount,
         lineDiscounts: p.lineDiscounts ?? {}, invalidCount: p.invalidCount, lineErrors,
+        cartSig: sig,
       });
-      // displayed line prices come from the server too (only touch state on real change,
-      // otherwise the cart pricing effect would re-trigger forever)
       setCart((prev) => {
+        if (gen !== priceGen.current) return prev;
         let changed = false;
         const next = prev.map((line) => {
           const priced = p.lines.find((entry) => entry.key === line.key || (entry.itemId === line.itemId && entry.variantLabel === line.variantLabel));
@@ -461,7 +476,10 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
         });
         return changed ? next : prev;
       });
-    } catch (e) { toast((e as Error).message, "err"); }
+    } catch (e) {
+      if (gen !== priceGen.current) return;
+      toast((e as Error).message, "err");
+    }
   }, [cart, toast]);
 
   /* ── menu admin (backend CRUD) ── */
