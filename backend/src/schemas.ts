@@ -165,7 +165,10 @@ export const resetPasswordSchema = z.union([
 
 export const customerOrderSchema = z.object({
   type: z.enum(["pickup", "delivery"]),
-  customer: z.object({ name: text(120).min(1), email: z.string().email().max(160), phone: text(30).min(3).max(30) }).strict(),
+  customer: z.object({
+    name: text(120).min(1), email: z.string().email().max(160),
+    phone: text(30).min(1).max(30).refine((value) => value.replace(/\D/g, "").length >= 9, "validation.phone"),
+  }).strict(),
   address: text(200).optional(), note: text(400).optional(),
   lines: z.array(cartLineSchema).min(1).max(100),
   /* Accepted for backwards compatibility only; the server ignores it completely. */

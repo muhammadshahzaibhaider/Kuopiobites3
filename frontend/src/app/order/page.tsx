@@ -77,7 +77,8 @@ export default function OrderPage() {
   const deliveryTotal = serverPricing?.total ?? localTotal;
   const minOk = type !== "delivery" || deliveryTotal >= settings.minOrder;
   const tooFar = type === "delivery" && serverPricing?.deliveryDistanceKm !== undefined && settings.radiusKm > 0 && serverPricing.deliveryDistanceKm > settings.radiusKm;
-  const phoneOk = phone.trim().length >= 3;
+  const phoneDigits = phone.replace(/\D/g, "").length;
+  const phoneOk = phoneDigits >= 9;
   const invalidCount = serverPricing?.invalidCount ?? 0;
   const lineErrors = serverPricing?.lineErrors ?? {};
   /* The server splits the live offer over the covered lines, so each dish can
@@ -195,7 +196,7 @@ export default function OrderPage() {
             {user ? (
               <div className="rounded-3xl border border-cherry/10 bg-cream-deep p-5 text-sm font-bold text-cherry/80 shadow-card">
                 {user.name} · {user.email}
-                {(user.phone ?? "").trim().length < 3 && (
+                {(user.phone ?? "").replace(/\D/g, "").length < 9 && (
                   <input
                     type="tel"
                     autoComplete="tel"
