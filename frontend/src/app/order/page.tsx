@@ -62,16 +62,20 @@ export default function OrderPage() {
   }, [user?.phone]);
 
   useEffect(() => {
+    if (type !== "delivery" || address.trim()) return;
+    const saved = user?.addresses?.find((item) => item.trim());
+    if (saved) setAddress(saved);
+  }, [type, user?.addresses, address]);
+
+  useEffect(() => {
     const timer = window.setTimeout(() => { void priceCart(type, code || undefined, address || undefined, lang); }, 350);
     return () => window.clearTimeout(timer);
   }, [cart, type, code, address, lang, priceCart]);
 
-  const postalOk = useMemo(() => {
-    if (type !== "delivery") return true;
-    const m = address.match(/\b(\d{5})\b/);
-    return !!m && m[1].startsWith("70");
-  }, [address, type]);
-  const minOk = type !== "delivery" || cartSubtotal >= settings.minOrder;
+  const kuopioPostcode = /\b70\s?\d{3}\b/.test(address);
+  const postalOk = type !== "delivery" || kuopioPostcode;
+  const deliveryTotal = serverPricing?.total ?? localTotal;
+  const minOk = type !== "delivery" || deliveryTotal >= settings.minOrder;
   const tooFar = type === "delivery" && serverPricing?.deliveryDistanceKm !== undefined && settings.radiusKm > 0 && serverPricing.deliveryDistanceKm > settings.radiusKm;
   const phoneOk = phone.trim().length >= 3;
   const invalidCount = serverPricing?.invalidCount ?? 0;
@@ -83,9 +87,28 @@ export default function OrderPage() {
     Math.max(0, Math.round((gross - (lineDiscounts[key] ?? 0)) * 100) / 100);
   /* `mounted` keeps the SSR/first-client button state identical; `invalidCount`
      blocks checkout until the affected rows are removed (server stays strict). */
-  const canPay = hoursReady && (open.open || !!scheduled) && user && cart.length > 0 && phoneOk && postalOk && minOk && !tooFar && unavailable.length === 0 && invalidCount === 0 && !preErr && !paying;
+  const payBlockers = useMemo(() => {
+    const reasons: string[] = [];
+    if (!hoursReady) return reasons;
+    if (!user) reasons.push(t("order.needLogin"));
+    if (!phoneOk) reasons.push(t("order.needPhone"));
+    if (type === "delivery" && !address.trim()) reasons.push(t("order.needAddress"));
+    else if (!postalOk) reasons.push(t("order.needPostcode"));
+    if (!minOk) reasons.push(`Delivery minimum is ${eur(settings.minOrder)} — add ${eur(Math.max(0, settings.minOrder - deliveryTotal))} more.`);
+    if (tooFar) reasons.push(t("order.deliveryRadius"));
+    if (!(open.open || !!scheduled)) reasons.push(t("order.closedNote"));
+    if (unavailable.length > 0) reasons.push(`${t("cart.unavailBlock")} ${unavailable.map((l) => l.name).join(", ")}`);
+    if (invalidCount > 0) reasons.push(t("cart.issuesBlock"));
+    if (preErr) reasons.push(t(preErr));
+    return reasons;
+  }, [hoursReady, user, phoneOk, type, address, postalOk, minOk, settings.minOrder, deliveryTotal, tooFar, open.open, scheduled, unavailable, invalidCount, preErr, t]);
+  const canPay = hoursReady && payBlockers.length === 0 && !paying && cart.length > 0;
 
   const pay = async () => {
+    if (!canPay) {
+      if (payBlockers[0]) toast(payBlockers[0], "err");
+      return;
+    }
     if (!user) return;
     setPaying(true);
     if (type === "delivery" && !user.addresses.includes(address)) {
@@ -338,18 +361,23 @@ export default function OrderPage() {
               {settings.platforms.uberEats && <a href={settings.platforms.uberEats} target="_blank" rel="noopener noreferrer" className="font-black text-gold-deep underline decoration-gold underline-offset-4">Uber Eats</a>}
             </p>
           )}
+          {payBlockers.length > 0 && (
+            <ul className="mt-4 space-y-1 rounded-xl bg-brick/10 p-3 text-xs font-black text-brick">
+              {payBlockers.map((reason) => <li key={reason}>{reason}</li>)}
+            </ul>
+          )}
           <button
-            onClick={pay}
-            disabled={!canPay}
+            onClick={() => { void pay(); }}
+            aria-disabled={!canPay}
             className={cx(
               "mt-5 min-h-[52px] w-full rounded-full font-black text-cream transition",
-              canPay ? "bg-cherry-bright shadow-lift hover:-translate-y-0.5 hover:bg-cherry active:scale-[0.98]" : "cursor-not-allowed bg-cherry/25"
+              canPay ? "bg-cherry-bright shadow-lift hover:-translate-y-0.5 hover:bg-cherry active:scale-[0.98]" : "bg-cherry/40 hover:bg-cherry/50"
             )}
           >
             {paying ? `${t("order.paying")} 🔒` : `${t("order.pay")} · ${eur(total)}`}
           </button>
           <p className="mt-2 text-center text-[11px] text-cherry/50">
-            {t("order.secure")}
+            {canPay ? t("order.secure") : t("order.payBlocked")}
           </p>
         </aside>
       </div>
