@@ -159,7 +159,7 @@ export async function loadSettings(): Promise<Settings> {
     ...DEFAULT_SETTINGS,
     paused: row.paused,
     pauseMessage: row.pause_message ?? DEFAULT_SETTINGS.pauseMessage,
-    hours: row.hours,
+    hours: (row.hours && typeof row.hours === "object" ? row.hours : DEFAULT_SETTINGS.hours) ?? DEFAULT_SETTINGS.hours,
     deliveryFee: Number(row.delivery_fee),
     minOrder: Number(row.min_order),
     radiusKm: Number(row.radius_km),

@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { eur } from "@/lib/format";
-import { todayStrHelsinki } from "@/lib/hours";
+import { todayStrHelsinki, toHhmm } from "@/lib/hours";
+import type { DayHours, Settings } from "@/lib/types";
 import { useLang } from "@/lib/i18n";
 import { RESTAURANT } from "@/lib/menu";
 import { useShop } from "@/lib/store";
@@ -161,7 +162,28 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
   const { settings, saveSettings, toast, logAudit } = useShop();
   const { dayName } = useLang();
   const [s, setS] = useState(settings);
-  useEffect(() => setS(settings), [settings]);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const dirtyRef = useRef(false);
+  const markDirty = (next: Settings) => { dirtyRef.current = true; setDirty(true); setS(next); };
+  useEffect(() => {
+    if (!dirtyRef.current) setS(settings);
+  }, [settings]);
+  const patchHours = (day: number, entry: DayHours) => {
+    markDirty({ ...s, hours: { ...s.hours, [day]: entry && { open: toHhmm(entry.open), close: toHhmm(entry.close) } } });
+  };
+  const persist = async (next: Settings, okMsg: string) => {
+    setSaving(true);
+    const ok = await saveSettings(next);
+    setSaving(false);
+    if (ok) {
+      dirtyRef.current = false;
+      setDirty(false);
+      setS(next);
+      toast(okMsg);
+    }
+    return ok;
+  };
   const today = todayStrHelsinki();
 
   if (mode === "restaurant")
@@ -178,14 +200,20 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
           <p className="mb-2 text-sm font-black text-cherry">Announcement strip</p>
           <label className="flex items-center justify-between text-xs font-bold text-cherry/70">
             Show announcement banner on the site
-            <Switch on={s.announcement.enabled} ariaLabel="announcement" onChange={() => setS({ ...s, announcement: { ...s.announcement, enabled: !s.announcement.enabled } })} />
+            <Switch on={s.announcement.enabled} ariaLabel="announcement" onChange={() => markDirty({ ...s, announcement: { ...s.announcement, enabled: !s.announcement.enabled } })} />
           </label>
-          <input value={s.announcement.text} onChange={(e) => setS({ ...s, announcement: { ...s.announcement, text: e.target.value } })} placeholder="e.g. Perjantaisin live-musiikkia klo 19!" className={inputCls + " mt-2"} />
+          <input value={s.announcement.text} onChange={(e) => markDirty({ ...s, announcement: { ...s.announcement, text: e.target.value } })} placeholder="e.g. Perjantaisin live-musiikkia klo 19!" className={inputCls + " mt-2"} />
         </div>
         <Field label="Pause message (shown when ordering is paused)">
-          <textarea rows={2} value={s.pauseMessage} onChange={(e) => setS({ ...s, pauseMessage: e.target.value })} className={inputCls} />
+          <textarea rows={2} value={s.pauseMessage} onChange={(e) => markDirty({ ...s, pauseMessage: e.target.value })} className={inputCls} />
         </Field>
-        <PrimaryBtn icon="save" onClick={async () => { const ok = await saveSettings(s); if (ok) { logAudit("restaurant info / announcement updated"); toast("Saved and reloaded from the database"); } }}>Save</PrimaryBtn>
+        <div className="flex flex-wrap items-center gap-2">
+          {dirty && <span className="inline-flex min-h-[32px] items-center rounded-full bg-gold/25 px-3 text-[11px] font-black uppercase tracking-wide text-gold-deep">Unsaved changes</span>}
+          <PrimaryBtn icon="save" disabled={saving} onClick={async () => {
+            const ok = await persist({ ...settings, announcement: s.announcement, pauseMessage: s.pauseMessage }, "Saved and reloaded from the database");
+            if (ok) logAudit("restaurant info / announcement updated");
+          }}>{saving ? "Saving…" : "Save"}</PrimaryBtn>
+        </div>
       </div>
     );
 
@@ -200,11 +228,10 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
           on={s.paused}
           ariaLabel="pause ordering"
           onChange={async () => {
-            const next = { ...s, paused: !s.paused };
-            setS(next);
-            if (await saveSettings(next)) {
+            const next = { ...settings, ...s, paused: !s.paused };
+            markDirty(next);
+            if (await persist(next, next.paused ? "Ordering paused" : "Ordering resumed")) {
               logAudit(`ordering ${next.paused ? "paused" : "resumed"}`);
-              toast(next.paused ? "Ordering paused" : "Ordering resumed", next.paused ? "err" : "ok");
             }
           }}
         />
@@ -217,14 +244,14 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
             <div key={d} className="flex flex-wrap items-center gap-3 text-sm">
               <span className="w-24 font-bold">{dayName(d)}</span>
               <label className="flex items-center gap-2 text-xs font-bold text-cherry/60">
-                <input type="checkbox" checked={!s.hours[d]} onChange={(e) => setS({ ...s, hours: { ...s.hours, [d]: e.target.checked ? null : { open: "10:00", close: "21:00" } } })} className="h-4 w-4 accent-[#0F3D3E]" />
+                <input type="checkbox" checked={!s.hours[d]} onChange={(e) => patchHours(d, e.target.checked ? null : { open: "10:00", close: "21:00" })} className="h-4 w-4 accent-[#0F3D3E]" />
                 closed
               </label>
               {s.hours[d] && (
                 <>
-                  <input type="time" value={s.hours[d]!.open} onChange={(e) => setS({ ...s, hours: { ...s.hours, [d]: { ...s.hours[d]!, open: e.target.value } } })} className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2" />
+                  <input type="time" step={60} value={toHhmm(s.hours[d]!.open)} onChange={(e) => patchHours(d, { ...s.hours[d]!, open: e.target.value })} className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2" />
                   <span>–</span>
-                  <input type="time" value={s.hours[d]!.close} onChange={(e) => setS({ ...s, hours: { ...s.hours, [d]: { ...s.hours[d]!, close: e.target.value } } })} className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2" />
+                  <input type="time" step={60} value={toHhmm(s.hours[d]!.close)} onChange={(e) => patchHours(d, { ...s.hours[d]!, close: e.target.value })} className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2" />
                 </>
               )}
             </div>
@@ -236,39 +263,68 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
         <h3 className="text-sm font-black text-cherry">Default order-ready estimate</h3>
         <p className="mt-1 text-xs text-cherry/60">New customer orders receive this kitchen estimate. Staff can set a different timer for an individual order in the live queue.</p>
         <Field label="Minutes from order acceptance (5–240)">
-          <input type="number" min="5" max="240" step="5" value={s.readyTimeMinutes} onChange={(e) => setS({ ...s, readyTimeMinutes: Math.max(5, Math.min(240, Number(e.target.value) || 5)) })} className={inputCls + " max-w-[180px]"} />
+          <input type="number" min="5" max="240" step="5" value={s.readyTimeMinutes} onChange={(e) => markDirty({ ...s, readyTimeMinutes: Math.max(5, Math.min(240, Number(e.target.value) || 5)) })} className={inputCls + " max-w-[180px]"} />
         </Field>
       </div>
 
       <div className="grid gap-3 rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4 sm:grid-cols-3">
-        <Field label="Delivery fee (€)"><input type="number" step="0.5" value={s.deliveryFee} onChange={(e) => setS({ ...s, deliveryFee: parseFloat(e.target.value) || 0 })} className={inputCls} /></Field>
-        <Field label="Min delivery order (€)"><input type="number" step="1" value={s.minOrder} onChange={(e) => setS({ ...s, minOrder: parseFloat(e.target.value) || 0 })} className={inputCls} /></Field>
-        <Field label="Radius (km)"><input type="number" step="1" value={s.radiusKm} onChange={(e) => setS({ ...s, radiusKm: parseFloat(e.target.value) || 0 })} className={inputCls} /></Field>
+        <Field label="Delivery fee (€)"><input type="number" step="0.5" value={s.deliveryFee} onChange={(e) => markDirty({ ...s, deliveryFee: parseFloat(e.target.value) || 0 })} className={inputCls} /></Field>
+        <Field label="Min delivery order (€)"><input type="number" step="1" value={s.minOrder} onChange={(e) => markDirty({ ...s, minOrder: parseFloat(e.target.value) || 0 })} className={inputCls} /></Field>
+        <Field label="Radius (km)"><input type="number" step="1" value={s.radiusKm} onChange={(e) => markDirty({ ...s, radiusKm: parseFloat(e.target.value) || 0 })} className={inputCls} /></Field>
       </div>
 
       <div className="space-y-3 rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
         <h3 className="text-sm font-black text-cherry">Ordering platforms & display</h3>
-        <Field label="Wolt URL"><input value={s.platforms.wolt} onChange={(e) => setS({ ...s, platforms: { ...s.platforms, wolt: e.target.value } })} className={inputCls} /></Field>
-        <Field label="Uber Eats URL"><input value={s.platforms.uberEats} onChange={(e) => setS({ ...s, platforms: { ...s.platforms, uberEats: e.target.value } })} className={inputCls} /></Field>
+        <Field label="Wolt URL"><input value={s.platforms.wolt} onChange={(e) => markDirty({ ...s, platforms: { ...s.platforms, wolt: e.target.value } })} className={inputCls} /></Field>
+        <Field label="Uber Eats URL"><input value={s.platforms.uberEats} onChange={(e) => markDirty({ ...s, platforms: { ...s.platforms, uberEats: e.target.value } })} className={inputCls} /></Field>
         <label className="flex items-center justify-between text-sm font-black text-cherry">
           Header logo
-          <select value={s.headerLogo} onChange={(e) => setS({ ...s, headerLogo: e.target.value as "round" | "mark" })} className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold">
+          <select value={s.headerLogo} onChange={(e) => markDirty({ ...s, headerLogo: e.target.value as "round" | "mark" })} className="min-h-[36px] rounded-lg border border-cherry/20 bg-cream px-2 text-xs font-bold">
             <option value="round">Round logo</option>
             <option value="mark">Banner pizza mark</option>
           </select>
         </label>
         <label className="flex items-center justify-between text-sm font-black text-cherry">
           Hide unavailable items
-          <Switch on={s.hideUnavailable} ariaLabel="hide unavailable" onChange={() => setS({ ...s, hideUnavailable: !s.hideUnavailable })} />
+          <Switch on={s.hideUnavailable} ariaLabel="hide unavailable" onChange={() => markDirty({ ...s, hideUnavailable: !s.hideUnavailable })} />
         </label>
       </div>
 
       <div className="flex items-center justify-between rounded-2xl border border-cherry/10 bg-cream-deep/40 px-4 py-3 text-sm">
         <span className="font-black text-cherry">Today ({today}) — quick availability</span>
-        <GhostBtn onClick={async () => { const map = { ...s.offItems }; for (const k of Object.keys(map)) if (map[k].offToday === today) delete map[k]; const next = { ...s, offItems: map }; setS(next); if (await saveSettings(next)) toast("Today's sold-outs reset"); }}>Reset today's sold-outs</GhostBtn>
+        <GhostBtn onClick={async () => {
+          const map = { ...s.offItems };
+          for (const k of Object.keys(map)) if (map[k].offToday === today) delete map[k];
+          const next = { ...settings, ...s, offItems: map };
+          markDirty(next);
+          await persist(next, "Today's sold-outs reset");
+        }}>Reset today's sold-outs</GhostBtn>
       </div>
 
-      <PrimaryBtn icon="save" onClick={async () => { if (await saveSettings(s)) toast("Settings saved and reloaded from the database"); }}>Save settings</PrimaryBtn>
+      <div className="flex flex-wrap items-center gap-2">
+        {dirty && <span className="inline-flex min-h-[32px] items-center rounded-full bg-gold/25 px-3 text-[11px] font-black uppercase tracking-wide text-gold-deep">Unsaved changes</span>}
+        {dirty && <GhostBtn onClick={() => { dirtyRef.current = false; setDirty(false); setS(settings); toast("Draft reloaded from the database"); }}>Reload draft</GhostBtn>}
+        <PrimaryBtn icon="save" disabled={saving} onClick={async () => {
+          const hours: Settings["hours"] = { ...s.hours };
+          for (const day of [0, 1, 2, 3, 4, 5, 6]) {
+            const entry = hours[day];
+            if (entry) hours[day] = { open: toHhmm(entry.open), close: toHhmm(entry.close) };
+          }
+          await persist({
+            ...settings,
+            paused: s.paused,
+            hours,
+            readyTimeMinutes: s.readyTimeMinutes,
+            deliveryFee: s.deliveryFee,
+            minOrder: s.minOrder,
+            radiusKm: s.radiusKm,
+            platforms: s.platforms,
+            headerLogo: s.headerLogo,
+            hideUnavailable: s.hideUnavailable,
+            offItems: s.offItems,
+          }, "Settings saved and reloaded from the database");
+        }}>{saving ? "Saving…" : "Save settings"}</PrimaryBtn>
+      </div>
     </div>
   );
 }

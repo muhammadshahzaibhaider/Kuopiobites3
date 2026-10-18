@@ -3,7 +3,13 @@ import { CFG } from "./config";
 
 const text = (max: number) => z.string().trim().max(max);
 const finiteMoney = z.number().finite().min(0).max(10000);
-const hhmm = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/);
+const hhmm = z.string().transform((value) => {
+  const match = value.trim().match(/^(\d{1,2}):([0-5]\d)(?::[0-5]\d)?$/);
+  if (!match) return value.trim();
+  const hour = Number(match[1]);
+  if (hour > 23) return value.trim();
+  return `${String(hour).padStart(2, "0")}:${match[2]}`;
+}).pipe(z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/));
 const date = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/).refine((value) => {
   const [year, month, day] = value.split("-").map(Number);
   const parsed = new Date(Date.UTC(year, month - 1, day));
@@ -224,7 +230,15 @@ const deliveryRuleSchema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["maxWeightKg"], message: "max weight must be at least min weight" });
 });
 const dayHoursSchema = z.object({ open: hhmm, close: hhmm }).strict();
-const hoursSchema = z.record(z.enum(["0", "1", "2", "3", "4", "5", "6"]), dayHoursSchema.nullable());
+const hoursSchema = z.preprocess((value) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const source = value as Record<string, unknown>;
+  const next: Record<string, unknown> = {};
+  for (const key of ["0", "1", "2", "3", "4", "5", "6"] as const) {
+    next[key] = source[key] ?? source[Number(key) as unknown as string];
+  }
+  return next;
+}, z.record(z.enum(["0", "1", "2", "3", "4", "5", "6"]), dayHoursSchema.nullable()));
 
 export const settingsSchema = z.object({
   paused: z.boolean(), hours: hoursSchema, deliveryFee: finiteMoney, minOrder: finiteMoney, radiusKm: z.number().finite().min(0).max(100),
