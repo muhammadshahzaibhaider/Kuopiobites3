@@ -40,6 +40,35 @@ test("a NaN fee is rejected", () => {
   assert.equal(settingsSchema.safeParse(next).success, false);
 });
 
+test("opening hours with seconds from a time input are coerced to HH:MM", () => {
+  const next = base();
+  next.hours = {
+    0: { open: "10:00:00", close: "23:00:00" },
+    1: { open: "10:00", close: "00:00" },
+    2: { open: "10:00", close: "00:00" },
+    3: { open: "10:00", close: "02:00" },
+    4: { open: "10:00", close: "02:00" },
+    5: { open: "10:00", close: "02:00" },
+    6: { open: "10:00", close: "02:00" },
+  };
+  const parsed = settingsSchema.parse(next);
+  assert.deepEqual(parsed.hours["0"], { open: "10:00", close: "23:00" });
+});
+
+test("overnight close times (00:00 / 02:00) are accepted", () => {
+  const next = base();
+  next.hours = {
+    0: { open: "10:00", close: "23:00" },
+    1: { open: "10:00", close: "00:00" },
+    2: { open: "10:00", close: "00:00" },
+    3: { open: "10:00", close: "02:00" },
+    4: { open: "10:00", close: "02:00" },
+    5: { open: "10:00", close: "02:00" },
+    6: { open: "10:00", close: "02:00" },
+  };
+  assert.equal(settingsSchema.safeParse(next).success, true);
+});
+
 test("min above max is rejected", () => {
   const next = base();
   next.deliveryRules = [{ id: "delivery-a", name: "Keskusta", fee: 2.5, active: true, minDistanceKm: 5, maxDistanceKm: 3 }];

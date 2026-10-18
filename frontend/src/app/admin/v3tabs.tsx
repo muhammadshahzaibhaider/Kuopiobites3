@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import ImageUploader from "@/components/ImageUploader";
 import { cx, eur, fmtDate } from "@/lib/format";
 import { resolveImageSrc } from "@/lib/images";
-import { todayStrHelsinki } from "@/lib/hours";
+import { todayStrHelsinki, toHhmm } from "@/lib/hours";
 import { useLang } from "@/lib/i18n"
 import { MENU } from "@/lib/menu";
 import { useShop } from "@/lib/store";
@@ -176,17 +176,28 @@ export function PreorderPanel() {
   const { t, dayName } = useLang();
   const [draft, setDraft] = useState(settings.preorder);
   const [saving, setSaving] = useState(false);
-  useEffect(() => setDraft(settings.preorder), [settings.preorder]);
+  const dirtyRef = useRef(false);
+  useEffect(() => { if (!dirtyRef.current) setDraft(settings.preorder); }, [settings.preorder]);
   const pre = draft;
   const sunday = nextPreorderSundays({ ...settings, preorder: pre }, 1)[0] ?? "";
   const preOrders = orders.filter((o) => o.scheduled?.date === sunday && !o.refunded);
   const portions = preOrders.reduce((a, o) => a + o.lines.reduce((x, l) => x + l.qty, 0), 0);
-  const update = (patch: Partial<typeof pre>) => setDraft((current) => ({ ...current, ...patch }));
+  const update = (patch: Partial<typeof pre>) => { dirtyRef.current = true; setDraft((current) => ({ ...current, ...patch })); };
   const save = async () => {
     setSaving(true);
-    const ok = await saveSettings({ ...settings, preorder: draft });
+    const next = {
+      ...draft,
+      cutoffTime: toHhmm(draft.cutoffTime),
+      slots: draft.slots.map(toHhmm),
+    };
+    const ok = await saveSettings({ ...settings, preorder: next });
     setSaving(false);
-    if (ok) { logAudit("pre-order settings updated"); toast("Pre-order settings saved and reloaded from the database"); }
+    if (ok) {
+      dirtyRef.current = false;
+      setDraft(next);
+      logAudit("pre-order settings updated");
+      toast("Pre-order settings saved and reloaded from the database");
+    }
   };
 
   return (
@@ -203,7 +214,7 @@ export function PreorderPanel() {
           </select>
         </label>
         <label className="text-xs font-black text-cherry/60">Cutoff time
-          <input type="time" value={pre.cutoffTime} onChange={(e) => update({ cutoffTime: e.target.value })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
+          <input type="time" step={60} value={toHhmm(pre.cutoffTime)} onChange={(e) => update({ cutoffTime: toHhmm(e.target.value) })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />
         </label>
         <label className="text-xs font-black text-cherry/60">Sunday pickup slots (comma-separated HH:MM)
           <input value={pre.slots.join(", ")} onChange={(e) => update({ slots: e.target.value.split(",").map((value) => value.trim()).filter(Boolean) })} className="mt-1 min-h-[36px] w-full rounded-lg border border-cherry/20 bg-cream px-2 text-sm font-bold" />

@@ -104,6 +104,15 @@ export function toMin(hhmm: string): number {
   return h * 60 + m;
 }
 
+/** Browser <input type="time"> may emit HH:MM:SS; the API contract is HH:MM. */
+export function toHhmm(value: string): string {
+  const match = String(value).trim().match(/^(\d{1,2}):([0-5]\d)(?::[0-5]\d)?$/);
+  if (!match) return value;
+  const hour = Number(match[1]);
+  if (hour > 23) return value;
+  return `${String(hour).padStart(2, "0")}:${match[2]}`;
+}
+
 export interface OpenInfo {
   open: boolean;
   /** today's close time when open */
