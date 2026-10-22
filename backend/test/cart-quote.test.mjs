@@ -141,6 +141,27 @@ test("whole-menu percent offer reduces every quote line and sums to the basket d
   assert.equal(res.total, Math.round((res.subtotal - res.discount.amount) * 100) / 100);
 });
 
+test("multi-category offer discounts every listed category and leaves the rest", async () => {
+  const second = MENU.find((m) => m.prices.length === 1 && m.cat !== single.cat);
+  const third = MENU.find((m) => m.prices.length === 1 && m.cat !== single.cat && m.cat !== second.cat);
+  const lines = [
+    line({ key: "a", itemId: single.id }),
+    line({ key: "b", itemId: second.id }),
+    line({ key: "c", itemId: third.id }),
+  ];
+  const res = await priceLines(
+    withOffers({ ...baseOffer, scope: { whole: false, categories: [single.cat, second.cat] } }),
+    lines,
+    "pickup",
+    "en",
+    undefined,
+    MENU
+  );
+  assert.ok(res.lineDiscounts.a > 0);
+  assert.ok(res.lineDiscounts.b > 0);
+  assert.equal(res.lineDiscounts.c, undefined);
+});
+
 test("category offer only discounts dishes in that category", async () => {
   const inCat = MENU.find((m) => m.cat === single.cat && m.id !== single.id) ?? single;
   const outside = MENU.find((m) => m.cat !== single.cat);

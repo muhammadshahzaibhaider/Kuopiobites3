@@ -2,7 +2,7 @@
 import { eur } from "@/lib/format";
 import { useEffect, useRef, useState } from "react";
 import { useShop } from "@/lib/store";
-import { applyOfferToPrice } from "@/lib/v3";
+import { applyOfferToPrice, offerCategoryIds } from "@/lib/v3";
 import type { DeliveryRule, Offer } from "@/lib/types";
 import * as api from "@/lib/api";
 import { Drawer, Field, GhostBtn, Pill, PrimaryBtn, inputCls } from "./ui";
@@ -30,7 +30,11 @@ const finiteOrUndef = (value: unknown) => {
 const promotionPayload = (offer: OfferDraft): Omit<Offer, "id" | "uses"> => {
   const scope: Offer["scope"] = {};
   if (offer.scope.whole) scope.whole = true;
-  if (offer.scope.category) scope.category = offer.scope.category;
+  const cats = offerCategoryIds(offer.scope);
+  if (cats.length) {
+    scope.categories = cats;
+    scope.category = cats[0];
+  }
   if (offer.scope.itemIds?.length) scope.itemIds = offer.scope.itemIds;
   if (offer.scope.deliveryOnly) scope.deliveryOnly = true;
   const minD = finiteOrUndef(offer.scope.minDistanceKm);
@@ -85,6 +89,7 @@ export function OffersView() {
     if (selected.scope.minDistanceKm !== undefined && selected.scope.maxDistanceKm !== undefined && selected.scope.minDistanceKm > selected.scope.maxDistanceKm) { setError("Maximum distance must be at least minimum distance."); return; }
     if (selected.scope.minWeightKg !== undefined && selected.scope.maxWeightKg !== undefined && selected.scope.minWeightKg > selected.scope.maxWeightKg) { setError("Maximum weight must be at least minimum weight."); return; }
     if (["override", "bundle", "freeItem"].includes(selected.type) && !selected.scope.itemIds?.length) { setError("Choose at least one item for this offer type."); return; }
+    if (!selected.scope.whole && !offerCategoryIds(selected.scope).length && !selected.scope.itemIds?.length && selected.type !== "freeDelivery") { setError("Choose at least one category or item."); return; }
     setSaving(true); setError("");
     try {
       const body = promotionPayload(selected);
@@ -137,7 +142,7 @@ export function OffersView() {
                 </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] font-bold text-cherry/70">
-                <Pill tone="teal">{offer.scope.whole ? "Whole order" : offer.scope.category ? `Category: ${offer.scope.category}` : `${offer.scope.itemIds?.length ?? 0} selected items`}</Pill>
+                <Pill tone="teal">{offer.scope.whole ? "Whole order" : offerCategoryIds(offer.scope).length ? `Categories: ${offerCategoryIds(offer.scope).join(", ")}` : `${offer.scope.itemIds?.length ?? 0} selected items`}</Pill>
                 {offer.scope.deliveryOnly && <Pill tone="orange">Delivery only</Pill>}
                 {(offer.scope.minDistanceKm !== undefined || offer.scope.maxDistanceKm !== undefined) && <Pill tone="teal">{offer.scope.minDistanceKm ?? 0}–{offer.scope.maxDistanceKm ?? "∞"} km</Pill>}
                 {(offer.scope.minWeightKg !== undefined || offer.scope.maxWeightKg !== undefined) && <Pill tone="teal">{offer.scope.minWeightKg ?? 0}–{offer.scope.maxWeightKg ?? "∞"} kg</Pill>}
@@ -165,9 +170,12 @@ export function OffersView() {
             <section className="space-y-3 rounded-xl border border-cherry/10 bg-cream p-3">
               <h3 className="text-xs font-black uppercase tracking-wide text-cherry/60">Offer scope</h3>
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label="Applies to"><select value={selected.scope.whole ? "whole" : selected.scope.category ? "category" : "items"} onChange={(e) => setScope(e.target.value === "whole" ? { whole: true, category: undefined, itemIds: undefined } : e.target.value === "category" ? { whole: false, category: categories()[0]?.id, itemIds: undefined } : { whole: false, category: undefined, itemIds: [] })} className={inputCls}><option value="whole">Whole order</option><option value="category">One category</option><option value="items">Selected items</option></select></Field>
-                {!selected.scope.whole && selected.scope.category && <Field label="Category"><select value={selected.scope.category} onChange={(e) => setScope({ category: e.target.value })} className={inputCls}>{categories().map((category) => <option key={category.id} value={category.id}>{category.title} · {category.en}</option>)}</select></Field>}
-                {(!selected.scope.whole && !selected.scope.category) && <Field label="Selected items"><select multiple value={selected.scope.itemIds ?? []} onChange={(e) => setScope({ itemIds: Array.from(e.target.selectedOptions, (option) => option.value) })} className={inputCls + " min-h-32"}>{adminItems.filter((item) => !item.archived).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.cat}</option>)}</select></Field>}
+                <Field label="Applies to"><select value={selected.scope.whole ? "whole" : offerCategoryIds(selected.scope).length ? "category" : "items"} onChange={(e) => setScope(e.target.value === "whole" ? { whole: true, category: undefined, categories: undefined, itemIds: undefined } : e.target.value === "category" ? { whole: false, category: categories()[0]?.id, categories: categories()[0]?.id ? [categories()[0].id] : [], itemIds: undefined } : { whole: false, category: undefined, categories: undefined, itemIds: [] })} className={inputCls}><option value="whole">Whole order</option><option value="category">Categories</option><option value="items">Selected items</option></select></Field>
+                {!selected.scope.whole && offerCategoryIds(selected.scope).length > 0 && <Field label="Categories (Ctrl/Cmd-click to pick several)"><select multiple value={offerCategoryIds(selected.scope)} onChange={(e) => {
+                  const ids = Array.from(e.target.selectedOptions, (option) => option.value);
+                  setScope({ categories: ids, category: ids[0], itemIds: undefined, whole: false });
+                }} className={inputCls + " min-h-32"}>{categories().map((category) => <option key={category.id} value={category.id}>{category.title} · {category.en}</option>)}</select></Field>}
+                {(!selected.scope.whole && offerCategoryIds(selected.scope).length === 0) && <Field label="Selected items"><select multiple value={selected.scope.itemIds ?? []} onChange={(e) => setScope({ itemIds: Array.from(e.target.selectedOptions, (option) => option.value) })} className={inputCls + " min-h-32"}>{adminItems.filter((item) => !item.archived).map((item) => <option key={item.id} value={item.id}>{item.name} · {item.cat}</option>)}</select></Field>}
                 <label className="flex min-h-[42px] items-center gap-2 text-sm font-bold"><input type="checkbox" checked={!!selected.scope.deliveryOnly} onChange={(e) => setScope({ deliveryOnly: e.target.checked })} /> Delivery orders only</label>
               </div>
               <div className="grid gap-3 sm:grid-cols-4">
@@ -184,8 +192,8 @@ export function OffersView() {
                 const scopedItems = adminItems.filter((item) => !item.archived && (
                   selected.scope.whole
                     ? true
-                    : selected.scope.category
-                      ? item.cat === selected.scope.category
+                    : offerCategoryIds(selected.scope).length
+                      ? offerCategoryIds(selected.scope).includes(item.cat)
                       : (selected.scope.itemIds ?? []).includes(item.id)
                 ));
                 const sample = scopedItems.slice(0, 4);

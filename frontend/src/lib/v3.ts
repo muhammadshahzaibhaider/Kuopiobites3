@@ -258,6 +258,11 @@ export function offerBadge(o: Offer, lang: Lang, t: (key: string) => string): st
   return `−${eur(o.value)}`;
 }
 
+/** Legacy `category` plus `categories[]` — both count as the offer's category scope. */
+export function offerCategoryIds(scope: Offer["scope"]): string[] {
+  return [...new Set([...(scope.categories ?? []), ...(scope.category ? [scope.category] : [])].map((id) => id.trim()).filter(Boolean))];
+}
+
 export interface DiscountResult {
   amount: number;
   title: string;
@@ -275,11 +280,12 @@ export function computeDiscount(
   const live = liveOffers(s).filter((o) => !o.code || (code ?? "").toUpperCase() === o.code.toUpperCase());
   let best: DiscountResult = { amount: 0, title: "", freeDelivery: false };
   for (const o of live) {
+    const cats = offerCategoryIds(o.scope);
     const scoped = lines.filter((l) =>
       o.scope.whole
         ? true
-        : o.scope.category
-          ? MENU.find((m) => m.id === l.itemId)?.cat === o.scope.category
+        : cats.length
+          ? cats.includes(MENU.find((m) => m.id === l.itemId)?.cat ?? "")
           : (o.scope.itemIds ?? []).includes(l.itemId)
     );
     const scopedTotal = scoped.reduce((a, l) => a + l.qty * l.unitPrice, 0);
@@ -330,7 +336,7 @@ function itemOfferEligible(o: Offer, m: MenuItem): boolean {
   const picked = (o.scope.itemIds ?? []).includes(m.id);
   if (o.type === "override") return picked;
   if (o.type !== "percent") return false;
-  return o.scope.whole === true || o.scope.category === m.cat || picked;
+  return o.scope.whole === true || offerCategoryIds(o.scope).includes(m.cat) || picked;
 }
 
 /** The offer price for one unit priced at `was` (variant price + options). */
