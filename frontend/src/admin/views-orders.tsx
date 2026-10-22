@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { eur } from "@/lib/format";
+import { RESTAURANT } from "@/lib/menu";
 import { todayStrHelsinki } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
 import { useShop, useTick } from "@/lib/store";
@@ -360,23 +361,93 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
   );
 }
 
+const TICKET_W = 36;
+const RULE = "-".repeat(TICKET_W);
+
+function ticketPad(left: string, right: string, width = TICKET_W): string {
+  const gap = Math.max(1, width - left.length - right.length);
+  return left + " ".repeat(gap) + right;
+}
+
+function helsinkiStamp(ts: number): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Helsinki",
+    day: "numeric",
+    month: "long",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(new Date(ts));
+}
+
+function ticketLines(o: Order): string {
+  const delivery = o.type === "delivery";
+  const paid = o.refunded
+    ? "Refunded"
+    : o.paymentStatus === "demo_paid"
+      ? "Demo paid"
+      : o.paymentStatus === "paid"
+        ? "Paid"
+        : o.paymentStatus ?? "Unpaid";
+  const addressLines = (o.address ?? "").split(/,\s*/).map((part) => part.trim()).filter(Boolean);
+  const itemRows = o.lines.flatMap((l) => {
+    const rows = [ticketPad(`${l.qty} x ${l.name}`, eur(l.unitPrice * l.qty))];
+    if (l.variantLabel) rows.push(`  ${l.variantLabel}`);
+    for (const opt of l.options) rows.push(`  ${opt}`);
+    if (l.pizza?.extras?.length) {
+      for (const extra of l.pizza.extras) rows.push(`  ${extra.count}x ${extra.label}`);
+    }
+    if (l.note) rows.push(`  Note: ${l.note}`);
+    return rows;
+  });
+  const due = o.scheduled
+    ? `${o.scheduled.date} ${o.scheduled.time}`
+    : o.estimatedReadyAt
+      ? helsinkiStamp(o.estimatedReadyAt)
+      : undefined;
+
+  return [
+    ticketPad(RESTAURANT.name.toUpperCase(), delivery ? "DELIVERY" : "PICKUP"),
+    RULE,
+    o.id,
+    RULE,
+    "CUSTOMER",
+    o.customer.name,
+    o.customer.phone ? `Phone: ${o.customer.phone}` : "",
+    o.customer.email ? `Email: ${o.customer.email}` : "",
+    RULE,
+    delivery ? "DELIVER TO" : "PICKUP AT",
+    ...(delivery
+      ? (addressLines.length ? addressLines : ["(no address on order)"])
+      : [RESTAURANT.address, RESTAURANT.phone]),
+    ...(o.note ? [RULE, "INSTRUCTIONS", o.note] : []),
+    RULE,
+    ...itemRows,
+    RULE,
+    ticketPad("Subtotal", eur(o.subtotal)),
+    ...(delivery ? [ticketPad("Delivery fee", eur(o.deliveryFee))] : []),
+    ...(o.discount?.amount ? [ticketPad(o.discount.title || "Discount", `-${eur(o.discount.amount)}`)] : []),
+    ticketPad("VAT", eur(o.vat)),
+    ticketPad("Amount paid", eur(o.total)),
+    paid,
+    RULE,
+    `Placed at ${helsinkiStamp(o.createdAt)}`,
+    due ? `${delivery ? "Deliver by" : "Ready by"} ${due}` : "",
+    RULE,
+    RESTAURANT.address,
+    RESTAURANT.phone,
+    `Thank you for ordering from ${RESTAURANT.name}`,
+  ].filter((row) => row !== "").join("\n");
+}
+
 function printTicket(o: Order) {
-  const w = window.open("", "_blank", "width=320,height=600");
+  const w = window.open("", "_blank", "width=360,height=720");
   if (!w) return;
-  const ticket = [
-    `${o.id}  ${new Date(o.createdAt).toLocaleString("fi-FI")}`,
-    `${o.customer.name} · ${o.type}`,
-    "--------------------------------",
-    ...o.lines.map((l) => `${l.qty}x ${l.name} (${l.variantLabel})${l.options.length ? "\n   " + l.options.join("\n   ") : ""}`),
-    "--------------------------------",
-    `TOTAL ${o.total.toFixed(2)} EUR`,
-    ...(o.note ? [`NOTE: ${o.note}`] : []),
-  ].join("\n");
   /* Never interpolate customer/menu text into document.write: textContent
      prevents a stored note/name from becoming script in the print window. */
   const pre = w.document.createElement("pre");
-  pre.style.cssText = "font:12px monospace;white-space:pre-wrap";
-  pre.textContent = ticket;
+  pre.style.cssText = "font:12px/1.35 monospace;white-space:pre-wrap;margin:8px";
+  pre.textContent = ticketLines(o);
   w.document.body.replaceChildren(pre);
   w.print();
 }
