@@ -17,6 +17,54 @@ const numInput = (value: number | undefined, onChange: (value: number | undefine
 const newOffer = (): OfferDraft => ({
   type: "percent", value: 10, scope: { whole: true }, titleEn: "", titleFi: "", active: true, priority: 10,
 });
+const blank = (value?: string) => {
+  const next = value?.trim();
+  return next ? next : undefined;
+};
+const finiteOrUndef = (value: unknown) => {
+  const n = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(n) ? n : undefined;
+};
+/** PUT /api/promotions is .strict(): spreading the loaded offer (uses, empty
+    strings, ISO timestamps, extra keys) was 400ing pause/edit. */
+const promotionPayload = (offer: OfferDraft): Omit<Offer, "id" | "uses"> => {
+  const scope: Offer["scope"] = {};
+  if (offer.scope.whole) scope.whole = true;
+  if (offer.scope.category) scope.category = offer.scope.category;
+  if (offer.scope.itemIds?.length) scope.itemIds = offer.scope.itemIds;
+  if (offer.scope.deliveryOnly) scope.deliveryOnly = true;
+  const minD = finiteOrUndef(offer.scope.minDistanceKm);
+  const maxD = finiteOrUndef(offer.scope.maxDistanceKm);
+  const minW = finiteOrUndef(offer.scope.minWeightKg);
+  const maxW = finiteOrUndef(offer.scope.maxWeightKg);
+  if (minD !== undefined) scope.minDistanceKm = minD;
+  if (maxD !== undefined) scope.maxDistanceKm = maxD;
+  if (minW !== undefined) scope.minWeightKg = minW;
+  if (maxW !== undefined) scope.maxWeightKg = maxW;
+  const maxUses = finiteOrUndef(offer.maxUses);
+  const minOrder = finiteOrUndef(offer.minOrder);
+  const banner = offer.banner?.src && blank(offer.banner.altEn) && blank(offer.banner.altFi) ? offer.banner : undefined;
+  return {
+    type: offer.type,
+    value: Math.max(0, finiteOrUndef(offer.value) ?? 0),
+    scope,
+    titleEn: offer.titleEn.trim(),
+    titleFi: offer.titleFi.trim(),
+    active: !!offer.active,
+    priority: Math.trunc(finiteOrUndef(offer.priority) ?? 10),
+    ...(minOrder !== undefined ? { minOrder } : {}),
+    ...(offer.days?.length ? { days: offer.days } : {}),
+    ...(blank(offer.start) ? { start: offer.start!.slice(0, 10) } : {}),
+    ...(blank(offer.end) ? { end: offer.end!.slice(0, 10) } : {}),
+    ...(blank(offer.code) ? { code: blank(offer.code) } : {}),
+    ...(maxUses !== undefined && maxUses > 0 ? { maxUses: Math.trunc(maxUses) } : {}),
+    ...(blank(offer.descEn) ? { descEn: blank(offer.descEn) } : {}),
+    ...(blank(offer.descFi) ? { descFi: blank(offer.descFi) } : {}),
+    ...(blank(offer.badgeEn) ? { badgeEn: blank(offer.badgeEn) } : {}),
+    ...(blank(offer.badgeFi) ? { badgeFi: blank(offer.badgeFi) } : {}),
+    ...(banner ? { banner } : {}),
+  };
+};
 
 export function OffersView() {
   const { settings, categories, adminItems, refresh, toast } = useShop();
@@ -39,9 +87,9 @@ export function OffersView() {
     if (["override", "bundle", "freeItem"].includes(selected.type) && !selected.scope.itemIds?.length) { setError("Choose at least one item for this offer type."); return; }
     setSaving(true); setError("");
     try {
-      const { id, uses: _uses, ...body } = selected;
-      if (isNew || !id) await api.apiPostPromotion(body);
-      else await api.apiPutPromotion(id, body);
+      const body = promotionPayload(selected);
+      if (isNew || !selected.id) await api.apiPostPromotion(body);
+      else await api.apiPutPromotion(selected.id, body);
       await refresh();
       toast(isNew ? "Offer saved" : "Offer updated");
       setSelected(null);
@@ -52,9 +100,20 @@ export function OffersView() {
     }
   };
 
+  const setActive = async (offer: Offer, active: boolean) => {
+    try {
+      await api.apiPutPromotion(offer.id, promotionPayload({ ...offer, scope: { ...offer.scope }, active }));
+      await refresh();
+      toast(active ? "Offer is active" : "Offer paused");
+    } catch { toast("Offer could not be updated", "err"); }
+  };
+
   const remove = async (offer: Offer) => {
-    if (offer.uses) { toast("An offer with recorded uses cannot be deleted; turn it off instead.", "err"); return; }
-    if (!window.confirm(`Delete offer “${offer.titleEn}”?`)) return;
+    const used = offer.uses ?? 0;
+    const ok = window.confirm(used
+      ? `“${offer.titleEn}” has been used ${used} time${used === 1 ? "" : "s"}. Delete it anyway? Past orders keep their totals; the offer code is cleared.`
+      : `Delete offer “${offer.titleEn}”?`);
+    if (!ok) return;
     try { await api.apiDeletePromotion(offer.id); await refresh(); toast("Offer deleted", "err"); }
     catch { toast("Offer could not be deleted", "err"); }
   };
@@ -71,7 +130,11 @@ export function OffersView() {
             <article key={offer.id} className="rounded-2xl border border-cherry/10 bg-cream-deep/50 p-4">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div><div className="flex flex-wrap items-center gap-2"><h3 className="font-display text-base font-black text-cherry">{offer.titleEn}</h3><Pill tone={offer.active ? "green" : "orange"}>{offer.active ? "Active" : "Paused"}</Pill></div><p className="mt-1 text-xs text-cherry/60">{offer.titleFi} · {offer.type} · priority {offer.priority}</p></div>
-                <div className="flex gap-2"><GhostBtn onClick={() => openEdit(offer)}>Edit</GhostBtn><GhostBtn onClick={() => void remove(offer)}>Delete</GhostBtn></div>
+                <div className="flex flex-wrap gap-2">
+                  <GhostBtn onClick={() => openEdit(offer)}>Edit</GhostBtn>
+                  <GhostBtn onClick={() => { void setActive(offer, !offer.active); }}>{offer.active ? "Pause" : "Activate"}</GhostBtn>
+                  <GhostBtn onClick={() => { void remove(offer); }}>Delete</GhostBtn>
+                </div>
               </div>
               <div className="mt-3 flex flex-wrap gap-1.5 text-[11px] font-bold text-cherry/70">
                 <Pill tone="teal">{offer.scope.whole ? "Whole order" : offer.scope.category ? `Category: ${offer.scope.category}` : `${offer.scope.itemIds?.length ?? 0} selected items`}</Pill>

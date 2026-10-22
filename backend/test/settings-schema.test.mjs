@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-const { settingsSchema } = await import("../src/schemas.ts");
+const { settingsSchema, promotionPatchSchema } = await import("../src/schemas.ts");
 const { DEFAULT_SETTINGS } = await import("../src/lib/hours.ts");
 
 const base = () => structuredClone({ ...DEFAULT_SETTINGS, audit: [] });
@@ -73,4 +73,38 @@ test("min above max is rejected", () => {
   const next = base();
   next.deliveryRules = [{ id: "delivery-a", name: "Keskusta", fee: 2.5, active: true, minDistanceKm: 5, maxDistanceKm: 3 }];
   assert.equal(settingsSchema.safeParse(next).success, false);
+});
+
+test("pausing an offer ignores uses/id/empty strings from the admin form", () => {
+  const parsed = promotionPatchSchema.parse({
+    id: "of-GQDYQ7Vjuj4G",
+    uses: 2,
+    type: "percent",
+    value: "20.00",
+    scope: { whole: true, category: "", itemIds: undefined },
+    titleEn: "Special discount on whole menu",
+    titleFi: "Erikoisalennus koko ruokalistasta",
+    descEn: "",
+    descFi: "",
+    code: "",
+    start: "",
+    end: "",
+    active: false,
+    priority: 10,
+  });
+  assert.equal(parsed.active, false);
+  assert.equal(parsed.value, 20);
+  assert.equal(parsed.descEn, undefined);
+  assert.equal("id" in parsed, false);
+  assert.equal("uses" in parsed, false);
+});
+
+test("an unknown extra property on a promotion patch is stripped not rejected", () => {
+  const parsed = promotionPatchSchema.parse({
+    type: "percent", value: 20, scope: { whole: true },
+    titleEn: "Special discount on whole menu", titleFi: "Erikoisalennus koko ruokalistasta",
+    active: true, priority: 10, used_count: 2,
+  });
+  assert.equal(parsed.active, true);
+  assert.equal("used_count" in parsed, false);
 });
