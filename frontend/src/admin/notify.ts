@@ -40,7 +40,7 @@ function note(c: AudioContext, freq: number, start: number, duration: number, pe
   osc.stop(start + duration + 0.04);
 }
 
-/** A warm three-note "ding-dong" that repeats twice for a new order. */
+/** One pass of the kitchen chime (~1.5s). */
 export function playNewOrderChime(): void {
   const c = getCtx();
   if (!c) return;
@@ -52,6 +52,40 @@ export function playNewOrderChime(): void {
   note(c, 1108.73, t + 0.38, 0.5, 0.13);
   note(c, 880.0, t + 0.75, 0.24, 0.1);
   note(c, 1108.73, t + 0.92, 0.55, 0.12);
+}
+
+/** Keep ringing until the kitchen accepts, or 5 minutes, whichever is first. */
+export const NEW_ORDER_RING_MS = 5 * 60 * 1000;
+const CHIME_GAP_MS = 1800;
+
+let ringTimer: ReturnType<typeof setInterval> | null = null;
+let ringUntil = 0;
+
+export function startNewOrderRing(untilTs: number): void {
+  if (typeof window === "undefined") return;
+  ringUntil = Math.max(ringUntil, untilTs);
+  if (ringUntil <= Date.now()) {
+    stopNewOrderRing();
+    return;
+  }
+  if (ringTimer != null) return;
+  unlockAudio();
+  playNewOrderChime();
+  ringTimer = setInterval(() => {
+    if (Date.now() >= ringUntil) {
+      stopNewOrderRing();
+      return;
+    }
+    playNewOrderChime();
+  }, CHIME_GAP_MS);
+}
+
+export function stopNewOrderRing(): void {
+  if (ringTimer != null) {
+    clearInterval(ringTimer);
+    ringTimer = null;
+  }
+  ringUntil = 0;
 }
 
 /** Soft confirmation used when enabling the sound toggle. */
