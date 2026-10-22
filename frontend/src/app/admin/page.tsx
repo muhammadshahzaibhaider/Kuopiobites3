@@ -7,7 +7,7 @@ import { useShop, useTick } from "@/lib/store";
 import { Ic } from "@/admin/icons";
 import { Pill, useLocal } from "@/admin/ui";
 import NewOrderAlert from "@/admin/order-alert";
-import { NEW_ORDER_RING_MS, playTestChime, startNewOrderRing, stopNewOrderRing, unlockAudio } from "@/admin/notify";
+import { NEW_ORDER_RING_MS, RING_TONES, isRingToneId, playTestChime, startNewOrderRing, stopNewOrderRing, unlockAudio, type RingToneId } from "@/admin/notify";
 import type { Order } from "@/lib/types";
 import { DashboardView, OrdersView, DiningView } from "@/admin/views-orders";
 import { MenuCategoriesView, MenuItemsView, ToppingsMasterView, SpecialsView } from "@/admin/views-menu";
@@ -196,6 +196,11 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   const [quickCreate, setQuickCreate] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [soundOn, setSoundOn] = useState(() => (typeof window === "undefined" ? true : localStorage.getItem("kb_admin_sound") !== "0"));
+  const [ringTone, setRingTone] = useState<RingToneId>(() => {
+    if (typeof window === "undefined") return "classic";
+    const stored = localStorage.getItem("kb_admin_ring_tone") ?? "";
+    return isRingToneId(stored) ? stored : "classic";
+  });
   const [alertQueue, setAlertQueue] = useState<Order[]>([]);
   const seenOrders = useRef<Set<string> | null>(null);
   const { orders, orderStatus, refresh } = useShop();
@@ -246,9 +251,9 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
       return;
     }
     const until = Math.max(...live.map((o) => o.createdAt + NEW_ORDER_RING_MS));
-    if (until > Date.now()) startNewOrderRing(until);
+    if (until > Date.now()) startNewOrderRing(until, ringTone);
     else stopNewOrderRing();
-  }, [orders, orderStatus, soundOn]);
+  }, [orders, orderStatus, soundOn, ringTone]);
 
   useEffect(() => () => stopNewOrderRing(), []);
 
@@ -256,7 +261,14 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
     const next = !soundOn;
     setSoundOn(next);
     localStorage.setItem("kb_admin_sound", next ? "1" : "0");
-    if (next) { unlockAudio(); playTestChime(); }
+    if (next) { unlockAudio(); playTestChime(ringTone); }
+  };
+
+  const pickTone = (id: RingToneId) => {
+    setRingTone(id);
+    localStorage.setItem("kb_admin_ring_tone", id);
+    unlockAudio();
+    playTestChime(id);
   };
 
   const pending = orders.filter((o) => ["placed", "accepted", "preparing"].includes(orderStatus(o)) && !o.refunded).length;
@@ -458,6 +470,18 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
                 </div>
               )}
             </div>
+            <label className="sr-only" htmlFor="admin-ring-tone">New-order ring tone</label>
+            <select
+              id="admin-ring-tone"
+              value={ringTone}
+              onChange={(e) => pickTone(isRingToneId(e.target.value) ? e.target.value : "classic")}
+              title="New-order ring tone"
+              className="h-9 max-w-[9.5rem] rounded-lg border border-cherry/20 bg-cream px-1.5 text-[11px] font-black text-cherry hover:border-cherry"
+            >
+              {RING_TONES.map((tone) => (
+                <option key={tone.id} value={tone.id}>{tone.label}</option>
+              ))}
+            </select>
             <button
               onClick={toggleSound}
               aria-label={soundOn ? "Mute new-order sound" : "Enable new-order sound"}
