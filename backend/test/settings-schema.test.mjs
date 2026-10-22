@@ -99,6 +99,12 @@ test("pausing an offer ignores uses/id/empty strings from the admin form", () =>
   assert.equal("uses" in parsed, false);
 });
 
+test("empty image alts fail a full settings snapshot (why promotion routes must not re-parse it)", () => {
+  const next = base();
+  next.itemImages = { "shawarma-88": { src: "/media/shawarma.webp", altEn: "", altFi: "" } };
+  assert.equal(settingsSchema.safeParse(next).success, false);
+});
+
 test("an unknown extra property on a promotion patch is stripped not rejected", () => {
   const parsed = promotionPatchSchema.parse({
     type: "percent", value: 20, scope: { whole: true },

@@ -1055,21 +1055,24 @@ app.post("/api/promotions", requireStaff("manager"), wrap(async (req, res) => {
   const current = await loadSettings();
   const patch = promotionPatchSchema.parse(req.body);
   const offer = { ...patch, id: uid("of") };
-  const next = settingsSchema.parse({ ...current, offers: [...current.offers, offer] }) as Settings;
-  await saveSettings(next); const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion + ${offer.id}`); ok(res, offer, 201);
+  /* Only the offer body is schema-checked. Re-parsing the entire settings
+     snapshot 400ed pause/delete when unrelated rows (empty image alts) were invalid. */
+  await saveSettings({ ...current, offers: [...current.offers, offer] });
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion + ${offer.id}`); ok(res, offer, 201);
 }));
 app.put("/api/promotions/:id", requireStaff("manager"), wrap(async (req, res) => {
   const id = paramId.parse(req.params.id); const current = await loadSettings();
   const patch = promotionPatchSchema.parse(req.body);
   if (!current.offers.some((offer) => offer.id === id)) return fail(res, 404, "promo.notFound");
   const offers = current.offers.map((offer) => offer.id === id ? { ...patch, id, uses: offer.uses } : offer);
-  const next = settingsSchema.parse({ ...current, offers }) as Settings; await saveSettings(next);
+  await saveSettings({ ...current, offers });
   const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion ~ ${id}`); ok(res, offers.find((offer) => offer.id === id));
 }));
 app.delete("/api/promotions/:id", requireStaff("manager"), wrap(async (req, res) => {
   const id = paramId.parse(req.params.id); const current = await loadSettings();
-  const next = settingsSchema.parse({ ...current, offers: current.offers.filter((offer) => offer.id !== id) }) as Settings;
-  await saveSettings(next); const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion - ${id}`); ok(res, { ok: true });
+  if (!current.offers.some((offer) => offer.id === id)) return fail(res, 404, "promo.notFound");
+  await saveSettings({ ...current, offers: current.offers.filter((offer) => offer.id !== id) });
+  const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion - ${id}`); ok(res, { ok: true });
 }));
 
 app.put("/api/translations", requireStaff("manager"), wrap(async (req, res) => {

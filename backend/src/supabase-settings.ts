@@ -6,6 +6,16 @@ import type { CatMeta, ModGroup, Offer, Settings, SpecialItem, ToppingMeta, Uplo
 
 const slug = (value: string) => value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
+/** Photos in the menu table often have empty alt text. The settings schema
+    requires non-empty alts, so a promotion save that re-validates the whole
+    snapshot 400s. Fill a generic alt rather than dropping the image. */
+function uploadedImg(src: string, altFi?: string | null, altEn?: string | null): UploadedImg {
+  const fi = (altFi ?? "").trim();
+  const en = (altEn ?? "").trim();
+  return { src, altFi: fi || "Dish photo", altEn: en || "Dish photo" };
+}
+const dayPart = (value: string | null | undefined) => value ? value.slice(0, 10) : undefined;
+
 async function check(result: PromiseLike<{ error: { message: string } | null }>, operation: string): Promise<void> {
   const { error } = await result;
   // Keep database details out of client errors/logs; the operation code is enough
@@ -91,7 +101,13 @@ export async function loadSettings(): Promise<Settings> {
   const itemImages: Record<string, UploadedImg> = { ...DEFAULT_SETTINGS.itemImages, ...(extra.itemImages as Record<string, UploadedImg> | undefined) };
   const offItems = { ...DEFAULT_SETTINGS.offItems, ...(extra.offItems as Settings["offItems"] | undefined) };
   for (const item of items) {
-    if (item.photo_url) itemImages[item.id] = { src: item.photo_url, altFi: item.photo_alt_fi ?? "", altEn: item.photo_alt_en ?? "" };
+    if (item.photo_url) itemImages[item.id] = uploadedImg(item.photo_url, item.photo_alt_fi, item.photo_alt_en);
+  }
+  for (const [id, img] of Object.entries(itemImages)) {
+    if (!img?.src) { delete itemImages[id]; continue; }
+    itemImages[id] = uploadedImg(img.src, img.altFi, img.altEn);
+  }
+  for (const item of items) {
     if (!item.available || item.sold_out_on) {
       offItems[item.id] = { off: !item.available, offToday: item.sold_out_on ?? undefined };
     } else {
@@ -131,7 +147,7 @@ export async function loadSettings(): Promise<Settings> {
     descEn: offer.description_en ?? undefined,
     badgeFi: offer.badge_fi ?? undefined,
     badgeEn: offer.badge_en ?? undefined,
-    banner: offer.banner_url ? { src: offer.banner_url, altFi: "", altEn: "" } : undefined,
+    banner: offer.banner_url ? uploadedImg(offer.banner_url) : undefined,
     priority: offer.priority,
     active: offer.active,
   }));
@@ -146,8 +162,8 @@ export async function loadSettings(): Promise<Settings> {
     textEn: special.label_en ?? undefined,
     sortOrder: special.sort_order,
     active: special.active,
-    start: special.active_from ?? undefined,
-    end: special.active_to ?? undefined,
+    start: dayPart(special.active_from),
+    end: dayPart(special.active_to),
   }));
 
   /* A topping removed from the master list is archived in the toppings table;
