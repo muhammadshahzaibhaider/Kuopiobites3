@@ -153,7 +153,7 @@ export interface Offer {
   type: "percent" | "fixed" | "override" | "bundle" | "freeItem" | "freeDelivery";
   value: number;
   scope: {
-    itemIds?: string[]; category?: string; whole?: boolean; deliveryOnly?: boolean;
+    itemIds?: string[]; category?: string; categories?: string[]; whole?: boolean; deliveryOnly?: boolean;
     minDistanceKm?: number; maxDistanceKm?: number; minWeightKg?: number; maxWeightKg?: number;
   };
   minOrder?: number;

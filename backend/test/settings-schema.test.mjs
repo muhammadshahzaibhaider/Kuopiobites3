@@ -99,6 +99,14 @@ test("pausing an offer ignores uses/id/empty strings from the admin form", () =>
   assert.equal("uses" in parsed, false);
 });
 
+test("a promotion with several categories is accepted", () => {
+  const parsed = promotionPatchSchema.parse({
+    type: "percent", value: 20, scope: { categories: ["pizza1", "burgers"], category: "pizza1" },
+    titleEn: "Two categories", titleFi: "Kaksi kategoriaa", active: true, priority: 10,
+  });
+  assert.deepEqual(parsed.scope.categories, ["pizza1", "burgers"]);
+});
+
 test("empty image alts fail a full settings snapshot (why promotion routes must not re-parse it)", () => {
   const next = base();
   next.itemImages = { "shawarma-88": { src: "/media/shawarma.webp", altEn: "", altFi: "" } };

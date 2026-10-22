@@ -8,7 +8,7 @@
  * customer the offer is not usable right now.
  */
 import type { Lang, MenuItem, Settings } from "./types";
-import { activeOffers, applyOfferToPrice, offerBadge } from "./v3";
+import { activeOffers, applyOfferToPrice, offerBadge, offerCategoryIds } from "./v3";
 
 export interface OfferCard {
   id: string;
@@ -35,13 +35,14 @@ export function offerCards(
 ): OfferCard[] {
   return activeOffers(settings).map((o) => {
     const item = o.scope.itemIds?.[0] ? menu.find((entry) => entry.id === o.scope.itemIds![0]) : undefined;
-    const href = o.scope.category
-      ? `/menu?cat=${o.scope.category}`
+    const cats = offerCategoryIds(o.scope);
+    const href = cats.length === 1
+      ? `/menu?cat=${cats[0]}`
       : item
         ? `/menu?item=${item.id}`
         : "/menu";
-    const scopeLabel = o.scope.category
-      ? categoryLabel(o.scope.category) ?? o.scope.category
+    const scopeLabel = cats.length
+      ? cats.map((id) => categoryLabel(id) ?? id).join(", ")
       : item
         ? item.name
         : t("offers.all");
@@ -50,8 +51,8 @@ export function offerCards(
        scope with the discount already applied. */
     const scoped = o.scope.whole
       ? menu
-      : o.scope.category
-        ? menu.filter((entry) => entry.cat === o.scope.category)
+      : cats.length
+        ? menu.filter((entry) => cats.includes(entry.cat))
         : menu.filter((entry) => (o.scope.itemIds ?? []).includes(entry.id));
     const cheapest = scoped.reduce<number | undefined>((lowest, entry) => {
       const value = Math.min(...entry.prices.map((price) => price.value));

@@ -2,7 +2,7 @@
 import Link from "next/link";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
-import { activeOffers, offerBadge } from "@/lib/v3";
+import { activeOffers, offerBadge, offerCategoryIds } from "@/lib/v3";
 import { MENU } from "@/lib/menu";
 import { MenuImage } from "./ui";
 
@@ -18,8 +18,9 @@ export default function OffersStrip() {
     <div className="no-scrollbar -mx-4 mt-6 flex gap-3 overflow-x-auto px-4 sm:mx-0 sm:px-0">
       {offers.map((o) => {
         const days = o.days?.length && o.days.length < 7 ? [...o.days].sort((a, b) => a - b) : null;
-        const href = o.scope.category
-          ? `/menu?cat=${o.scope.category}`
+        const cats = offerCategoryIds(o.scope);
+        const href = cats.length === 1
+          ? `/menu?cat=${cats[0]}`
           : o.scope.itemIds?.[0]
             ? `/menu?item=${o.scope.itemIds[0]}`
             : "/menu";

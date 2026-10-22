@@ -195,7 +195,7 @@ const specialCfgSchema = z.object({
 }).strict();
 
 const offerScopeSchema = z.object({
-  itemIds: z.array(text(60)).max(100).optional(), category: text(60).optional(), whole: z.boolean().optional(),
+  itemIds: z.array(text(60)).max(100).optional(), category: text(60).optional(), categories: z.array(text(60)).max(50).optional(), whole: z.boolean().optional(),
   deliveryOnly: z.boolean().optional(),
   minDistanceKm: z.number().finite().min(0).max(500).optional(),
   maxDistanceKm: z.number().finite().min(0).max(500).optional(),
@@ -287,7 +287,7 @@ export const promotionPatchSchema = z.preprocess((raw) => {
     ? source.scope as Record<string, unknown>
     : {};
   const scope: Record<string, unknown> = {};
-  for (const key of ["itemIds", "category", "whole", "deliveryOnly", "minDistanceKm", "maxDistanceKm", "minWeightKg", "maxWeightKg"]) {
+  for (const key of ["itemIds", "category", "categories", "whole", "deliveryOnly", "minDistanceKm", "maxDistanceKm", "minWeightKg", "maxWeightKg"]) {
     const next = optionalBlank(scopeRaw[key]);
     if (next !== undefined) scope[key] = next;
   }
