@@ -273,7 +273,45 @@ export const cartQtySchema = z.object({ qty: z.number().int().min(0).max(99) }).
 export const passwordChangeSchema = z.object({ current: z.string().min(1).max(200), next: passwordPolicy }).strict();
 export const translationSchema = z.object({ lang: z.enum(["en", "fi"]), key: text(160).min(1), value: text(2000) }).strict();
 export const newsletterSchema = z.object({ email: z.string().trim().email().max(160) }).strict();
-export const promotionPatchSchema = offerSchema.omit({ id: true }).strict();
+const optionalBlank = (value: unknown) => (value === "" || value === null ? undefined : value);
+const optionalDay = (value: unknown) => (typeof value === "string" && value.trim() ? value.trim().slice(0, 10) : optionalBlank(value));
+export const promotionPatchSchema = z.preprocess((raw) => {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return raw;
+  const source = raw as Record<string, unknown>;
+  const pick = (key: string, transform: (value: unknown) => unknown = optionalBlank) => {
+    if (!(key in source)) return;
+    const next = transform(source[key]);
+    return next === undefined ? undefined : next;
+  };
+  const scopeRaw = source.scope && typeof source.scope === "object" && !Array.isArray(source.scope)
+    ? source.scope as Record<string, unknown>
+    : {};
+  const scope: Record<string, unknown> = {};
+  for (const key of ["itemIds", "category", "whole", "deliveryOnly", "minDistanceKm", "maxDistanceKm", "minWeightKg", "maxWeightKg"]) {
+    const next = optionalBlank(scopeRaw[key]);
+    if (next !== undefined) scope[key] = next;
+  }
+  return {
+    type: source.type,
+    value: source.value === "" || source.value === null ? source.value : (typeof source.value === "string" ? Number(source.value) : source.value),
+    scope,
+    minOrder: pick("minOrder", (value) => (typeof value === "string" && value !== "" ? Number(value) : optionalBlank(value))),
+    days: pick("days"),
+    start: pick("start", optionalDay),
+    end: pick("end", optionalDay),
+    code: pick("code"),
+    maxUses: pick("maxUses", (value) => (typeof value === "string" && value !== "" ? Number(value) : optionalBlank(value))),
+    banner: pick("banner"),
+    titleEn: source.titleEn,
+    titleFi: source.titleFi,
+    descEn: pick("descEn"),
+    descFi: pick("descFi"),
+    badgeEn: pick("badgeEn"),
+    badgeFi: pick("badgeFi"),
+    active: source.active,
+    priority: typeof source.priority === "string" && source.priority !== "" ? Number(source.priority) : source.priority,
+  };
+}, offerSchema.omit({ id: true, uses: true }));
 export const specialPatchSchema = z.object({ special: specialCfgSchema.optional(), todaysSpecials: z.array(specialItemSchema).max(200).optional() }).strict();
 
 export const paramId = z.string().regex(/^[A-Za-z0-9_-]{1,100}$/);
