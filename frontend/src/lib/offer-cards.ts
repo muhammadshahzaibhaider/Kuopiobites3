@@ -17,6 +17,8 @@ export interface OfferCard {
   title: string;
   desc?: string;
   scopeLabel: string;
+  /** Named categories this offer covers (empty = whole menu or selected items). */
+  scopeCats: string[];
   days: number[] | null;
   minOrder?: number;
   code?: string;
@@ -41,8 +43,9 @@ export function offerCards(
       : item
         ? `/menu?item=${item.id}`
         : "/menu";
-    const scopeLabel = cats.length
-      ? cats.map((id) => categoryLabel(id) ?? id).join(", ")
+    const catNames = cats.map((id) => categoryLabel(id) ?? id);
+    const scopeLabel = catNames.length
+      ? catNames.join(", ")
       : item
         ? item.name
         : t("offers.all");
@@ -66,6 +69,7 @@ export function offerCards(
       title: lang === "fi" ? o.titleFi : o.titleEn,
       ...(desc ? { desc } : {}),
       scopeLabel,
+      scopeCats: catNames,
       days: o.days?.length && o.days.length < 7 ? [...o.days].sort((a, b) => a - b) : null,
       ...(o.minOrder !== undefined ? { minOrder: o.minOrder } : {}),
       ...(o.code ? { code: o.code } : {}),
