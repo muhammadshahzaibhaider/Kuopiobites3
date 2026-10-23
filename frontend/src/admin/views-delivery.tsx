@@ -184,7 +184,7 @@ export function OffersView() {
                 <Field label="Min cart weight (kg)">{numInput(selected.scope.minWeightKg, (value) => setScope({ minWeightKg: value }))}</Field>
                 <Field label="Max cart weight (kg)">{numInput(selected.scope.maxWeightKg, (value) => setScope({ maxWeightKg: value }))}</Field>
               </div>
-              <p className="text-[11px] text-cherry/50">Distance-limited offers only apply when the server can resolve driving distance. Weight limits use each menu item’s configured weight.</p>
+              <p className="text-[11px] text-cherry/50">Distance-limited offers apply when the server can resolve driving distance from the delivery address. Weight limits use each menu item’s configured weight.</p>
             </section>
             <section className="space-y-2 rounded-xl border border-gold/40 bg-gold/10 p-3">
               <h3 className="text-xs font-black uppercase tracking-wide text-cherry/60">Customer prices in this scope</h3>
@@ -317,7 +317,7 @@ export function DeliveryRulesView() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-start justify-between gap-3 rounded-2xl border border-gold/50 bg-gold/10 p-4">
-        <div><h2 className="font-display text-lg font-black text-cherry">Distance and weight delivery pricing</h2><p className="mt-1 max-w-2xl text-xs text-cherry/60">The first active matching rule is used; otherwise the flat delivery fee applies. Distance ranges require the optional backend-only Google Distance Matrix key. Weight ranges work without it.</p><p className="mt-2 text-xs font-black text-cherry">Current fallback: {eur(settings.deliveryFee)} · delivery radius {settings.radiusKm} km</p></div>
+        <div><h2 className="font-display text-lg font-black text-cherry">Distance and weight delivery pricing</h2><p className="mt-1 max-w-2xl text-xs text-cherry/60">The first active matching rule is used; otherwise the flat delivery fee applies. Distance is driving kilometres from Jalkasenkatu 7 (Google when a key is set, otherwise OpenStreetMap). Weight ranges use each item’s configured weight.</p><p className="mt-2 text-xs font-black text-cherry">Current fallback: {eur(settings.deliveryFee)} · delivery radius {settings.radiusKm} km</p></div>
         <div className="flex flex-wrap items-center gap-2">
           {dirty && <span className="inline-flex min-h-[32px] items-center rounded-full bg-gold/25 px-3 text-[11px] font-black uppercase tracking-wide text-gold-deep">Unsaved changes</span>}
           {dirty && <button type="button" onClick={reload} className="min-h-[40px] rounded-lg border border-cherry/20 px-3 text-xs font-black text-cherry">Reload draft</button>}
