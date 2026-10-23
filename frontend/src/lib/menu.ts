@@ -10,6 +10,12 @@ export const RESTAURANT = {
   name: "Kuopio Bites",
   tagline: "& Asian cuisine",
   address: "Jalkasenkatu 7, 70820 Kuopio",
+  street: "Jalkasenkatu 7",
+  postcode: "70820",
+  city: "Kuopio",
+  country: "Suomi",
+  /** Finnish business ID. Fill when the company number is confirmed — never invent one. */
+  yTunnus: "",
   phone: "044 981 6223",
   phoneHref: "tel:+358449816223",
   email: "hello@kuopiobites.fi",

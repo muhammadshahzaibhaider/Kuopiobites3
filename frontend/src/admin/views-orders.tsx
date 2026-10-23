@@ -241,7 +241,7 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
       onRow={(o) => setDetail(o)}
       rowMenu={(o) => [
         { label: "View detail", icon: "eye", onClick: () => setDetail(o) },
-        { label: "Print ticket", icon: "print", onClick: () => printTicket(o) },
+        { label: "Print ticket", icon: "print", onClick: () => printTicket(o, settings.vatRate) },
         ...(!o.refunded ? [{ label: "Refund…", icon: "trash", danger: true, onClick: () => setDetail(o) }] : []),
       ]}
       empty={<EmptyState icon="orders" title="No orders here" sub={mode === "queue" ? "New orders appear instantly with a sound + badge." : "Orders will show up as customers check out."} />}
@@ -339,7 +339,7 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
                   {["placed", "accepted", "preparing", "ready", "completed"].map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               )}
-              <GhostBtn onClick={() => printTicket(detail)}><Ic n="print" size={13} /> Print ticket</GhostBtn>
+              <GhostBtn onClick={() => printTicket(detail, settings.vatRate)}><Ic n="print" size={13} /> Print ticket</GhostBtn>
               {!detail.refunded && (
                 <button
                   onClick={async () => { if (await refundOrder(detail.id)) { logAudit(`refund ${detail.id}: ${refundReason || "no reason"}`); toast(`${detail.id} refunded`, "err"); setDetail(null); } }}
@@ -361,93 +361,114 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
   );
 }
 
-const TICKET_W = 36;
+const TICKET_W = 42;
 const RULE = "-".repeat(TICKET_W);
+const DOTS = ".".repeat(TICKET_W);
 
 function ticketPad(left: string, right: string, width = TICKET_W): string {
   const gap = Math.max(1, width - left.length - right.length);
   return left + " ".repeat(gap) + right;
 }
 
-function helsinkiStamp(ts: number): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Helsinki",
-    day: "numeric",
-    month: "long",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(new Date(ts));
+function center(text: string, width = TICKET_W): string {
+  const pad = Math.max(0, Math.floor((width - text.length) / 2));
+  return " ".repeat(pad) + text;
 }
 
-function ticketLines(o: Order): string {
-  const delivery = o.type === "delivery";
-  const paid = o.refunded
-    ? "Refunded"
-    : o.paymentStatus === "demo_paid"
-      ? "Demo paid"
-      : o.paymentStatus === "paid"
-        ? "Paid"
-        : o.paymentStatus ?? "Unpaid";
-  const addressLines = (o.address ?? "").split(/,\s*/).map((part) => part.trim()).filter(Boolean);
+/** Finnish fiscal receipts use a decimal comma. */
+function fiNum(n: number): string {
+  return n.toFixed(2).replace(".", ",");
+}
+
+function helsinkiClock(ts: number): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Helsinki",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(new Date(ts));
+  const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+  return `${g("year")}-${g("month")}-${g("day")} ${g("hour")}:${g("minute")}:${g("second")}`;
+}
+
+function ticketLines(o: Order, vatRate: number): string {
+  const vatPctLabel = `${(Math.round(vatRate * 1000) / 10).toFixed(1)}%`;
+  const net = Math.round((o.total - o.vat) * 100) / 100;
+  const discountPct = o.subtotal > 0 && o.discount?.amount
+    ? ((o.discount.amount / o.subtotal) * 100).toFixed(1)
+    : "";
+  const invoiceNo = String(1_000_000 + (Math.abs(o.createdAt) % 900_000)).padStart(7, "0");
   const itemRows = o.lines.flatMap((l) => {
-    const rows = [ticketPad(`${l.qty} x ${l.name}`, eur(l.unitPrice * l.qty))];
+    const rows = [ticketPad(`${l.qty}x ${l.name}`, `${fiNum(l.unitPrice * l.qty)} B`)];
     if (l.variantLabel) rows.push(`  ${l.variantLabel}`);
     for (const opt of l.options) rows.push(`  ${opt}`);
     if (l.pizza?.extras?.length) {
       for (const extra of l.pizza.extras) rows.push(`  ${extra.count}x ${extra.label}`);
     }
-    if (l.note) rows.push(`  Note: ${l.note}`);
+    if (l.note) rows.push(`  ${l.note}`);
     return rows;
   });
-  const due = o.scheduled
-    ? `${o.scheduled.date} ${o.scheduled.time}`
-    : o.estimatedReadyAt
-      ? helsinkiStamp(o.estimatedReadyAt)
-      : undefined;
+  if (o.type === "delivery" && o.deliveryFee > 0) {
+    itemRows.push(ticketPad("1x Toimitus", `${fiNum(o.deliveryFee)} B`));
+  }
+  const payLabel = o.refunded ? "Hyvitys" : "Kortti";
+  const viite = o.paymentId || o.checkoutSessionId || o.id;
 
   return [
-    ticketPad(RESTAURANT.name.toUpperCase(), delivery ? "DELIVERY" : "PICKUP"),
+    "",
+    center(RESTAURANT.name),
+    "",
+    center(RESTAURANT.street),
+    center(`${RESTAURANT.postcode} ${RESTAURANT.city}`),
+    center(RESTAURANT.country),
+    ...(RESTAURANT.yTunnus ? [center(`Y-tunnus: ${RESTAURANT.yTunnus}`)] : []),
+    "",
+    center("Kuitti"),
+    "",
+    `Tilaus-ID: ${o.id}`,
+    `Laskun nro.: ${invoiceNo}`,
+    helsinkiClock(o.createdAt),
+    ...(o.type === "delivery"
+      ? ["Toimitus:", o.customer.name, o.customer.phone, o.address || ""]
+      : []),
+    ...(o.note ? [`Ohje: ${o.note}`] : []),
     RULE,
-    o.id,
-    RULE,
-    "CUSTOMER",
-    o.customer.name,
-    o.customer.phone ? `Phone: ${o.customer.phone}` : "",
-    o.customer.email ? `Email: ${o.customer.email}` : "",
-    RULE,
-    delivery ? "DELIVER TO" : "PICKUP AT",
-    ...(delivery
-      ? (addressLines.length ? addressLines : ["(no address on order)"])
-      : [RESTAURANT.address, RESTAURANT.phone]),
-    ...(o.note ? [RULE, "INSTRUCTIONS", o.note] : []),
-    RULE,
+    ticketPad("Tuote", "EUR"),
     ...itemRows,
-    RULE,
-    ticketPad("Subtotal", eur(o.subtotal)),
-    ...(delivery ? [ticketPad("Delivery fee", eur(o.deliveryFee))] : []),
-    ...(o.discount?.amount ? [ticketPad(o.discount.title || "Discount", `-${eur(o.discount.amount)}`)] : []),
-    ticketPad("VAT", eur(o.vat)),
-    ticketPad("Amount paid", eur(o.total)),
-    paid,
-    RULE,
-    `Placed at ${helsinkiStamp(o.createdAt)}`,
-    due ? `${delivery ? "Deliver by" : "Ready by"} ${due}` : "",
-    RULE,
-    RESTAURANT.address,
-    RESTAURANT.phone,
-    `Thank you for ordering from ${RESTAURANT.name}`,
-  ].filter((row) => row !== "").join("\n");
+    DOTS,
+    ticketPad("Välisumma", fiNum(o.subtotal + (o.deliveryFee || 0))),
+    ...(o.discount?.amount
+      ? [ticketPad(`Alennus (${discountPct}%)`, `-${fiNum(o.discount.amount)}`)]
+      : []),
+    DOTS,
+    ticketPad("Yhteensä", fiNum(o.total)),
+    ticketPad(payLabel, fiNum(o.total)),
+    "",
+    "ALV-yhteenveto",
+    `B=${vatPctLabel} of ${fiNum(o.total)}: ${fiNum(o.vat)} (${fiNum(net)})`,
+    "",
+    `Kortti: ${o.paymentStatus === "demo_paid" ? "Demo" : "Verkkomaksu"}`,
+    `Summa: ${fiNum(o.total)}`,
+    `Viite:`,
+    viite,
+    "",
+    center("Kiitos vierailustasi!"),
+    "",
+  ].filter((row) => row !== undefined).join("\n");
 }
 
-function printTicket(o: Order) {
+function printTicket(o: Order, vatRate: number) {
   const w = window.open("", "_blank", "width=360,height=720");
   if (!w) return;
   /* Never interpolate customer/menu text into document.write: textContent
      prevents a stored note/name from becoming script in the print window. */
   const pre = w.document.createElement("pre");
-  pre.style.cssText = "font:12px/1.35 monospace;white-space:pre-wrap;margin:8px";
-  pre.textContent = ticketLines(o);
+  pre.style.cssText = "font:13px/1.35 ui-monospace,monospace;white-space:pre-wrap;margin:12px auto;max-width:42ch;text-align:left";
+  pre.textContent = ticketLines(o, vatRate);
   w.document.body.replaceChildren(pre);
   w.print();
 }
