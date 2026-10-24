@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Animated god-rays — standalone demo</title>
+    <style>
+      /* ============================================================
+         DEMO CHROME — not part of the effect. Delete this block.
+         ============================================================ */
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        background: #050505;
+        color: #f4f4f5;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      .demo-hero {
+        position: relative;
+        isolation: isolate; /* keeps the effect's blend group inside the hero */
+        display: flex;
+        min-height: 100vh;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .demo-hero__bg {
+        position: absolute;
+        inset: 0;
+        z-index: -1;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: top center;
+        opacity: 0.7;
+      }
+      /* Optional darkening, the same idea as your current overlay. */
+      .demo-hero__vignette {
+        position: absolute;
+        inset: 0;
+        z-index: 1;
+        pointer-events: none;
+        background:
+          radial-gradient(ellipse at 50% -10%, rgba(5, 5, 5, 0.1) 0%, rgba(5, 5, 5, 0.45) 45%, #050505 82%),
+          linear-gradient(to top, #050505 0%, transparent 40%);
+      }
+      .demo-nav {
+        position: relative;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 1.25rem 2rem;
+        font-size: 13px;
+        letter-spacing: 0.24em;
+        text-transform: uppercase;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .demo-nav a {
+        color: #9ca3af;
+        text-decoration: none;
+        letter-spacing: 0.02em;
+        text-transform: none;
+      }
+      .demo-content {
+        position: relative;
+        z-index: 2;
+        display: grid;
+        flex: 1;
+        place-content: center;
+        gap: 1.25rem;
+        padding: 4rem 1.5rem;
+        text-align: center;
+      }
+      .demo-content h1 {
+        margin: 0;
+        font-size: clamp(2.5rem, 7vw, 5.5rem);
+        line-height: 0.98;
+        letter-spacing: -0.04em;
+        font-weight: 500;
+      }
+      .demo-content p {
+        margin: 0 auto;
+        max-width: 34rem;
+        color: #9ca3af;
+        line-height: 1.6;
+      }
+      .demo-content button {
+        justify-self: center;
+        margin-top: 0.75rem;
+        padding: 0.9rem 1.6rem;
+        border: 0;
+        border-radius: 999px;
+        background: #fff;
+        color: #050505;
+        font: inherit;
+        font-weight: 500;
+        cursor: pointer;
+      }
+
+      /* ============================================================
+         ↓↓↓ COPY FROM HERE ↓↓↓  ANIMATED GOD-RAYS
+         Everything below is self-contained. No JavaScript required.
+         ============================================================ */
+
+      /* ---- 1. Effect settings (tweak everything here) ---- */
+      .god-rays {
+        --god-ray-color: 255 240 200; /* warm white / golden (R G B) */
+        --god-ray-blend: screen; /* screen | soft-light            */
+        --god-ray-blur: 10px; /* fallback blur                 */
+        --god-ray-height: 94%; /* how far down the rays reach    */
+        --god-ray-pulse-min: 0.45; /* opacity floor of the pulse     */
+        --god-ray-scale-min: 0.95; /* width breathing: min           */
+        --god-ray-scale-max: 1.1; /* width breathing: max           */
+        --god-ray-glow-color: 255 236 190; /* top bloom colour     */
+        --god-ray-glow-opacity: 0.22;
+        --god-ray-dust-color: 255 246 225;
+        --god-ray-dust-opacity: 0.5;
+
+        /* ---- 2. Layer: above the photo, below the content ---- */
+        position: absolute;
+        inset: 0;
+        z-index: 0;
+        overflow: hidden;
+        pointer-events: none;
+        /* no contain/isolation here: beams must blend with the photo below */
+      }
+
+      /* ---- 3. Soft bloom where the light enters ---- */
+      .god-rays__glow {
+        position: absolute;
+        inset-inline: 0;
+        top: 0;
+        height: 55%;
+        pointer-events: none;
+        mix-blend-mode: var(--god-ray-blend);
+        background: radial-gradient(
+          62% 100% at 50% 0%,
+          rgb(var(--god-ray-glow-color) / var(--god-ray-glow-opacity)) 0%,
+          rgb(var(--god-ray-glow-color) / calc(var(--god-ray-glow-opacity) * 0.45)) 38%,
+          transparent 72%
+        );
+      }
+
+      /* ---- 4. One straight, un-rotated beam ---- */
+      .god-ray {
+        position: absolute;
+        top: 0;
+        left: var(--x);
+        width: var(--w);
+        height: var(--god-ray-height);
+        margin-left: calc(var(--w) / -2); /* centre on --x without using transform */
+        transform-origin: center top;
+        pointer-events: none;
+        will-change: transform, opacity;
+
+        opacity: var(--o);
+        filter: blur(var(--blur, var(--god-ray-blur)));
+        mix-blend-mode: var(--god-ray-blend);
+
+        /* feathered edges + brighter centre */
+        background-image: linear-gradient(
+          90deg,
+          rgb(var(--god-ray-color) / 0) 0%,
+          rgb(var(--god-ray-color) / 0.35) 16%,
+          rgb(var(--god-ray-color) / 1) 50%,
+          rgb(var(--god-ray-color) / 0.35) 84%,
+          rgb(var(--god-ray-color) / 0) 100%
+        );
+
+        /* brighter at the top, fading toward the ground */
+        -webkit-mask-image: linear-gradient(
+          to bottom,
+          #000 0%,
+          rgb(0 0 0 / 0.85) 38%,
+          rgb(0 0 0 / 0.35) 72%,
+          transparent 100%
+        );
+        mask-image: linear-gradient(
+          to bottom,
+          #000 0%,
+          rgb(0 0 0 / 0.85) 38%,
+          rgb(0 0 0 / 0.35) 72%,
+          transparent 100%
+        );
+
+        animation: god-ray-drift var(--dur) ease-in-out var(--delay) infinite alternate;
+      }
+
+      /* ---- 5. Dust motes floating in the light ---- */
+      .god-rays__dust {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+      .god-dust {
+        position: absolute;
+        left: var(--x);
+        bottom: 6%;
+        width: var(--size);
+        height: var(--size);
+        border-radius: 9999px;
+        background: rgb(var(--god-ray-dust-color) / var(--god-ray-dust-opacity));
+        box-shadow: 0 0 6px rgb(var(--god-ray-dust-color) / 0.45);
+        opacity: 0;
+        will-change: transform, opacity;
+        animation: god-dust-float var(--dur) linear var(--delay) infinite;
+      }
+
+      /* ---- 6. Keyframes: translateX + scaleX only, so beams stay upright ---- */
+      @keyframes god-ray-drift {
+        from {
+          transform: translate3d(calc(var(--drift) * -1), 0, 0) scaleX(var(--god-ray-scale-min));
+          opacity: calc(var(--o) * var(--god-ray-pulse-min));
+        }
+        to {
+          transform: translate3d(var(--drift), 0, 0) scaleX(var(--god-ray-scale-max));
+          opacity: var(--o);
+        }
+      }
+
+      @keyframes god-dust-float {
+        0% {
+          transform: translate3d(0, 0, 0);
+          opacity: 0;
+        }
+        12% {
+          opacity: var(--god-ray-dust-opacity);
+        }
+        85% {
+          opacity: calc(var(--god-ray-dust-opacity) * 0.5);
+        }
+        100% {
+          transform: translate3d(var(--dust-x, 8px), -42vh, 0);
+          opacity: 0;
+        }
+      }
+
+      /* ---- 7. Responsive: fewer beams + less blur on small screens ---- */
+      @media (max-width: 1023px) {
+        .god-rays {
+          --god-ray-blur: 8px;
+        }
+      }
+      @media (max-width: 767px) {
+        .god-ray--optional {
+          display: none;
+        }
+        .god-rays {
+          --god-ray-blur: 7px;
+          --god-ray-height: 88%;
+          --god-ray-glow-opacity: 0.18;
+        }
+        .god-rays__dust {
+          display: none;
+        }
+      }
+
+      /* ---- 8. Accessibility: still light, no motion ---- */
+      @media (prefers-reduced-motion: reduce) {
+        .god-ray,
+        .god-dust {
+          animation: none !important;
+        }
+        .god-ray {
+          opacity: calc(var(--o) * 0.8);
+          transform: none;
+        }
+        .god-rays__dust {
+          display: none;
+        }
+      }
+      /* ============================================================
+         ↑↑↑ COPY TO HERE ↑↑↑
+         ============================================================ */
+    </style>
+  </head>
+  <body>
+    <section class="demo-hero">
+      <!-- Your existing background image stays untouched. -->
+      <img class="demo-hero__bg" src="/images/light-rays.webp" alt="" />
+      <div class="demo-hero__vignette" aria-hidden="true"></div>
+
+      <!-- ============================================================
+           The effect markup. Place this immediately after the <img>
+           (and before your darkening overlay / content).
+           Each beam only needs --x, --w, --o, --dur, --delay, --drift, --blur.
+           ============================================================ -->
+      <div class="god-rays" aria-hidden="true">
+        <div class="god-rays__glow"></div>
+
+        <div class="god-ray god-ray--optional" style="--x:15%;--w:118px;--o:.10;--dur:17s;--delay:-1s;--drift:22px;--blur:13px"></div>
+        <div class="god-ray" style="--x:24%;--w:62px;--o:.16;--dur:12s;--delay:-3s;--drift:14px;--blur:9px"></div>
+        <div class="god-ray" style="--x:30%;--w:34px;--o:.22;--dur:9s;--delay:-6s;--drift:18px;--blur:7px"></div>
+        <div class="god-ray god-ray--optional" style="--x:35%;--w:96px;--o:.12;--dur:19s;--delay:-2s;--drift:26px;--blur:13px"></div>
+        <div class="god-ray" style="--x:41%;--w:48px;--o:.25;--dur:11s;--delay:-8s;--drift:12px;--blur:8px"></div>
+        <div class="god-ray god-ray--optional" style="--x:47%;--w:140px;--o:.09;--dur:20s;--delay:-5s;--drift:30px;--blur:14px"></div>
+        <div class="god-ray" style="--x:50%;--w:26px;--o:.24;--dur:8s;--delay:-1.5s;--drift:10px;--blur:6px"></div>
+        <div class="god-ray" style="--x:55%;--w:70px;--o:.14;--dur:15s;--delay:-7s;--drift:20px;--blur:10px"></div>
+        <div class="god-ray" style="--x:61%;--w:40px;--o:.20;--dur:10s;--delay:-4s;--drift:16px;--blur:7px"></div>
+        <div class="god-ray god-ray--optional" style="--x:68%;--w:104px;--o:.11;--dur:18s;--delay:-9s;--drift:24px;--blur:12px"></div>
+        <div class="god-ray" style="--x:76%;--w:54px;--o:.17;--dur:13s;--delay:-2.5s;--drift:15px;--blur:9px"></div>
+        <div class="god-ray god-ray--optional" style="--x:84%;--w:30px;--o:.08;--dur:16s;--delay:-6.5s;--drift:21px;--blur:11px"></div>
+
+        <div class="god-rays__dust">
+          <span class="god-dust" style="--x:29%;--size:3px;--dur:15s;--delay:-2s;--dust-x:10px"></span>
+          <span class="god-dust" style="--x:31%;--size:2px;--dur:19s;--delay:-7s;--dust-x:-8px"></span>
+          <span class="god-dust" style="--x:40%;--size:4px;--dur:17s;--delay:-4s;--dust-x:12px"></span>
+          <span class="god-dust" style="--x:42%;--size:2px;--dur:21s;--delay:-11s;--dust-x:-10px"></span>
+          <span class="god-dust" style="--x:49%;--size:3px;--dur:14s;--delay:-6s;--dust-x:8px"></span>
+          <span class="god-dust" style="--x:51%;--size:2px;--dur:23s;--delay:-13s;--dust-x:-12px"></span>
+          <span class="god-dust" style="--x:55%;--size:3px;--dur:18s;--delay:-1s;--dust-x:14px"></span>
+          <span class="god-dust" style="--x:60%;--size:2px;--dur:20s;--delay:-9s;--dust-x:-6px"></span>
+          <span class="god-dust" style="--x:62%;--size:3px;--dur:16s;--delay:-5s;--dust-x:9px"></span>
+          <span class="god-dust" style="--x:75%;--size:2px;--dur:22s;--delay:-15s;--dust-x:-11px"></span>
+        </div>
+      </div>
+
+      <!-- Page content: always above the effect. -->
+      <nav class="demo-nav">
+        <span>YOUR BRAND</span>
+        <a href="#">Work · Company · Services · Contact</a>
+      </nav>
+      <div class="demo-content">
+        <h1>Building Digital<br />Solutions That Matter</h1>
+        <p>
+          Animated god-rays layered over the untouched background photo — straight, vertical beams
+          drifting slowly with dust motes in the light.
+        </p>
+        <button>Start Your Project</button>
+      </div>
+    </section>
+  </body>
+</html>

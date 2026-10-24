@@ -210,3 +210,193 @@
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
   }
 }
+
+/* ─────────────────────────────────────────────────────────────
+   Animated god-rays
+   A pure-CSS overlay that makes the sun rays already painted into the
+   hero photograph feel alive. Layered above the image, below the page
+   content. Tweak the variables below — nothing else needs to change.
+
+   Per-beam values (set inline by <GodRays />):
+     --x      horizontal centre (%)      --w     width (px)
+     --o      base opacity               --dur   animation duration
+     --delay  animation delay (s)        --drift horizontal drift (±px)
+     --blur   blur radius (px)
+   ───────────────────────────────────────────────────────────── */
+@layer components {
+  .god-rays {
+    /* ── Effect settings ───────────────────────────────────── */
+    --god-ray-color: 255 240 200;        /* warm white / golden RGB */
+    --god-ray-blend: screen;             /* screen | soft-light   */
+    --god-ray-blur: 10px;                /* fallback blur         */
+    --god-ray-height: 94%;               /* how far down rays reach */
+    --god-ray-top: 0;                    /* where rays start      */
+    --god-ray-pulse-min: 0.45;           /* opacity floor of the pulse */
+    --god-ray-scale-min: 0.95;           /* width breathing: min  */
+    --god-ray-scale-max: 1.1;            /* width breathing: max  */
+    --god-ray-glow-color: 255 236 190;   /* top bloom colour      */
+    --god-ray-glow-opacity: 0.22;
+    --god-ray-dust-color: 255 246 225;
+    --god-ray-dust-opacity: 0.5;
+    /* ──────────────────────────────────────────────────────── */
+
+    position: absolute;
+    inset: 0;
+    z-index: 0;               /* above the image, below the vignette + content */
+    overflow: hidden;
+    pointer-events: none;
+    /* NOTE: deliberately no `contain`/`isolation` here — the beams must blend
+       with the background image painted below them, not with an empty group. */
+  }
+
+  /* Soft bloom where the sunlight enters the frame. */
+  .god-rays__glow {
+    position: absolute;
+    inset-inline: 0;
+    top: 0;
+    height: 55%;
+    pointer-events: none;
+    mix-blend-mode: var(--god-ray-blend);
+    background: radial-gradient(
+      62% 100% at 50% 0%,
+      rgb(var(--god-ray-glow-color) / var(--god-ray-glow-opacity)) 0%,
+      rgb(var(--god-ray-glow-color) / calc(var(--god-ray-glow-opacity) * 0.45)) 38%,
+      transparent 72%
+    );
+  }
+
+  /* One straight, un-rotated beam. */
+  .god-ray {
+    position: absolute;
+    top: var(--god-ray-top);
+    left: var(--x);
+    width: var(--w);
+    height: var(--god-ray-height);
+    /* Centre the beam on --x without touching `transform`
+       (that is reserved for the animation). */
+    margin-left: calc(var(--w) / -2);
+    transform-origin: center top;
+    will-change: transform, opacity;
+    pointer-events: none;
+
+    opacity: var(--o);
+    filter: blur(var(--blur, var(--god-ray-blur)));
+    mix-blend-mode: var(--god-ray-blend);
+
+    /* Feathered edges, brighter centre. Alpha is scaled by `opacity`. */
+    background-image: linear-gradient(
+      90deg,
+      rgb(var(--god-ray-color) / 0) 0%,
+      rgb(var(--god-ray-color) / 0.35) 16%,
+      rgb(var(--god-ray-color) / 1) 50%,
+      rgb(var(--god-ray-color) / 0.35) 84%,
+      rgb(var(--god-ray-color) / 0) 100%
+    );
+
+    /* Brighter at the top, fading out toward the ground. */
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      #000 0%,
+      rgb(0 0 0 / 0.85) 38%,
+      rgb(0 0 0 / 0.35) 72%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      #000 0%,
+      rgb(0 0 0 / 0.85) 38%,
+      rgb(0 0 0 / 0.35) 72%,
+      transparent 100%
+    );
+
+    animation: god-ray-drift var(--dur) ease-in-out var(--delay) infinite alternate;
+  }
+
+  /* Dust motes floating in the light. */
+  .god-rays__dust {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  .god-dust {
+    position: absolute;
+    left: var(--x);
+    bottom: 6%;
+    width: var(--size);
+    height: var(--size);
+    border-radius: 9999px;
+    background: rgb(var(--god-ray-dust-color) / var(--god-ray-dust-opacity));
+    box-shadow: 0 0 6px rgb(var(--god-ray-dust-color) / 0.45);
+    opacity: 0;
+    will-change: transform, opacity;
+    animation: god-dust-float var(--dur) linear var(--delay) infinite;
+  }
+}
+
+/* Vertical drift only: translateX + scaleX keep the beam perfectly upright. */
+@keyframes god-ray-drift {
+  from {
+    transform: translate3d(calc(var(--drift) * -1), 0, 0) scaleX(var(--god-ray-scale-min));
+    opacity: calc(var(--o) * var(--god-ray-pulse-min));
+  }
+  to {
+    transform: translate3d(var(--drift), 0, 0) scaleX(var(--god-ray-scale-max));
+    opacity: var(--o);
+  }
+}
+
+@keyframes god-dust-float {
+  0% {
+    transform: translate3d(0, 0, 0);
+    opacity: 0;
+  }
+  12% {
+    opacity: var(--god-ray-dust-opacity);
+  }
+  85% {
+    opacity: calc(var(--god-ray-dust-opacity) * 0.5);
+  }
+  100% {
+    transform: translate3d(var(--dust-x, 8px), -42vh, 0);
+    opacity: 0;
+  }
+}
+
+/* Tablets: trim the widest, dimmest beams and calm the blur. */
+@media (max-width: 1023px) {
+  .god-rays {
+    --god-ray-blur: 8px;
+  }
+}
+
+/* Phones: keep only the six strongest beams for cheap compositing. */
+@media (max-width: 767px) {
+  .god-ray--optional {
+    display: none;
+  }
+  .god-rays {
+    --god-ray-blur: 7px;
+    --god-ray-height: 88%;
+    --god-ray-glow-opacity: 0.18;
+  }
+  .god-rays__dust {
+    display: none;
+  }
+}
+
+/* Accessibility: no drifting, no pulsing — just a still, softer light. */
+@media (prefers-reduced-motion: reduce) {
+  .god-ray,
+  .god-dust {
+    animation: none !important;
+  }
+  .god-ray {
+    opacity: calc(var(--o) * 0.8);
+    transform: none;
+  }
+  .god-rays__dust {
+    display: none;
+  }
+}

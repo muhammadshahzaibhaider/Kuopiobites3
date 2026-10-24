@@ -6,6 +6,7 @@ import Image from "next/image";
 import { SITE } from "@/lib/content";
 import { PillButton } from "./PillButton";
 import StatsOdometer from "./StatsOdometer";
+import GodRays from "./GodRays";
 
 /* Two-line composition, mirroring the reference layout. */
 const HEADLINE = [
@@ -40,6 +41,10 @@ export default function Hero() {
           quality={85}
           className="object-cover object-top opacity-70"
         />
+
+        {/* Animated sunlight: sits above the photo, under the vignette and content. */}
+        <GodRays />
+
         <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_50%_-10%,rgba(5,5,5,0.1)_0%,rgba(5,5,5,0.45)_45%,#050505_82%)]" />
         <div className="absolute inset-x-0 bottom-0 h-2/5 bg-gradient-to-b from-transparent via-ink/70 to-ink" />
       </div>
