@@ -1,10 +1,6 @@
 import Link from "next/link";
-import {
-  DEMO_LINKS,
-  FOOTER_RESOURCE_LINKS,
-  FOOTER_SERVICE_LINKS,
-  SITE,
-} from "@/lib/content";
+import { DEMO_LINKS, FOOTER_RESOURCE_LINKS, SITE } from "@/lib/content";
+import { SERVICE_LINKS } from "@/lib/data/services";
 import { Logo } from "./Logo";
 import LocalClock from "./LocalClock";
 import { ArrowUpRight, LinkedIn } from "./icons";
@@ -15,15 +11,13 @@ const linkClass =
 function FooterColumn({
   title,
   links,
-  className,
 }: {
   title: string;
   links: { label: string; href: string }[];
-  className?: string;
 }) {
   return (
-    <nav aria-label={title} className={className}>
-      <h3 className="text-micro uppercase text-muted-dim">{title}</h3>
+    <nav aria-label={title}>
+      <h2 className="text-micro uppercase text-muted-dim">{title}</h2>
       <ul className="mt-5 flex flex-col gap-3">
         {links.map((link) => (
           <li key={link.label}>
@@ -39,11 +33,10 @@ function FooterColumn({
 
 export default function Footer() {
   return (
-    <footer id="company" className="relative border-t border-hairline bg-ink/85 backdrop-blur-sm">
+    <footer className="relative border-t border-hairline bg-ink/85 backdrop-blur-sm">
       <div className="content-shell grid gap-12 pt-16 pb-14 sm:grid-cols-2 lg:grid-cols-[1.6fr_1fr_1fr_1fr] lg:gap-10">
-        {/* Contact */}
         <div className="flex flex-col gap-7 sm:col-span-2 lg:col-span-1">
-          <Link href="#top" className="w-fit text-fg" aria-label={`${SITE.brand} — back to top`}>
+          <Link href="/" className="w-fit text-fg" aria-label={`${SITE.brand} — home`}>
             <Logo />
           </Link>
 
@@ -75,12 +68,8 @@ export default function Footer() {
           <LocalClock timeZone={SITE.timeZone} />
         </div>
 
-        <FooterColumn title="Services" links={FOOTER_SERVICE_LINKS} />
-
-        <div id="resources" className="scroll-mt-28">
-          <FooterColumn title="Resources" links={FOOTER_RESOURCE_LINKS} />
-        </div>
-
+        <FooterColumn title="Services" links={SERVICE_LINKS} />
+        <FooterColumn title="Resources" links={FOOTER_RESOURCE_LINKS} />
         <FooterColumn title="Demos" links={DEMO_LINKS} />
       </div>
 
@@ -90,7 +79,7 @@ export default function Footer() {
             © {SITE.copyrightYear} {SITE.brand}. All rights reserved.
           </p>
           <Link
-            href="#top"
+            href="/#top"
             className="group inline-flex w-fit items-center gap-1.5 transition-colors duration-200 hover:text-fg"
           >
             Back to top

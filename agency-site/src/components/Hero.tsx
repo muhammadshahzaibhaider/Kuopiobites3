@@ -69,6 +69,7 @@ export default function Hero() {
           <span aria-hidden>
             {HEADLINE.map((line, lineIndex) => (
               <span key={lineIndex} className="block">
+                {lineIndex > 0 ? " " : null}
                 {line.map((word, wordIndex) => {
                   const position = lineIndex === 0 ? wordIndex : 2 + wordIndex;
                   return (

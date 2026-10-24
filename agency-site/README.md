@@ -1,132 +1,158 @@
-# YOUR BRAND — agency homepage
+# YOUR BRAND — multi-page agency site
 
-A pixel-focused recreation of the Antimatter AI agency homepage layout in
-**Next.js (App Router) + TypeScript + Tailwind CSS v4 + Framer Motion**.
-Dark, near-black, one soft cool-blue glow, oversized tight-tracked headings,
-hairline cards, scroll-triggered reveals and a rolling stat odometer.
+A pixel-focused recreation of the Antimatter AI agency site's **multi-page**
+structure, built with **Next.js (App Router) + TypeScript + Tailwind CSS v4 +
+Framer Motion**. Dark near-black canvas, one cool-blue glow, oversized
+tight-tracked headings, hairline cards, scroll-triggered reveals, and a light-ray
+hero used across pages.
 
-It lives in its own folder (`agency-site/`) so it does not touch the existing
-Kuopio Bites application in this repository. It is a fully self-contained app —
-run it from this directory.
+It lives in `agency-site/`, a self-contained app that does not touch the Kuopio
+Bites application in the rest of this repository.
 
 ```bash
 cd agency-site
-npm install
+npm ci
 npm run dev      # http://localhost:3001
 npm run build && npm run start
 ```
 
 ---
 
+## Page map (30 routes)
+
+| Route | What it is |
+| --- | --- |
+| `/` | Home — light-ray hero, odometer stats, 6 service cards, case-study list with hover preview, logo marquee, CTA |
+| `/work` | All case studies with client-side tag filtering |
+| `/case-study/[slug]` | 6 case studies: hero, summary + tech stack meta, 3 narrative sections, key stats, "how it works", next project |
+| `/services` | Services index — the six disciplines |
+| `/services/[slug]` | 6 service pages: hero, what you get (6), process (4), selected work, built-with, other services, FAQ accordion, CTA |
+| `/company` | Story, dotted globe of studios/hubs, pillars, core beliefs, CTA |
+| `/contact` | Enquiry form (validated, accessible) + contact column with live clock and "what happens next" |
+| `/blog` | Article index with category filter and a featured post |
+| `/blog/[slug]` | 5 articles: breadcrumb, meta, hero image, article body, author aside, related posts |
+| `/open-resources` | Templates, apps, agent skills, tools, pro templates |
+| `/demos` | 7 interactive demos |
+| `/demos/[slug]` | Each demo: simulated interactive panel + how the pattern works |
+| `/not-found` | 404 with popular destinations |
+| `/robots.txt`, `/sitemap.xml`, `/icon.svg` | Generated metadata routes |
+
+Every dynamic route is statically prerendered via `generateStaticParams`, and
+`sitemap.xml` is generated from the data modules — add an item to the data and
+it appears in the sitemap automatically.
+
 ## File structure
 
 ```
 agency-site/
-├── next.config.ts              # image formats/qualities, dev origins, no powered-by
-├── postcss.config.mjs          # @tailwindcss/postcss
-├── tsconfig.json               # strict TS, "@/*" → src/*
-├── package.json
+├── next.config.ts · postcss.config.mjs · tsconfig.json · package.json
 ├── public/
-│   ├── logo.svg                # ← swap for your own logo mark
+│   ├── logo.svg
 │   └── images/
-│       ├── light-rays.webp     # hero light-ray backdrop (1376×768)
-│       ├── light-arc.jpg       # curved light horizon behind the CTA
-│       ├── nav-feature.jpg     # "Our latest work" card in the services mega-menu
-│       ├── case-talitrix.jpg   # 6 case-study thumbnails
-│       ├── case-blue-standard.jpg
-│       ├── case-clinix.jpg
-│       ├── case-owasp.jpg
-│       ├── case-vidzee.jpg
-│       ├── case-feature.jpg
-│       └── og.jpg              # 1200×630 social image
+│       ├── light-rays.webp · light-arc.jpg · nav-feature.jpg · og.jpg
+│       ├── case-*.jpg            # home/work thumbnails (6)
+│       ├── case/*.jpg            # in-article case-study visuals (6)
+│       └── blog/*.jpg            # article headers (5)
 └── src/
     ├── app/
-    │   ├── layout.tsx          # fonts, metadata, skip link, MotionProvider
-    │   ├── page.tsx            # section composition for the single page
-    │   ├── globals.css         # ALL design tokens + base/utilities
-    │   ├── icon.svg            # favicon
-    │   ├── robots.ts
-    │   └── sitemap.ts
+    │   ├── layout.tsx            # fonts, metadata, skip link, nav + footer shell
+    │   ├── page.tsx              # home
+    │   ├── work/page.tsx
+    │   ├── case-study/[slug]/page.tsx
+    │   ├── services/page.tsx · services/[slug]/page.tsx
+    │   ├── company/page.tsx · contact/page.tsx
+    │   ├── blog/page.tsx · blog/[slug]/page.tsx
+    │   ├── open-resources/page.tsx
+    │   ├── demos/page.tsx · demos/[slug]/page.tsx
+    │   ├── not-found.tsx · robots.ts · sitemap.ts · icon.svg
+    │   └── globals.css           # ALL design tokens
     ├── components/
-    │   ├── Navbar.tsx          # sticky blur bar, mega-menu, resources menu,
-    │   │                       # full-screen mobile sheet + accordions
-    │   ├── Hero.tsx            # light-ray hero + animated H1 + stats slot
-    │   ├── StatsOdometer.tsx   # slot-machine digit rollers (100+, 99%, 24/7)
-    │   ├── SectionHeading.tsx  # two-tone "Our" + "Services" word-pair titles
-    │   ├── ServicesSection.tsx # 6 numbered service cards
-    │   ├── ServiceCard.tsx     # one card: number, title, copy, bullets, tool chips
-    │   ├── CaseStudyList.tsx   # hover-swapped sticky preview (desktop)
-    │   │                       # stacked cards (mobile)
-    │   ├── TrustedBy.tsx       # heading + marquee band
-    │   ├── LogoMarquee.tsx     # infinite grayscale logo marquee w/ fade masks
-    │   ├── CtaSection.tsx      # curved light-arc headline + pill CTA
-    │   ├── Footer.tsx          # contact, services, resources, demos, clock
-    │   ├── LocalClock.tsx      # live HH:MM:SS in the studio timezone
-    │   ├── ScrollProgress.tsx  # hairline reading-progress bar
-    │   ├── PillButton.tsx      # white pill CTA with circled arrow
-    │   ├── Reveal.tsx          # shared scroll fade-up wrapper
-    │   ├── MotionProvider.tsx  # MotionConfig reducedMotion="user"
-    │   ├── Logo.tsx            # atom mark + YOUR BRAND wordmark
-    │   ├── TechIcon.tsx        # 24px monochrome tool glyphs for the chips
-    │   └── icons.tsx           # arrows, chevrons, menu, LinkedIn, client marks
+    │   ├── Navbar.tsx            # real routes, active states, mega-menu, mobile sheet
+    │   ├── Footer.tsx            # contact, services, resources, demos, clock
+    │   ├── PageHero.tsx          # shared interior hero (light rays)
+    │   ├── PageCta.tsx           # shared light-arc conversion panel
+    │   ├── Hero.tsx · StatsOdometer.tsx · SectionHeading.tsx
+    │   ├── ServicesSection.tsx · ServiceCard.tsx
+    │   ├── CaseStudyList.tsx     # home hover-preview list
+    │   ├── CaseStudyCard.tsx · TagPill · WorkGrid.tsx
+    │   ├── TrustedBy.tsx · LogoMarquee.tsx · MarqueeBand.tsx
+    │   ├── CtaSection.tsx · PillButton.tsx · Reveal.tsx · MotionProvider.tsx
+    │   ├── BlogList.tsx · PostCard.tsx · Prose.tsx
+    │   ├── ResourceCard.tsx · DemoPanel.tsx · FaqAccordion.tsx
+    │   ├── ContactForm.tsx · LocalClock.tsx · WorldMap.tsx
+    │   ├── Logo.tsx · TechIcon.tsx · icons.tsx · ScrollProgress.tsx
     └── lib/
-        ├── content.ts          # ← every string, link, service, case study, stat
-        └── cn.ts               # class-name joiner
+        ├── content.ts            # brand, nav, footer links, stats, clients
+        ├── data/services.ts      # 6 services + full detail-page content
+        ├── data/caseStudies.ts   # 6 case studies + full detail content
+        ├── data/posts.ts         # 5 articles as typed content blocks
+        ├── data/resources.ts     # open-resources catalogue
+        ├── data/demos.ts         # 7 demo definitions
+        └── cn.ts
 ```
 
-## Where to customise
+## Customising
 
-| What | File |
+| What | Where |
 | --- | --- |
-| Brand name, email, city, timezone, copyright year | `src/lib/content.ts` → `SITE` |
-| Nav items, services, tools, case studies, clients, footer links, stats | `src/lib/content.ts` |
-| Logo mark | `src/components/Logo.tsx` (SVG) and `public/logo.svg` |
-| Colours, type scale, spacing rhythm, radii, shadows, motion | `src/app/globals.css` → `@theme` |
-| Images | drop replacements into `public/images/` keeping the same filenames |
+| Brand, email, city, timezone, socials, copyright | `src/lib/content.ts` → `SITE` |
+| Top nav + dropdowns, footer columns, stats, clients | `src/lib/content.ts` |
+| Services (cards **and** their detail pages) | `src/lib/data/services.ts` |
+| Case studies (cards **and** their pages) | `src/lib/data/caseStudies.ts` |
+| Articles | `src/lib/data/posts.ts` |
+| Open-resources catalogue | `src/lib/data/resources.ts` |
+| Demos | `src/lib/data/demos.ts` |
+| Logo mark | `src/components/Logo.tsx` + `public/logo.svg` |
+| Colours / type scale / spacing / radii / motion | `src/app/globals.css` → `@theme` |
+| Contact form endpoint | `src/components/ContactForm.tsx` (stubbed submit) |
+| Demo "model" call | `src/components/DemoPanel.tsx` (simulated output) |
 
-## Design tokens (all in `globals.css`, no magic numbers in components)
+## Design tokens (no magic numbers in components)
 
-| Token | Value | Used for |
-| --- | --- | --- |
-| `--color-ink` / `-soft` / `-raised` | `#050505` / `#0a0a0a` / `#101010` | page, panels, cards |
-| `--color-fg` / `-muted` / `-muted-dim` | `#f4f4f5` / `#9ca3af` / `#6b7280` | primary / secondary / tertiary text |
-| `--color-hairline` / `-strong` | `rgb(255 255 255 / .1)` / `.22` | 1px borders, dividers |
-| `--color-glow` | `#a9c7ff` | the single cool-blue accent + hover glows |
-| `--text-hero` | `clamp(2.75rem, 7.2vw, 6.5rem)` | H1 |
-| `--text-section` | `clamp(2.25rem, 5vw, 4.5rem)` | section titles |
-| `--text-eyebrow` / `-micro` / `-xxs` / `-ui` | `11px + .28em` track / `10px` / `11px` / `13px` | labels |
-| `--spacing-section` / `-lg` | `6rem` / `8rem` | `py-24`–`py-32` rhythm |
-| `--container-content` | `80rem` | 1280px max content width |
-| `--radius-card` / `-preview` | `1rem` / `1.75rem` | cards / image frames |
-| `--shadow-glow` / `-lift` / `-pill` | cool glow / deep drop / white halo | hover + pill CTA |
-| `--ease-expo` | `cubic-bezier(.16,1,.3,1)` | every 200–300ms transition |
-| `--animate-marquee` | `46s linear infinite` | logo marquee |
+| Token | Value |
+| --- | --- |
+| `--color-ink` / `-soft` / `-raised` | `#050505` / `#0a0a0a` / `#101010` |
+| `--color-fg` / `-muted` / `-muted-dim` | `#f4f4f5` / `#9ca3af` / `#6b7280` |
+| `--color-hairline` / `-strong` | `rgb(255 255 255 / .1)` / `.22` |
+| `--color-glow` | `#a9c7ff` |
+| `--text-hero` / `--text-section` / `--text-lede` | `clamp(2.75rem,7.2vw,6.5rem)` / `clamp(2.25rem,5vw,4.5rem)` / `clamp(1rem,1.35vw,1.19rem)` |
+| `--text-eyebrow` / `-micro` / `-xxs` / `-ui` | `11px + .28em` / `10px` / `11px` / `13px` |
+| `--spacing-section` / `-lg` / `--container-content` | `6rem` / `8rem` / `80rem` |
+| `--radius-card` / `-preview` | `1rem` / `1.75rem` |
+| `--shadow-glow` / `-lift` / `-pill`, `--blur-glow` | cool glow / drop / halo / 120px |
+| `--ease-expo` | `cubic-bezier(.16,1,.3,1)` |
+| `--animate-marquee` | `46s linear infinite` |
 
-## Motion
+## Motion & interaction
 
-- `Reveal` wraps each section block: 26px fade-up, `once`, 0.75s, expo ease.
-- Hero H1 letters are revealed word-by-word (`opacity` + `letter-spacing` +
-  `blur`), then the lede and pill land.
-- Stats roll 0→9→target when the row enters the viewport (`useInView`), one
-  column at a time.
-- Case-study preview cross-fades + scales on hover/focus of a project name.
-- Marquee pauses on hover; the whole track is duplicated for a seamless loop.
+- `Reveal` gives every section a 26px fade-up on first scroll into view.
+- Home hero reveals the H1 word by word (opacity + tracking + blur).
+- Odometer digits roll 0→9→target when the row enters the viewport.
+- Case-study hover swaps a sticky preview; `/work` and `/blog` filters are
+  instant and `aria-pressed` driven.
+- Mega-menu opens on hover **and** focus, closes on Escape, outside click, or
+  route change; the mobile sheet locks scroll, traps Tab, and auto-closes on
+  navigation.
+- FAQ and mobile accordions are single-open, `aria-expanded` + `aria-controls`.
+- Demo panel streams mock results into an `aria-live` region.
 - `prefers-reduced-motion`: `MotionConfig reducedMotion="user"` drops
-  transform animations, a CSS media query parks the odometer on its final
-  digits, the marquee stops, and all CSS animation/transition durations are
-  collapsed globally.
+  transform/layout animation, a CSS media query parks the odometer on its final
+  digits, the marquee stops, and all CSS durations collapse.
 
-## Accessibility & performance notes
+## Accessibility & SEO
 
-- Semantic landmarks (`header`, `nav[aria-label]`, `main`, `section[aria-labelledby]`, `footer`),
-  a skip link, and a visible focus ring (`--color-glow`).
-- Mega-menu buttons expose `aria-expanded` / `aria-controls`; Escape closes,
-  outside pointer-down closes, and the panel opens on focus for keyboard users.
-- The mobile sheet is a `dialog` with `aria-modal`, scroll lock, focus move and
-  a Tab loop; accordions use `aria-expanded` + `aria-controls`.
-- Decorative art is `alt=""` + `aria-hidden`; case-study thumbnails carry
-  descriptive alt text; the odometer exposes one `sr-only` value so screen
-  readers never hear the rolling digits.
-- `next/image` everywhere (AVIF/WebP, `sizes`, priority on the hero), local
-  assets, ~32 KB hero backdrop, self-hosted Geist variable fonts, static
-  prerender (`○ /`) and `robots.txt` + `sitemap.xml`.
+- One `<h1>` per page (verified across all 30 routes), `main#main`, a skip link,
+  `aria-labelledby` on sections, visible focus rings.
+- Two-tone headings are split into spans, so each carries an `aria-label` with
+  the natural reading ("Our Services", "Case Studies").
+- Form: labels, `aria-invalid`, `aria-describedby`, error focus management.
+- Metadata: per-page titles/descriptions, Open Graph per article and case study,
+  generated `sitemap.xml` + `robots.txt`, `noindex` on the 404.
+- `next/image` everywhere with `sizes`, AVIF/WebP, priority only on heroes;
+  self-hosted Geist variable fonts; fully static output.
+
+## Verification (this build)
+
+`tsc --noEmit` clean · `next build` green with 30 static routes · crawl of all
+67 pages/linked targets returns **0 broken internal links**, **0 missing
+descriptions**, exactly **one `<h1>` per page** · `sitemap.xml` lists 32 URLs.

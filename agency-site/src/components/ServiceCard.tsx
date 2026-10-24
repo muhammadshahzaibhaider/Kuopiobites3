@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { Service } from "@/lib/content";
+import type { Service } from "@/lib/data/services";
 import { TechIcon } from "./TechIcon";
 import { Reveal } from "./Reveal";
 import { ArrowUpRight } from "./icons";
@@ -8,8 +8,7 @@ export function ServiceCard({ service, index }: { service: Service; index: numbe
   return (
     <Reveal delay={index * 0.05}>
       <Link
-        id={service.slug}
-        href={service.href}
+        href={`/services/${service.slug}`}
         className="group relative block scroll-mt-28 rounded-card border border-hairline bg-white/[0.015] p-6 transition-[background-color,border-color,box-shadow,transform] duration-300 ease-expo hover:-translate-y-0.5 hover:border-hairline-strong hover:bg-white/[0.035] hover:shadow-glow sm:p-8 lg:p-10"
       >
         <div className="grid gap-8 lg:grid-cols-12 lg:gap-12">

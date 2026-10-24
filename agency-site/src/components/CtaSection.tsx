@@ -1,5 +1,4 @@
 import Image from "next/image";
-import { SITE } from "@/lib/content";
 import { PillButton } from "./PillButton";
 import { Reveal } from "./Reveal";
 
@@ -31,7 +30,7 @@ export default function CtaSection() {
           </h2>
         </Reveal>
         <Reveal delay={0.08}>
-          <PillButton href={`mailto:${SITE.email}`}>Let&apos;s work together</PillButton>
+          <PillButton href="/contact">Let&apos;s work together</PillButton>
         </Reveal>
       </div>
     </section>

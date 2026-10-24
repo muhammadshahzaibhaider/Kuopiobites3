@@ -4,7 +4,7 @@ import { motion } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
 import { useState } from "react";
-import { CASE_STUDIES } from "@/lib/content";
+import { CASE_STUDIES } from "@/lib/data/caseStudies";
 import { cn } from "@/lib/cn";
 import { Reveal } from "./Reveal";
 import { SectionHeading } from "./SectionHeading";
@@ -54,7 +54,7 @@ export default function CaseStudyList() {
                 return (
                   <li key={study.name} className="border-b border-hairline">
                     <Link
-                      href={study.href}
+                      href={`/case-study/${study.slug}`}
                       onMouseEnter={() => setActive(index)}
                       onFocus={() => setActive(index)}
                       className="group flex items-center gap-5 py-6"
@@ -138,7 +138,7 @@ export default function CaseStudyList() {
             {CASE_STUDIES.map((study, index) => (
               <li key={study.name}>
                 <Reveal delay={Math.min(index, 2) * 0.05}>
-                  <Link href={study.href} className="group block">
+                  <Link href={`/case-study/${study.slug}`} className="group block">
                     <div className="relative aspect-[16/10] overflow-hidden rounded-preview border border-hairline bg-ink-soft">
                       <Image
                         src={study.image}

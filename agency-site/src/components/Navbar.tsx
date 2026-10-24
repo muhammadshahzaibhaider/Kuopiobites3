@@ -3,8 +3,10 @@
 import { AnimatePresence, motion } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { PRIMARY_NAV, RESOURCE_LINKS, SERVICES, SITE } from "@/lib/content";
+import { PRIMARY_NAV, RESOURCE_LINKS, SITE } from "@/lib/content";
+import { SERVICES } from "@/lib/data/services";
 import { cn } from "@/lib/cn";
 import { Logo } from "./Logo";
 import { PillButton } from "./PillButton";
@@ -19,14 +21,26 @@ const panelMotion = {
   transition: { duration: 0.22, ease: [0.16, 1, 0.3, 1] as const },
 };
 
+function isActive(pathname: string, href: string) {
+  if (href === "/") return pathname === "/";
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
 export default function Navbar() {
   const [openMenu, setOpenMenu] = useState<MenuKey | null>(null);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const navRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const pathname = usePathname();
 
   const closeMenus = useCallback(() => setOpenMenu(null), []);
+
+  /* Close the mobile sheet whenever the route changes. */
+  useEffect(() => {
+    setMobileOpen(false);
+    setOpenMenu(null);
+  }, [pathname]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12);
@@ -66,122 +80,128 @@ export default function Navbar() {
 
   return (
     <>
-    <header
-      className={cn(
-        "fixed inset-x-0 top-0 z-50 transition-[background-color,border-color,backdrop-filter] duration-300",
-        scrolled || openMenu
-          ? "border-b border-hairline bg-ink/75 backdrop-blur-xl"
-          : "border-b border-transparent bg-transparent",
-      )}
-    >
-      <div className="content-shell">
-        <div
-          ref={navRef}
-          className="relative flex h-20 items-center justify-between"
-          onMouseLeave={closeMenus}
-        >
-          <Link
-            href="#top"
-            className="group inline-flex items-center rounded-full text-fg transition-opacity duration-200 hover:opacity-80"
-            aria-label={`${SITE.brand} — home`}
+      <header
+        className={cn(
+          "fixed inset-x-0 top-0 z-50 transition-[background-color,border-color,backdrop-filter] duration-300",
+          scrolled || openMenu
+            ? "border-b border-hairline bg-ink/75 backdrop-blur-xl"
+            : "border-b border-transparent bg-transparent",
+        )}
+      >
+        <div className="content-shell">
+          <div
+            ref={navRef}
+            className="relative flex h-20 items-center justify-between"
+            onMouseLeave={closeMenus}
           >
-            <Logo />
-          </Link>
+            <Link
+              href="/"
+              className="group inline-flex items-center rounded-full text-fg transition-opacity duration-200 hover:opacity-80"
+              aria-label={`${SITE.brand} — home`}
+            >
+              <Logo />
+            </Link>
 
-          {/* Desktop navigation */}
-          <nav aria-label="Primary" className="absolute left-1/2 hidden -translate-x-1/2 lg:block">
-            <ul className="flex items-center gap-1">
-              {PRIMARY_NAV.map((item) => {
-                if (!item.menu) {
+            {/* Desktop navigation */}
+            <nav aria-label="Primary" className="absolute left-1/2 hidden -translate-x-1/2 lg:block">
+              <ul className="flex items-center gap-1">
+                {PRIMARY_NAV.map((item) => {
+                  const active = isActive(pathname, item.href);
+
+                  if (!item.menu) {
+                    return (
+                      <li key={item.label}>
+                        <Link
+                          href={item.href}
+                          aria-current={active ? "page" : undefined}
+                          className={cn(
+                            "inline-flex h-10 items-center rounded-full px-4 text-ui transition-colors duration-200",
+                            active ? "text-fg" : "text-muted hover:text-fg",
+                          )}
+                        >
+                          {item.label}
+                        </Link>
+                      </li>
+                    );
+                  }
+
+                  const isOpen = openMenu === item.menu;
                   return (
                     <li key={item.label}>
-                      <Link
-                        href={item.href}
-                        className="inline-flex h-10 items-center rounded-full px-4 text-ui text-muted transition-colors duration-200 hover:text-fg"
+                      <button
+                        type="button"
+                        className={cn(
+                          "inline-flex h-10 items-center gap-1.5 rounded-full px-4 text-ui transition-colors duration-200",
+                          isOpen || active ? "text-fg" : "text-muted hover:text-fg",
+                        )}
+                        aria-expanded={isOpen}
+                        aria-controls={`nav-${item.menu}-panel`}
+                        aria-haspopup="true"
+                        onMouseEnter={() => setOpenMenu(item.menu ?? null)}
+                        onFocus={() => setOpenMenu(item.menu ?? null)}
+                        onClick={() => setOpenMenu(isOpen ? null : item.menu ?? null)}
                       >
                         {item.label}
-                      </Link>
+                        <ChevronDown
+                          className={cn(
+                            "h-3.5 w-3.5 transition-transform duration-200",
+                            isOpen && "rotate-180",
+                          )}
+                        />
+                      </button>
                     </li>
                   );
-                }
-                const isOpen = openMenu === item.menu;
-                return (
-                  <li key={item.label}>
-                    <button
-                      type="button"
-                      className={cn(
-                        "inline-flex h-10 items-center gap-1.5 rounded-full px-4 text-ui transition-colors duration-200",
-                        isOpen ? "text-fg" : "text-muted hover:text-fg",
-                      )}
-                      aria-expanded={isOpen}
-                      aria-controls={`nav-${item.menu}-panel`}
-                      aria-haspopup="true"
-                      onMouseEnter={() => setOpenMenu(item.menu ?? null)}
-                      onFocus={() => setOpenMenu(item.menu ?? null)}
-                      onClick={() => setOpenMenu(isOpen ? null : item.menu ?? null)}
-                    >
-                      {item.label}
-                      <ChevronDown
-                        className={cn(
-                          "h-3.5 w-3.5 transition-transform duration-200",
-                          isOpen && "rotate-180",
-                        )}
-                      />
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </nav>
+                })}
+              </ul>
+            </nav>
 
-          <div className="flex items-center gap-2">
-            <PillButton href="#contact" size="sm" className="hidden sm:inline-flex">
-              Start Your Project
-            </PillButton>
-            <button
-              type="button"
-              className="grid h-10 w-10 place-items-center rounded-full border border-hairline text-fg transition-colors duration-200 hover:border-hairline-strong hover:bg-white/[0.05] lg:hidden"
-              aria-expanded={mobileOpen}
-              aria-controls="mobile-menu"
-              aria-label="Open menu"
-              onClick={() => setMobileOpen(true)}
-            >
-              <Menu className="h-5 w-5" />
-            </button>
-          </div>
-
-          {/* Desktop panels */}
-          <AnimatePresence>
-            {openMenu ? (
-              <motion.div
-                key={openMenu}
-                id={`nav-${openMenu}-panel`}
-                className={cn(
-                  "absolute top-full left-1/2 hidden pt-2 lg:block",
-                  openMenu === "services"
-                    ? "w-[min(64rem,calc(100vw-3rem))]"
-                    : "w-[min(34rem,calc(100vw-3rem))]",
-                )}
-                {...panelMotion}
+            <div className="flex items-center gap-2">
+              <PillButton href="/contact" size="sm" className="hidden sm:inline-flex">
+                Start Your Project
+              </PillButton>
+              <button
+                type="button"
+                className="grid h-10 w-10 place-items-center rounded-full border border-hairline text-fg transition-colors duration-200 hover:border-hairline-strong hover:bg-white/[0.05] lg:hidden"
+                aria-expanded={mobileOpen}
+                aria-controls="mobile-menu"
+                aria-label="Open menu"
+                onClick={() => setMobileOpen(true)}
               >
-                <div className="overflow-hidden rounded-card border border-hairline bg-ink-soft/95 p-3 shadow-lift backdrop-blur-xl">
-                  {openMenu === "services" ? <ServicesPanel onNavigate={closeMenus} /> : <ResourcesPanel onNavigate={closeMenus} />}
-                </div>
-              </motion.div>
-            ) : null}
-          </AnimatePresence>
-        </div>
-      </div>
+                <Menu className="h-5 w-5" />
+              </button>
+            </div>
 
-    </header>
+            {/* Desktop panels */}
+            <AnimatePresence>
+              {openMenu ? (
+                <motion.div
+                  key={openMenu}
+                  id={`nav-${openMenu}-panel`}
+                  className={cn(
+                    "absolute top-full left-1/2 hidden pt-2 lg:block",
+                    openMenu === "services"
+                      ? "w-[min(64rem,calc(100vw-3rem))]"
+                      : "w-[min(34rem,calc(100vw-3rem))]",
+                  )}
+                  {...panelMotion}
+                >
+                  <div className="overflow-hidden rounded-card border border-hairline bg-ink-soft/95 p-3 shadow-lift backdrop-blur-xl">
+                    {openMenu === "services" ? (
+                      <ServicesPanel onNavigate={closeMenus} />
+                    ) : (
+                      <ResourcesPanel onNavigate={closeMenus} />
+                    )}
+                  </div>
+                </motion.div>
+              ) : null}
+            </AnimatePresence>
+          </div>
+        </div>
+      </header>
 
       <AnimatePresence>
         {mobileOpen ? (
-          <MobileMenu
-            key="mobile-menu"
-            closeRef={closeRef}
-            onClose={() => setMobileOpen(false)}
-          />
+          <MobileMenu key="mobile-menu" closeRef={closeRef} onClose={() => setMobileOpen(false)} />
         ) : null}
       </AnimatePresence>
     </>
@@ -192,10 +212,10 @@ function ServicesPanel({ onNavigate }: { onNavigate: () => void }) {
   return (
     <div className="grid gap-3 lg:grid-cols-[minmax(0,20rem)_1fr]">
       <Link
-        href="#work"
+        href="/case-study/talitrix"
         onClick={onNavigate}
         className="group relative overflow-hidden rounded-2xl border border-hairline focus-visible:outline-offset-4"
-        aria-label="Our latest work: Clinix AI case study"
+        aria-label="Our latest work: Talitrix case study"
       >
         <div className="relative aspect-[16/12] w-full">
           <Image
@@ -210,7 +230,7 @@ function ServicesPanel({ onNavigate }: { onNavigate: () => void }) {
         <div className="absolute inset-x-0 bottom-0 p-5">
           <p className="text-micro uppercase text-white/55">Our latest work</p>
           <div className="mt-2 flex items-center justify-between gap-3">
-            <span className="text-lg font-medium tracking-tight text-fg">Clinix AI</span>
+            <span className="text-lg font-medium tracking-tight text-fg">Talitrix</span>
             <ArrowUpRight className="h-4 w-4 text-white/70 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
           </div>
         </div>
@@ -220,7 +240,7 @@ function ServicesPanel({ onNavigate }: { onNavigate: () => void }) {
         {SERVICES.map((service) => (
           <li key={service.slug}>
             <Link
-              href={`#${service.slug}`}
+              href={`/services/${service.slug}`}
               onClick={onNavigate}
               className="group flex items-start gap-3 rounded-xl px-3 py-3 transition-colors duration-200 hover:bg-white/[0.05]"
             >
@@ -245,7 +265,10 @@ function ResourcesPanel({ onNavigate }: { onNavigate: () => void }) {
   return (
     <ul className="grid gap-1 sm:grid-cols-2">
       {RESOURCE_LINKS.map((item) => (
-        <li key={item.label} className={item.label === "Free Templates & Tools" ? "sm:col-span-2" : undefined}>
+        <li
+          key={item.label}
+          className={item.label === "Free Templates & Tools" ? "sm:col-span-2" : undefined}
+        >
           <Link
             href={item.href}
             onClick={onNavigate}
@@ -315,7 +338,7 @@ function MobileMenu({
       transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
     >
       <div className="content-shell flex h-20 shrink-0 items-center justify-between border-b border-hairline">
-        <Link href="#top" onClick={onClose} aria-label={`${SITE.brand} — home`}>
+        <Link href="/" onClick={onClose} aria-label={`${SITE.brand} — home`}>
           <Logo />
         </Link>
         <button
@@ -382,7 +405,7 @@ function MobileMenu({
                             ? SERVICES.map((service) => (
                                 <li key={service.slug}>
                                   <Link
-                                    href={`#${service.slug}`}
+                                    href={`/services/${service.slug}`}
                                     onClick={onClose}
                                     className="flex items-start gap-3 rounded-xl px-1 py-2.5"
                                   >
@@ -422,12 +445,7 @@ function MobileMenu({
           </ul>
 
           <div className="mt-8">
-            <PillButton
-              href="#contact"
-              className="w-full justify-between"
-              size="md"
-              onClick={onClose}
-            >
+            <PillButton href="/contact" className="w-full justify-between" size="md" onClick={onClose}>
               Start Your Project
             </PillButton>
           </div>

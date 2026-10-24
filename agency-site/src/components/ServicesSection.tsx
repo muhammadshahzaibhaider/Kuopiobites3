@@ -1,4 +1,4 @@
-import { SERVICES } from "@/lib/content";
+import { SERVICES } from "@/lib/data/services";
 import { SectionHeading } from "./SectionHeading";
 import { ServiceCard } from "./ServiceCard";
 

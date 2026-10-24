@@ -1,4 +1,4 @@
-import type { ToolId } from "@/lib/content";
+import type { ToolId } from "@/lib/data/services";
 
 /**
  * Lightweight, monochrome tool glyphs. Drawn as simple geometry so chips stay
