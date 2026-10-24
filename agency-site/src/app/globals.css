@@ -1,0 +1,212 @@
+@import "tailwindcss";
+
+/* ─────────────────────────────────────────────────────────────
+   Design tokens — everything visual is defined here once.
+   Colors, type scale, spacing rhythm, radii, shadows, motion.
+   ───────────────────────────────────────────────────────────── */
+@theme {
+  /* Surfaces */
+  --color-ink: #050505;
+  --color-ink-soft: #0a0a0a;
+  --color-ink-raised: #101010;
+
+  /* Text */
+  --color-fg: #f4f4f5;
+  --color-muted: #9ca3af;
+  --color-muted-dim: #6b7280;
+
+  /* Hairlines & glow */
+  --color-hairline: rgb(255 255 255 / 0.1);
+  --color-hairline-strong: rgb(255 255 255 / 0.22);
+  --color-glow: #a9c7ff;
+
+  /* Typography */
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --text-eyebrow: 0.6875rem;
+  --text-eyebrow--line-height: 1rem;
+  --text-eyebrow--letter-spacing: 0.28em;
+  --text-eyebrow--font-weight: 500;
+
+  --text-micro: 0.625rem;
+  --text-micro--line-height: 1rem;
+  --text-micro--letter-spacing: 0.24em;
+
+  --text-xxs: 0.6875rem;
+  --text-xxs--line-height: 1.125rem;
+
+  --text-ui: 0.8125rem;
+  --text-ui--line-height: 1.25rem;
+
+  /* Letter-spacing for wordmarks */
+  --tracking-brand: 0.24em;
+  --tracking-logo: 0.18em;
+
+  --text-hero: clamp(2.75rem, 7.2vw, 6.5rem);
+  --text-hero--line-height: 0.98;
+  --text-hero--letter-spacing: -0.04em;
+
+  --text-section: clamp(2.25rem, 5vw, 4.5rem);
+  --text-section--line-height: 1.02;
+  --text-section--letter-spacing: -0.03em;
+
+  --text-lede: clamp(1rem, 1.35vw, 1.1875rem);
+  --text-lede--line-height: 1.6;
+
+  /* Rhythm & width */
+  --spacing-gutter: 1.5rem;
+  --spacing-section: 6rem;
+  --spacing-section-lg: 8rem;
+  --container-content: 80rem;
+
+  /* Blur (soft light glows) */
+  --blur-glow: 120px;
+
+  /* Radii */
+  --radius-card: 1rem;
+  --radius-preview: 1.75rem;
+
+  /* Elevation */
+  --shadow-glow: 0 24px 80px -40px rgb(169 199 255 / 0.5);
+  --shadow-lift: 0 18px 50px -24px rgb(0 0 0 / 0.9);
+  --shadow-pill: 0 0 32px -6px rgb(255 255 255 / 0.35);
+
+  /* Motion */
+  --ease-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --animate-marquee: marquee 46s linear infinite;
+  --animate-marquee-slow: marquee 70s linear infinite;
+  --animate-pulse-glow: pulse-glow 6s ease-in-out infinite;
+  --animate-float: float 9s ease-in-out infinite;
+
+  @keyframes marquee {
+    to {
+      transform: translateX(-50%);
+    }
+  }
+  @keyframes pulse-glow {
+    0%,
+    100% {
+      opacity: 0.5;
+    }
+    50% {
+      opacity: 0.9;
+    }
+  }
+  @keyframes float {
+    0%,
+    100% {
+      transform: translate3d(0, 0, 0);
+    }
+    50% {
+      transform: translate3d(0, -10px, 0);
+    }
+  }
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 6rem;
+    background-color: var(--color-ink);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-ink font-sans text-fg antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    text-wrap: balance;
+  }
+
+  ::selection {
+    background: rgb(169 199 255 / 0.28);
+    color: #ffffff;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-glow);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  /* Reduced motion: park the odometer strips on their final glyph. */
+  @media (prefers-reduced-motion: reduce) {
+    .odometer-strip {
+      transform: translateY(var(--roll-offset, 0em));
+    }
+  }
+
+  /* Respect the OS motion preference globally. */
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.001ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.001ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}
+
+@layer components {
+  .content-shell {
+    @apply mx-auto w-full max-w-content px-gutter;
+  }
+
+  .hairline-t {
+    @apply border-t border-hairline;
+  }
+
+  /* The signature two-tone section title: light lead + bold white word. */
+  .title-lead {
+    @apply font-light text-white/40;
+  }
+  .title-strong {
+    @apply font-semibold text-white;
+  }
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+  .text-pretty {
+    text-wrap: pretty;
+  }
+  .mask-fade-x {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 12%,
+      #000 88%,
+      transparent
+    );
+    mask-image: linear-gradient(to right, transparent, #000 12%, #000 88%, transparent);
+  }
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+  /* Faint film grain, keeps large black areas from banding. */
+  .grain::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.035;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+}
