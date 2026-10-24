@@ -6,12 +6,17 @@ Framer Motion**. Dark near-black canvas, one cool-blue glow, oversized
 tight-tracked headings, hairline cards, scroll-triggered reveals, and a light-ray
 hero used across pages.
 
-It lives in `Axiomic Studio/` (note the space), a self-contained app that does not
-touch the Kuopio Bites application elsewhere in this repository. On Vercel it is
-the **axiomic-studio** project with `Axiomic Studio` as its root directory.
+It lives in `axiomic-studio/`, a self-contained app that does not touch the
+Kuopio Bites application elsewhere in this repository. On Vercel it is the
+**axiomic-studio** project with `axiomic-studio` as its root directory.
+
+> The folder is deliberately lowercase and space-free: Vercel derives serverless
+> function names from the root-directory path, and a space there fails the build
+> with `invalid_function_name`. The product name is still **Axiomic Studio**
+> everywhere in the UI, metadata and copy.
 
 ```bash
-cd "Axiomic Studio"
+cd axiomic-studio
 npm ci
 npm run dev      # http://localhost:3001
 npm run build && npm run start
@@ -45,7 +50,7 @@ it appears in the sitemap automatically.
 ## File structure
 
 ```
-Axiomic Studio/
+axiomic-studio/
 ├── next.config.ts · postcss.config.mjs · tsconfig.json · package.json
 ├── public/
 │   ├── logo.svg
@@ -161,13 +166,13 @@ descriptions**, exactly **one `<h1>` per page** · `sitemap.xml` lists 32 URLs.
 ## Deploying (Vercel + Supabase)
 
 The app is its own Vercel project, **axiomic-studio**, connected to the
-`muhammadshahzaibhaider/Kuopiobites3` repository with `Axiomic Studio` as the
+`muhammadshahzaibhaider/Kuopiobites3` repository with `axiomic-studio` as the
 root directory. The Kuopio Bites projects (`kuopiobites`, `kuopio-bites`) are
 untouched.
 
 | Item | Value |
 | --- | --- |
-| Vercel project | `axiomic-studio` — root `Axiomic Studio`, framework Next.js |
+| Vercel project | `axiomic-studio` — root `axiomic-studio`, framework Next.js |
 | Supabase project | `Axiomic Studio` (`yubspfjyaxyuepcwlobh`, ap-south-1) — separate from Kuopio Bites |
 | Build | `next build`, no custom commands; static pages + one serverless route |
 
