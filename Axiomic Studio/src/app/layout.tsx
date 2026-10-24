@@ -9,7 +9,7 @@ import ScrollProgress from "@/components/ScrollProgress";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://yourbrand.agency"),
+  metadataBase: new URL("https://axiomic-studio.vercel.app"),
   title: {
     default: `${SITE.brand} — ${SITE.tagline}`,
     template: `%s — ${SITE.brand}`,

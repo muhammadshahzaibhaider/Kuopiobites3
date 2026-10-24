@@ -33,7 +33,8 @@ const labelClass = "mb-2 block text-xxs uppercase tracking-[0.18em] text-muted";
 export default function ContactForm() {
   const [fields, setFields] = useState<Fields>(EMPTY);
   const [errors, setErrors] = useState<Partial<Record<keyof Fields, string>>>({});
-  const [status, setStatus] = useState<"idle" | "sending" | "sent">("idle");
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const [formError, setFormError] = useState("");
 
   const update = (key: keyof Fields) => (
     event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>,
@@ -55,7 +56,7 @@ export default function ContactForm() {
     return next;
   };
 
-  const onSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+  const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const next = validate();
     setErrors(next);
@@ -64,9 +65,22 @@ export default function ContactForm() {
       document.getElementById(`contact-${firstKey}`)?.focus();
       return;
     }
+
+    setFormError("");
     setStatus("sending");
-    /* Stub: swap for a POST to your form endpoint. */
-    window.setTimeout(() => setStatus("sent"), 900);
+
+    try {
+      const response = await fetch("/api/leads", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(fields),
+      });
+      if (!response.ok) throw new Error(String(response.status));
+      setStatus("sent");
+    } catch {
+      setStatus("error");
+      setFormError("Something went wrong sending that. Please try again, or email us directly.");
+    }
   };
 
   if (status === "sent") {
@@ -194,6 +208,12 @@ export default function ContactForm() {
         />
         <FieldError id="contact-message-error" message={errors.message} />
       </div>
+
+      {status === "error" && (
+        <p role="alert" className="text-sm leading-relaxed text-red-300/90">
+          {formError}
+        </p>
+      )}
 
       <div className="flex flex-col gap-4 pt-2 sm:flex-row sm:items-center sm:justify-between">
         <button

@@ -2,7 +2,7 @@ import { SITE } from "@/lib/content";
 
 /**
  * Placeholder brand lockup: an atom mark (swap for your own artwork) plus the
- * 「YOUR BRAND」wordmark. Mark scales with the `className` fontSize.
+ * 「Axiomic Studio」wordmark. Mark scales with the `className` fontSize.
  */
 export function Logo({
   className = "",

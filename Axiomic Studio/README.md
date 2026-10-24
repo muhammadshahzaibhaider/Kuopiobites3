@@ -1,4 +1,4 @@
-# YOUR BRAND — multi-page agency site
+# Axiomic Studio — multi-page agency site
 
 A pixel-focused recreation of the Antimatter AI agency site's **multi-page**
 structure, built with **Next.js (App Router) + TypeScript + Tailwind CSS v4 +
@@ -6,11 +6,12 @@ Framer Motion**. Dark near-black canvas, one cool-blue glow, oversized
 tight-tracked headings, hairline cards, scroll-triggered reveals, and a light-ray
 hero used across pages.
 
-It lives in `agency-site/`, a self-contained app that does not touch the Kuopio
-Bites application in the rest of this repository.
+It lives in `Axiomic Studio/` (note the space), a self-contained app that does not
+touch the Kuopio Bites application elsewhere in this repository. On Vercel it is
+the **axiomic-studio** project with `Axiomic Studio` as its root directory.
 
 ```bash
-cd agency-site
+cd "Axiomic Studio"
 npm ci
 npm run dev      # http://localhost:3001
 npm run build && npm run start
@@ -44,7 +45,7 @@ it appears in the sitemap automatically.
 ## File structure
 
 ```
-agency-site/
+Axiomic Studio/
 ├── next.config.ts · postcss.config.mjs · tsconfig.json · package.json
 ├── public/
 │   ├── logo.svg
@@ -156,3 +157,37 @@ agency-site/
 `tsc --noEmit` clean · `next build` green with 30 static routes · crawl of all
 67 pages/linked targets returns **0 broken internal links**, **0 missing
 descriptions**, exactly **one `<h1>` per page** · `sitemap.xml` lists 32 URLs.
+
+## Deploying (Vercel + Supabase)
+
+The app is its own Vercel project, **axiomic-studio**, connected to the
+`muhammadshahzaibhaider/Kuopiobites3` repository with `Axiomic Studio` as the
+root directory. The Kuopio Bites projects (`kuopiobites`, `kuopio-bites`) are
+untouched.
+
+| Item | Value |
+| --- | --- |
+| Vercel project | `axiomic-studio` — root `Axiomic Studio`, framework Next.js |
+| Supabase project | `Axiomic Studio` (`yubspfjyaxyuepcwlobh`, ap-south-1) — separate from Kuopio Bites |
+| Build | `next build`, no custom commands; static pages + one serverless route |
+
+### Contact form → Supabase
+
+`src/components/ContactForm.tsx` validates client-side, then `POST`s to
+`/api/leads`. The route re-validates and inserts into `public.leads` through
+Supabase's REST API, so no SDK is bundled. Create the table with
+`supabase/leads.sql`.
+
+Environment variables (Vercel → Settings → Environment Variables, or a local
+`.env.local` from `.env.example`):
+
+| Key | Notes |
+| --- | --- |
+| `SUPABASE_URL` | `https://yubspfjyaxyuepcwlobh.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | server-only; never prefixed with `NEXT_PUBLIC_` |
+
+If either variable is missing the route still returns `ok: true, stored: false`,
+so the form keeps working while you wire the project up.
+
+`leads` has RLS enabled with no public policies — rows are only reachable with
+the service-role key, i.e. never from the browser.

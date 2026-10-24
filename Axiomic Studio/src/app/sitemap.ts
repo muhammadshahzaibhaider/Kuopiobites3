@@ -4,7 +4,7 @@ import { CASE_STUDIES } from "@/lib/data/caseStudies";
 import { POSTS } from "@/lib/data/posts";
 import { DEMOS } from "@/lib/data/demos";
 
-const BASE = "https://yourbrand.agency";
+const BASE = "https://axiomic-studio.vercel.app";
 
 export default function sitemap(): MetadataRoute.Sitemap {
   const staticRoutes = ["", "/work", "/company", "/contact", "/blog", "/open-resources", "/demos", "/services"];

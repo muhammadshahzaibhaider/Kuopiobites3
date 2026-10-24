@@ -4,13 +4,13 @@
  */
 
 export const SITE = {
-  brand: "YOUR BRAND",
+  brand: "Axiomic Studio",
   tagline: "Building Digital Solutions That Matter",
   description:
     "We empower organizations with AI that turns complex challenges into real-world outcomes.",
-  email: "hello@yourbrand.agency",
-  linkedin: "https://www.linkedin.com/",
-  github: "https://github.com/",
+  email: "hello@axiomicstudio.com",
+  linkedin: "https://www.linkedin.com/company/axiomic-studio/",
+  github: "https://github.com/muhammadshahzaibhaider",
   city: "Gujranwala, PK",
   timeZone: "Asia/Karachi",
   copyrightYear: 2026,

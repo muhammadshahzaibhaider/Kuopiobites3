@@ -38,7 +38,7 @@ export const POSTS: Post[] = [
     date: "Jun 8, 2026",
     dateISO: "2026-06-08",
     readTime: "6 min read",
-    author: "YOUR BRAND",
+    author: "Axiomic Studio",
     image: "/images/blog/agents.jpg",
     featured: true,
     body: [
@@ -103,7 +103,7 @@ export const POSTS: Post[] = [
     date: "Jun 7, 2026",
     dateISO: "2026-06-07",
     readTime: "6 min read",
-    author: "YOUR BRAND",
+    author: "Axiomic Studio",
     image: "/images/blog/fine-tuning.jpg",
     body: [
       {
@@ -150,7 +150,7 @@ export const POSTS: Post[] = [
     date: "Jun 6, 2026",
     dateISO: "2026-06-06",
     readTime: "6 min read",
-    author: "YOUR BRAND",
+    author: "Axiomic Studio",
     image: "/images/blog/training-costs.jpg",
     body: [
       {
@@ -187,7 +187,7 @@ export const POSTS: Post[] = [
     date: "Jun 5, 2026",
     dateISO: "2026-06-05",
     readTime: "6 min read",
-    author: "YOUR BRAND",
+    author: "Axiomic Studio",
     image: "/images/blog/pilot-to-platform.jpg",
     body: [
       {
@@ -225,7 +225,7 @@ export const POSTS: Post[] = [
     date: "Jun 4, 2026",
     dateISO: "2026-06-04",
     readTime: "6 min read",
-    author: "YOUR BRAND",
+    author: "Axiomic Studio",
     image: "/images/blog/evaluating-ai.jpg",
     body: [
       {
