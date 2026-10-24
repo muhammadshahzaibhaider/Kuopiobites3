@@ -196,3 +196,22 @@ so the form keeps working while you wire the project up.
 
 `leads` has RLS enabled with no public policies — rows are only reachable with
 the service-role key, i.e. never from the browser.
+
+## Live
+
+| URL | Notes |
+| --- | --- |
+| https://axiomic-studio.vercel.app | production alias |
+| https://axiomic-studio-kuopio-bites.vercel.app | automatic production alias |
+| https://axiomic-studio-git-arena-1a30a25c-kuopiobites3-kuopio-bites.vercel.app | branch alias, tracks every push |
+
+Deployment protection on this team is set to *Vercel Authentication — all
+except custom domains*, so the `*.vercel.app` URLs ask you to sign in to Vercel
+before they render. To make the site public, open **Project → Settings →
+Deployment Protection** and switch Vercel Authentication off (or attach your own
+domain, which bypasses protection automatically).
+
+Supabase: project **Axiomic Studio** (`yubspfjyaxyuepcwlobh`, ap-south-1),
+table `public.leads` created from `supabase/leads.sql` with RLS on and no public
+policies. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are set in the Vercel
+project for production, preview and development.
