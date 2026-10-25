@@ -1,100 +1,128 @@
-@import "tailwindcss";
-@config "../../tailwind.config.ts";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@layer base {
-  html {
-    scroll-behavior: smooth;
-  }
-  :root {
-    /* fixed background system */
-    --fixed-bg-overlay: 253, 246, 227; /* cream */
-    --fixed-bg-overlay-opacity: 0.22; /* light tint only — image stays crisp */
-  }
-  @media (prefers-reduced-motion: reduce) {
-    html {
-      scroll-behavior: auto;
-    }
-  }
-  body {
-    @apply bg-cream text-cherry font-sans antialiased;
-  }
-  h1, h2, h3, h4 {
-    @apply font-display;
-  }
-  ::selection {
-    background: rgb(233 162 25 / 0.45);
-    color: #5c0d1c;
-  }
-  :focus-visible {
-    outline: 2px solid #c41e3a;
-    outline-offset: 2px;
-    border-radius: 4px;
-  }
-  input, select, textarea {
-    @apply text-cherry;
-  }
+:root {
+  --background: #030303;
+  --foreground: #f4f4f5;
+  --accent: #8587e3;
+  --card-border: rgba(255, 255, 255, 0.08);
 }
 
-@layer utilities {
-  .container-x {
-    @apply mx-auto w-full max-w-6xl px-4 sm:px-6;
-  }
-  .no-scrollbar {
-    -ms-overflow-style: none;
-    scrollbar-width: none;
-  }
-  .no-scrollbar::-webkit-scrollbar {
-    display: none;
-  }
-  .gold-rule {
-    background: linear-gradient(90deg, transparent, #e9a219 18%, #e9a219 82%, transparent);
-    height: 2px;
-    border-radius: 2px;
-  }
-  .card-tilt {
-    transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.25s;
-  }
-  .card-tilt:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 16px 34px -14px rgb(122 18 38 / 0.3);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .card-tilt, .card-tilt:hover {
-      transition: none;
-      transform: none;
-    }
-  }
+* {
+  box-sizing: border-box;
 }
 
-/* ── Fixed stationary background (see <FixedBackground />) ─────────────── */
-.fixed-bg {
-  position: fixed;
-  inset: 0;
-  z-index: -1;
-  overflow: hidden;
-  /* 100vh fallback first, then dynamic viewport units (iOS address bar safe) */
-  height: 100vh;
-  height: 100lvh;
-  height: 100dvh;
+html {
+  scroll-behavior: smooth;
+  color-scheme: dark;
 }
-.fixed-bg picture,
-.fixed-bg img {
-  display: block;
+
+body {
+  background-color: var(--background);
+  color: var(--foreground);
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  overflow-x: hidden;
+  min-height: 100vh;
 }
-.fixed-bg__overlay {
+
+/* Glassmorphism panel */
+.glass-panel {
+  background: rgba(14, 14, 18, 0.65);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.glass-panel-hover {
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.glass-panel-hover:hover {
+  background: rgba(20, 20, 26, 0.85);
+  border-color: rgba(133, 135, 227, 0.35);
+  box-shadow: 0 12px 36px -10px rgba(133, 135, 227, 0.15);
+  transform: translateY(-2px);
+}
+
+/* Light rays */
+.light-rays-bg {
   position: absolute;
-  inset: 0;
-  background: rgb(var(--fixed-bg-overlay));
-  opacity: var(--fixed-bg-overlay-opacity);
+  top: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1400px;
+  height: 900px;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+}
+.ray-conic {
+  position: absolute;
+  top: -200px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 1200px;
+  height: 900px;
+  background: conic-gradient(
+    from 180deg at 50% 0%,
+    transparent 40deg,
+    rgba(133, 135, 227, 0.18) 60deg,
+    rgba(105, 106, 172, 0.28) 85deg,
+    rgba(255, 255, 255, 0.35) 90deg,
+    rgba(105, 106, 172, 0.28) 95deg,
+    rgba(133, 135, 227, 0.18) 120deg,
+    transparent 140deg
+  );
+  filter: blur(55px);
+  opacity: 0.65;
+}
+.ray-glow {
+  position: absolute;
+  top: -120px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 600px;
+  height: 380px;
+  background: radial-gradient(
+    ellipse at 50% 20%,
+    rgba(133, 135, 227, 0.45) 0%,
+    rgba(105, 106, 172, 0.2) 50%,
+    transparent 80%
+  );
+  filter: blur(40px);
 }
 
-/* glass section: blurred translucent panel over the fixed background */
-.glass {
-  background: rgb(var(--fixed-bg-overlay) / 0.55);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
+::-webkit-scrollbar {
+  width: 8px;
 }
-/* solid section: hides the background completely */
-.section-solid {
-  background: #fdf6e3;
+::-webkit-scrollbar-track {
+  background: #050506;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(133, 135, 227, 0.4);
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -1,66 +1,133 @@
-# Kuopio Bites — website (v2)
+# Axiom Labs — Enterprise AI Architecture & Digital Engineering Studio
 
-Production-quality, heavily animated, mobile-first site for **Kuopio Bites**,
-Jalkasenkatu 7, 70820 Kuopio · 044 981 6223.
+Dark, cinematic flagship site for **Axiom Labs** — inspired by the editorial depth and motion language of `antimatterai.agency`, rebuilt with original code and Axiom's own brand (AX mark, violet/indigo beams, glassmorphism).
+
+> **Status:** Demo site with illustrative work. All case studies, metrics, and performance figures are *concept demonstrations* — not verified client results, not compliance certifications, and not guarantees. See disclaimers in each dossier.
 
 ## Stack
-- Next.js 14 (App Router) + TypeScript
-- Tailwind CSS — v2 design tokens: deep teal `#0F3D3E/#12433F` (nav, footer, headings, buttons), warm cream `#FDF6E3/#FBEFC7`, burnt-orange accent `#E8792B`
-- Framer Motion (reveals, transitions, hero Ken Burns, marquee, micro-interactions)
-- Fonts: Fraunces Variable (display) + Nunito Sans Variable (body) + Caveat (script)
-- i18n: EN/FI dictionary (`src/lib/i18n.tsx`), header pill toggle, persisted in localStorage
 
-## Run
-```bash
-npm install && npm run build && npm run start   # or: npm run dev
+- **Framework:** Next.js 14 (App Router), TypeScript 5.6
+- **Styling:** Tailwind CSS 3.4, custom `glass-panel` and conic-ray utilities, `prefers-reduced-motion` safe
+- **Icons:** `lucide-react`
+- **Validation:** `zod` (shared schema between client preview and server)
+
+## Architecture — Separation of Concerns
+
+```
+src/
+├── app/                      # Next.js App Router (routing & pages)
+│   ├── api/
+│   │   ├── contact/route.ts  # ← server-only API module (see below)
+│   │   └── health/route.ts
+│   ├── work/                 # portfolio gallery + dossier pages
+│   ├── services/[slug]/      # 6 service pillars
+│   ├── company/              # narrative & FAQ
+│   ├── blog/                 # educational notes
+│   ├── open-axiom/           # starter kits (demo quality)
+│   ├── resources/vendor-matrix
+│   ├── demos/*               # 6 interactive labs (simulated)
+│   ├── contact/              # contact hub
+│   ├── layout.tsx
+│   ├── page.tsx              # home with hero, stats, services, case studies
+│   └── globals.css
+├── components/               # front-end only (no server logic)
+│   ├── Navbar.tsx            # mega-menu, mobile drawer, a11y
+│   ├── Footer.tsx            # 5-column + live local clock
+│   ├── Hero.tsx + LightRays.tsx
+│   ├── StatsSection.tsx + RollingNumber.tsx
+│   ├── ServicesGrid.tsx + CaseStudies.tsx + LogoStrip.tsx
+│   ├── ContactForm.tsx       # client validation + honest status UI
+│   └── ContactSection.tsx    # composition wrapper
+├── data/                     # demo content (clearly labeled illustrative)
+│   ├── clients.ts            # 7 dossiers — every metric flagged illustrative
+│   ├── services.ts           # 6 pillars — no outcome claims
+│   ├── blog.ts, openSource.ts, vendorMatrix.ts, navigation.ts
+└── lib/
+    ├── utils.ts              # cn()
+    └── server/               # server-only modules (never imported by components directly via API)
+        ├── validation.ts     # zod schema (shared)
+        ├── rateLimit.ts      # in-memory sliding window (replace with Redis in prod)
+        └── leadDestination.ts# dispatch to webhook/email — honest delivery gate
 ```
 
-## Pages
-| Route | What it is |
-|---|---|
-| `/` | Teal hero with single Order Online + Dining CTA pair, live open/closed badge, single-dish Today's Special ticker (left-to-right marquee, static under reduced motion), round category grid (21 circles, staggered, scrollable on mobile), featured carousel, story, hours/map/contact |
-| `/menu` | Full 30+ category menu, sticky scrollable pills, search + veg filter, SELECT TOPPING modal for Fantasia/Pannu (min-tier toppings included, extras auto-priced €1/€2 with live running total) |
-| `/order` | Account gate → pickup/delivery → 70xxx radius + min-order checks → dot-formatted totals with VAT → stubbed Stripe pay → tracking |
-| `/track/[id]` | Live status timeline (auto-progress + admin override) |
-| `/dining` | Dining hub: ambiance/seating/hours info + Reserve-a-Table flow (only-open slots, instant confirmation). `/reservations` redirects here |
-| `/account` | Profile, addresses, order history, marketing consent |
-| `/about` | Story, map, click-to-call, contact form |
-| `/admin` | **admin / kuopio2026** — dashboard (today's orders/revenue/pending/upcoming + 7-day revenue chart), live queue with status filters + alerts + refund, menu CRUD with drag-reorder, sold-out toggle, topping-list editor, single Today's Special picker, category creation, reservations accept/decline + 30-day calendar + date/slot blocking, customers, settings (hours, delivery rules, pause switch), per-language content editing |
+**Rule:** `src/components/*` and `src/data/*` never import `src/lib/server/*` directly. They talk to the API via `fetch("/api/contact")`. The API route is the only boundary that touches rate limiting, honeypots, and lead dispatch.
 
-## v2 fixes & features
-- **Client-nav bug (§18)**: page transitions are now enter-only keyed mounts (no AnimatePresence exit cycle), so content always renders immediately after Link navigation; scroll reveals re-register per route.
-- **Prices** always dot-formatted (`€10.50`) via `eur()`.
-- **Biryani imagery** regenerated as authentic red-and-white Karachi style; hero updated to match.
-- **i18n** across nav, hero, sections, buttons, footer, admin tabs; menu names/descriptions editable per language from admin Content tab.
+## Contact Form — Validation & Abuse Protection
 
-## Backend stubs
-All network calls live in `src/lib/api.ts`, annotated with the real endpoints
-(`POST /api/orders`, `POST /api/reservations`, `POST /api/checkout`, `PATCH /api/orders/:id`,
-`POST /api/auth/*`, `PATCH /api/settings`). Swap bodies to wire a real backend.
+### Client
+- Required: `firstName`, `email`, `service`, `message` (min 15 chars)
+- Regex email + Zod length bounds
+- Honeypots: `botField`, `website` (hidden)
+- Velocity: `formLoadedAt` timestamp (client sets on mount; server rejects <800ms)
 
-## Note
-10 category photos (burger, fillets, mix, bucket, noodles, rice, naan, curry, sides, drinks)
-are pending next-turn image generation due to the per-turn image cap; circles gracefully
-fall back to the pizza photo via `onError` until those files exist, then pick them up automatically.
+### Server (`POST /api/contact`)
 
-## v3 additions
-- Animated Home brand banner (`public/brand/kuopio-bites-banner.png`, reduced-motion safe)
-- Halwa Puri Sundays-only pre-order flow (server-validated, admin-configurable)
-- Availability ON/OFF for items/categories/toppings/dips/sizes + bulk + audit log
-- Specials & Offers admin (percent/fixed/override/bundle/freeItem/freeDelivery, promo codes, best-single-discount)
-- Deep links `/menu?item=<id>` with scroll + pulse + auto-open sheet
-- Categories manager with 1:1 circle uploads; reusable ImageUploader (WebP, ≤5 MB, EN/FI alt)
-- Full FI audit: Admin → Translations + `npm run check-i18n` (runs in build; fails on EN/FI key drift)
-- PRD: see `PRD.md`
+1. **Honeypot:** if `botField`/`website` populated → silent `200` (bot gets success, nothing dispatched)
+2. **Velocity:** if `Date.now() - formLoadedAt < 800ms` → silent `200`
+3. **Zod parse:** field-level errors → `400` with `error` + `issues`
+4. **Rate limits:**
+   - `5 req / hour / IP`
+   - `3 req / day / email`
+   - `Retry-After` header on 429
+5. **Spam heuristic:** >5 links in message → `400`
+6. **Lead destination:** `dispatchLead()` attempts:
+   - `CONTACT_WEBHOOK_URL` (generic POST) → if ok, `{ delivered: true }`
+   - else `RESEND_API_KEY` + `CONTACT_TO_EMAIL` (Resend email) → if ok, `{ delivered: true }`
+   - else → `{ delivered: false }` with explicit reason — **UI never claims delivery in this state**
 
-## v3.1 additions
-- Today's Specials = scrollable/swipeable carousel of Link cards (drag, arrows, dots, keyboard, ticker auto-scroll with pause, reduced-motion safe)
-- Wolt-style pizza cards + size/extras pizza sheet (26 toppings, €1/€2 extras, included toppings free, kitchen note, live total, server price re-validation)
-- Per-pizza images at /public/menu/pizza/<slug>.webp (10/38 generated; branded placeholder otherwise) + admin pizza-image uploader
-- Topping names EN/FI + per-size extra prices editable in Admin → Menu
+### Frontend honesty
 
-## v3.1.1 images-for-every-item
-- `src/lib/images.ts` manifest: item → imageKey → /public/menu/<cat>/<key>.webp (shared keys for size/meal variants; branded placeholder + caption)
-- `scripts/list-images.mjs` → /menu/index.json (build-gated coverage report)
-- Admin → Menu → Items: per-item image upload/replace with normalized persisted paths
-- 20/142 unique photos generated so far (pizzas 1–2 + South Asian Specials)
+`ContactForm.tsx` renders:
+
+- `delivered: true` → "Inquiry Delivered"
+- `delivered: false` → "Inquiry Logged — Preview Mode" + amber callout: *Set `CONTACT_WEBHOOK_URL` or `RESEND_API_KEY` to enable delivery.*
+
+No "success" is claimed unless `delivered === true`.
+
+### Env
+
+Copy `.env.example` to `.env.local`:
+
+```bash
+# Optional — if absent, form runs in honest preview mode (validated + logged, not forwarded)
+CONTACT_WEBHOOK_URL=https://hooks.example.com/axiom-leads
+# OR email via Resend
+RESEND_API_KEY=re_xxx
+CONTACT_TO_EMAIL=leads@axiomlabs.agency
+CONTACT_FROM_EMAIL=Axiom Labs <noreply@axiomlabs.agency>
+```
+
+## Demo Data — Labeling
+
+- `src/data/clients.ts`: every `impactMetric`/`results[]` prefixed with `ILLUSTRATIVE:`; footer + dossier banners + card badges all say *Illustrative*.
+- `src/data/vendorMatrix.ts`: all rows are synthetic examples; page has top banner + CSV export labeled illustrative.
+- `src/data/services.ts`: `metrics` are design targets or process notes, never outcome promises.
+- `src/data/openSource.ts`: each item has `note` discouraging production use without review.
+- No SOC2/HIPAA/ISO/FedRAMP claim is made anywhere. Healthcare service page is explicitly "concepts" with a no-claim disclaimer; privacy language is "patterns to discuss with counsel."
+
+## Run
+
+```bash
+npm install
+npm run build   # 32 routes, zero type errors
+npm run dev     # http://localhost:3000
+```
+
+### Tests
+
+- `npm run typecheck` — static types
+- `npm run build` — full production build (runs in CI)
+- `curl` smoke (see `scripts/smoke-contact.mjs` if present) or manual: POST to `/api/contact` with honeypot/velocity/rate-limit cases (see `src/lib/server/validation.ts`).
+
+## Deployment
+
+- **Vercel / Next standalone:** set env vars in dashboard; no extra config. `next.config.mjs` includes CSP, HSTS-style headers, and no `api` rewrite (API lives in the same Next instance). If you need an external backend, add a `rewrites()` entry and point `NEXT_PUBLIC_API_BASE_URL` accordingly.
+- **Fonts:** system stacks (no external font CDN) for offline builds; add `next/font` if you want Fraunces/Nunito.
+
+## Inspiration vs. Originality
+
+Visual references from `antimatterai.agency` (dark base `#030303`, conic rays, glass panels, marquee) were used as *interaction references only*. All copy, dossiers, icons, and shaders are original Axiom Labs creations — no branding, assets, or text copied.
+
+## License
+
+Demo code — adapt freely; do not ship demo dossiers as real client proof.
