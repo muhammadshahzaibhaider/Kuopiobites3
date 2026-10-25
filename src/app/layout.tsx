@@ -1,66 +1,45 @@
 import type { Metadata, Viewport } from "next";
-import "@fontsource-variable/fraunces";
-import "@fontsource-variable/nunito-sans";
-import "@fontsource/caveat/700.css";
 import "./globals.css";
-import Header from "@/components/Header";
-import Footer from "@/components/Footer";
-import CartDrawer from "@/components/CartDrawer";
-import { FixedBackgroundGate, MobileCTA, PageFade, Splash, Toasts } from "@/components/chrome";
-import { LangProvider } from "@/lib/i18n";
-import { ShopProvider } from "@/lib/store";
 
 export const metadata: Metadata = {
-  title: {
-    default: "Kuopio Bites — Grilli, Pizzeria & Asian Cuisine · Kuopio",
-    template: "%s · Kuopio Bites",
-  },
+  title: "Axiom Labs — Enterprise AI Architecture & Digital Engineering",
   description:
-    "Kuopio Bites at Jalkasenkatu 7, 70820 Kuopio — wood-fired pizzas, kebabs, wings, Karachi biryani and halwa puri. Order online or book a table. ☎ 044 981 6223",
-  icons: {
-    icon: [
-      { url: "/favicon.ico", sizes: "any" },
-      { url: "/favicon-32x32.png", type: "image/png", sizes: "32x32" },
-      { url: "/logo.png", type: "image/png" },
-    ],
-    apple: "/apple-touch-icon.png",
+    "Axiom Labs explores sovereign AI patterns, agent orchestration, and precision digital products through workshops, prototypes, and honest evaluation. Illustrative work only — no client results guaranteed.",
+  keywords: ["Axiom Labs", "AI Architecture", "Autonomous Agents", "Enterprise AI", "Next.js", "Digital Engineering"],
+  authors: [{ name: "Axiom Labs Studio" }],
+  openGraph: {
+    title: "Axiom Labs — Enterprise AI Architecture & Digital Engineering",
+    description: "Workshops, prototypes, and evaluation for AI systems and digital products. Demo site with illustrative concepts.",
+    url: "https://axiomlabs.agency",
+    siteName: "Axiom Labs",
+    locale: "en_US",
+    type: "website",
   },
+  twitter: {
+    card: "summary_large_image",
+    title: "Axiom Labs — Enterprise AI Architecture & Digital Engineering",
+    description: "Workshops, prototypes, and evaluation for AI systems and digital products.",
+  },
+  robots: { index: true, follow: true },
 };
 
 export const viewport: Viewport = {
-  themeColor: "#0F3D3E",
+  themeColor: "#030303",
   width: "device-width",
   initialScale: 1,
 };
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <head>
-        <link rel="icon" href="/favicon.ico" sizes="any" />
-        <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
-        <link rel="icon" type="image/png" href="/logo.png" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-      </head>
-      <body className="pb-16 lg:pb-0">
-        <FixedBackgroundGate />
-        <LangProvider>
-          <ShopProvider>
-            <Splash />
-            <Header />
-            <PageFade>
-              <main className="min-h-[70vh]">{children}</main>
-            </PageFade>
-            <Footer />
-            <CartDrawer />
-            <MobileCTA />
-            <Toasts />
-          </ShopProvider>
-        </LangProvider>
+    <html lang="en" className="dark scroll-smooth">
+      <body className="min-h-screen bg-[#030303] text-zinc-100 antialiased selection:bg-brand-primary selection:text-white font-sans overflow-x-hidden">
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:px-4 focus:py-2 focus:bg-brand-primary focus:text-white focus:rounded-md focus:shadow-lg focus:outline-none"
+        >
+          Skip to main content
+        </a>
+        {children}
       </body>
     </html>
   );

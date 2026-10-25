@@ -1,130 +1,152 @@
 "use client";
-import { motion } from "framer-motion";
+
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
-import { useLang } from "@/lib/i18n";
-import { RESTAURANT } from "@/lib/menu";
-import { useShop } from "@/lib/store";
-import SocialLinks from "./SocialLinks";
+import { footerLinks } from "@/data/navigation";
+import { Clock, ArrowUp, ShieldCheck } from "lucide-react";
 
 export default function Footer() {
-  const { settings, toast } = useShop();
-  const { t, dayName } = useLang();
-  const pathname = usePathname();
-  const [email, setEmail] = useState("");
-  const [done, setDone] = useState(false);
+  const [timeString, setTimeString] = useState("--:--:--");
+  useEffect(() => {
+    const update = () => {
+      const now = new Date();
+      setTimeString(now.toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    };
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, []);
 
-  if (pathname.startsWith("/admin")) return null;
+  const scrollToTop = () => window.scrollTo({ top: 0, behavior: "smooth" });
 
   return (
-    <footer className="mt-20 bg-cherry-deep text-cream">
-      <div className="gold-rule opacity-60" />
-      <div className="container-x grid gap-10 py-14 md:grid-cols-2 lg:grid-cols-4">
-        <div>
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src="/logo.png" alt="" className="h-16 w-16 rounded-full border-2 border-gold object-cover" />
-          <p className="mt-3 font-display text-2xl font-black">Kuopio Bites</p>
-          <p className="font-script text-xl text-gold-soft">& Asian cuisine</p>
-          <p className="mt-3 text-sm text-cream/80">
-            Grilli · Pizzeria · South Asian & Asian kitchen — made fresh in Kuopio.
-          </p>
-          <SocialLinks className="mt-4" />
-        </div>
-
-        <div>
-          <h3 className="font-display text-lg font-black text-gold-soft">{t("footer.hours")}</h3>
-          <ul className="mt-3 space-y-1.5 text-sm">
-            {[1, 2, 3, 4, 5, 6, 0].map((d) => (
-              <li key={d} className="flex justify-between gap-6 text-cream/85">
-                <span>{dayName(d)}</span>
-                <span className="font-bold tabular-nums">
-                  {settings.hours[d] ? `${settings.hours[d]!.open} – ${settings.hours[d]!.close}` : t("hours.closed")}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <div>
-          <h3 className="font-display text-lg font-black text-gold-soft">{t("footer.find")}</h3>
-          <address className="mt-3 not-italic text-sm text-cream/85">
-            {RESTAURANT.address}
-            <br />
-            Finland
-          </address>
-          <a href={RESTAURANT.phoneHref} className="mt-2 block text-lg font-black text-gold-soft hover:text-gold">
-            {RESTAURANT.phone}
-          </a>
-          <a href={RESTAURANT.mapLink} target="_blank" rel="noreferrer" className="mt-1 inline-block text-sm underline decoration-gold underline-offset-4 hover:text-gold">
-            {t("home.dirs")}
-          </a>
-          {(settings.platforms.wolt || settings.platforms.uberEats) && (
-            <p className="mt-4 text-sm text-cream/70">
-              {t("order.platforms")}:{" "}
-              {settings.platforms.wolt && (
-                <a href={settings.platforms.wolt} target="_blank" rel="noopener noreferrer" className="font-black text-gold-soft underline decoration-gold underline-offset-4 hover:text-gold">Wolt</a>
-              )}
-              {settings.platforms.wolt && settings.platforms.uberEats && " · "}
-              {settings.platforms.uberEats && (
-                <a href={settings.platforms.uberEats} target="_blank" rel="noopener noreferrer" className="font-black text-gold-soft underline decoration-gold underline-offset-4 hover:text-gold">Uber Eats</a>
-              )}
-            </p>
-          )}
-          <div className="mt-4 flex flex-col gap-1 text-sm">
-            <Link className="hover:text-gold" href="/menu">{t("footer.links")}</Link>
-            <Link className="hover:text-gold" href="/dining">{t("footer.book")}</Link>
-            <Link className="hover:text-gold" href="/account">{t("nav.account")}</Link>
+    <footer className="relative bg-[#020203] border-t border-white/[0.08] pt-16 pb-12 text-zinc-400">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="pb-12 mb-12 border-b border-white/[0.08] flex flex-col md:flex-row md:items-center justify-between gap-6">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-muted via-brand-primary to-white p-[1px] shadow-lg shadow-brand-primary/20">
+              <div className="w-full h-full bg-[#08080a] rounded-[10px] flex items-center justify-center">
+                <span className="font-mono font-black text-sm text-white tracking-tighter">AX</span>
+              </div>
+            </div>
+            <div>
+              <span className="font-sans font-bold text-lg text-white tracking-tight flex items-center gap-2">
+                AXIOM LABS
+                <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-white/[0.06] text-zinc-400 border border-white/[0.08]">v2.4</span>
+              </span>
+              <p className="text-xs text-zinc-400 font-mono mt-0.5">Enterprise AI Architecture &amp; Digital Engineering — Demo Site</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-4 bg-white/[0.03] border border-white/[0.08] px-4 py-2.5 rounded-xl">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" aria-hidden />
+              <Clock className="w-4 h-4 text-zinc-400" />
+              <span className="text-xs font-mono text-zinc-400">LOCAL TIME</span>
+            </div>
+            <div className="h-4 w-px bg-white/10" />
+            <div className="font-mono font-bold text-sm text-white tabular-nums tracking-wider">{timeString}</div>
+            <div className="text-[10px] font-mono text-zinc-400 uppercase">Your Browser</div>
           </div>
         </div>
 
-        <div>
-          <h3 className="font-display text-lg font-black text-gold-soft">{t("footer.news")}</h3>
-          <p className="mt-3 text-sm text-cream/80">{t("footer.newsNote")}</p>
-          {done ? (
-            <motion.p
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mt-4 rounded-xl bg-gold/20 px-4 py-3 text-sm font-bold text-gold-soft"
-            >
-              {t("footer.thanks")}
-            </motion.p>
-          ) : (
-            <form
-              className="mt-4 flex gap-2"
-              onSubmit={(e) => {
-                e.preventDefault();
-                if (!/.+@.+\..+/.test(email)) {
-                  toast("Please enter a valid email", "err");
-                  return;
-                }
-                // STUB → POST /api/newsletter (persist locally until newsletter administration is wired)
-                try {
-                  const raw = localStorage.getItem("kb_newsletter");
-                  const list: { email: string; at: number }[] = raw ? JSON.parse(raw) : [];
-                  if (!list.some((x) => x.email === email)) list.push({ email, at: Date.now() });
-                  localStorage.setItem("kb_newsletter", JSON.stringify(list));
-                } catch {}
-                setDone(true);
-              }}
-            >
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.fi"
-                className="min-h-[44px] w-full rounded-full border border-cream/30 bg-cherry px-4 text-sm text-cream placeholder:text-cream/50 focus:border-gold"
-              />
-              <button className="min-h-[44px] rounded-full bg-gold px-5 font-black text-cherry-dark transition hover:bg-gold-soft active:scale-95">
-                {t("footer.join")}
-              </button>
-            </form>
-          )}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-8 mb-16">
+          <div>
+            <h4 className="text-xs font-mono uppercase tracking-wider text-white font-semibold mb-4">Services</h4>
+            <ul className="space-y-2.5 text-xs">
+              {footerLinks.services.map((item, idx) => (
+                <li key={idx}>
+                  <Link href={item.href} className="hover:text-white transition-colors">
+                    {item.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <h4 className="text-xs font-mono uppercase tracking-wider text-white font-semibold mb-4">Case Studies</h4>
+            <p className="text-[11px] text-zinc-500 mb-3 font-mono">Illustrative — not client results</p>
+            <ul className="space-y-2.5 text-xs">
+              {footerLinks.work.map((item, idx) => (
+                <li key={idx}>
+                  <Link href={item.href} className="hover:text-white transition-colors">
+                    {item.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <h4 className="text-xs font-mono uppercase tracking-wider text-white font-semibold mb-4">Resources</h4>
+            <ul className="space-y-2.5 text-xs">
+              {footerLinks.resources.map((item, idx) => (
+                <li key={idx}>
+                  <Link href={item.href} className="hover:text-white transition-colors">
+                    {item.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <h4 className="text-xs font-mono uppercase tracking-wider text-white font-semibold mb-4 flex items-center gap-1.5">
+              Demos &amp; Labs <span className="w-1.5 h-1.5 rounded-full bg-brand-primary" aria-hidden />
+            </h4>
+            <ul className="space-y-2.5 text-xs">
+              {footerLinks.demos.map((item, idx) => (
+                <li key={idx}>
+                  <Link href={item.href} className="hover:text-white transition-colors">
+                    {item.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="col-span-2 md:col-span-1">
+            <h4 className="text-xs font-mono uppercase tracking-wider text-white font-semibold mb-4">Company</h4>
+            <ul className="space-y-2.5 text-xs mb-6">
+              {footerLinks.company.map((item, idx) => (
+                <li key={idx}>
+                  <Link href={item.href} className="hover:text-white transition-colors">
+                    {item.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+            <div className="p-3.5 rounded-xl bg-white/[0.02] border border-white/[0.06]">
+              <div className="flex items-center gap-1.5 text-[11px] font-mono text-zinc-300 mb-1">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" /> No Compliance Claim
+              </div>
+              <p className="text-[10px] text-zinc-500 leading-normal">
+                This demo site makes no SOC2, HIPAA, ISO, or FedRAMP claims. Enterprise use requires independent audit and contracts.
+              </p>
+            </div>
+          </div>
         </div>
-      </div>
-      <div className="border-t border-cream/15 py-5 text-center text-xs text-cream/60">
-        © {new Date().getFullYear()} Kuopio Bites · {RESTAURANT.address} · {t("footer.vat")}
+
+        <div className="pt-8 border-t border-white/[0.06] flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-zinc-500">
+          <div className="flex flex-wrap items-center gap-2">
+            <span>© {new Date().getFullYear()} Axiom Labs — Demo Site. No client relationship implied.</span>
+            <span className="text-zinc-700 hidden sm:inline">•</span>
+            <span className="text-[11px] font-mono text-zinc-600">All work &amp; metrics shown are illustrative</span>
+          </div>
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-4">
+              {footerLinks.legal.map((item, idx) => (
+                <Link key={idx} href={item.href} className="hover:text-zinc-300 transition-colors">
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={scrollToTop}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.04] hover:bg-white/[0.08] text-zinc-400 hover:text-white transition-colors focus:outline-none focus-visible:ring-1 focus-visible:ring-brand-primary"
+              aria-label="Back to top"
+            >
+              <span>Back to top</span> <ArrowUp className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
       </div>
     </footer>
   );
