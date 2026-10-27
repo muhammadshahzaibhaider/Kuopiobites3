@@ -9,14 +9,15 @@ import { CFG } from "./config";
 import { authClient, codeFlowAuthClient, db as supabaseDb, logActivity } from "./supabase";
 import { getItem, listCategories, listItems, toDatabaseItem } from "./supabase-menu";
 import { getOrder, listCustomerOrders, listOrders } from "./supabase-orders";
-import { saveSettings } from "./supabase-settings";
+import { readUserStreak, saveSettings, writeUserStreak } from "./supabase-settings";
 import { sanitizeToppingGroups } from "./lib/v3";
 import {
   clearSessionCookies, currentAuth, customerRow, ensureCsrfCookie, ensureCustomerRow, issueCustomerSession, issueStaffSession,
   readAuth, requireCustomer, requireStaff, staffById, staffRow, csrfCookie,
   type Role, type TokenPayload,
 } from "./auth";
-import { effectiveItems, loadSettings, orderStatus, priceCart, priceLines, validateOrder } from "./logic";
+import { effectiveItems, loadSettings, orderStatus, priceCart, priceLines, round2, validateOrder } from "./logic";
+import { applyPaidOrder, clearPendingRedeem, markPendingRedeem, streakFreeAmount } from "./streak";
 import { openInfo } from "./lib/hours";
 import type { CartLine, MenuItem, Order, Reservation, Settings, User } from "./lib/types";
 import {
@@ -116,7 +117,7 @@ app.use((req, res, next) => {
   next();
 });
 
-const businessError = /^(?:auth\.|avail\.|order\.|pre\.|preorder\.|resv\.|item\.|payment\.|validation\.|account\.|promo\.|https\.)/;
+const businessError = /^(?:auth\.|avail\.|order\.|pre\.|preorder\.|resv\.|item\.|payment\.|validation\.|account\.|promo\.|streak\.|https\.)/;
 const fail = (res: Response, code: number, error: string) => res.status(code).json({ error });
 const ok = (res: Response, data: unknown, code = 200) => res.status(code).json({ data });
 const wrap =
@@ -495,6 +496,23 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
   validateDeliveryAddress(body.type, body.address);
   const settings = await loadSettings();
   const priced = await validateOrder(settings, { type: body.type, lines: body.lines as CartLine[], scheduled: body.scheduled, lang: body.lang, code: body.code, address: body.address });
+  let redeemStreak = false;
+  if (body.redeemStreak) {
+    const streakCfg = settings.orderStreak;
+    const streak = await readUserStreak(auth.sub);
+    const free = streakCfg.enabled && streak.rewardReady ? streakFreeAmount(priced.lines, streakCfg.rewardItemId) : 0;
+    if (!streakCfg.enabled || !streak.rewardReady || free <= 0) throw new Error("streak.notReady");
+    const nextTotal = round2(priced.total - free);
+    if (nextTotal <= 0) throw new Error("streak.needOtherItems");
+    priced.total = nextTotal;
+    priced.discount = {
+      title: body.lang === "fi" ? streakCfg.rewardNameFi : streakCfg.rewardNameEn,
+      amount: round2((priced.discount?.amount ?? 0) + free),
+      offerId: priced.discount?.offerId,
+      freeDelivery: priced.discount?.freeDelivery,
+    };
+    redeemStreak = true;
+  }
   if (body.scheduled && settings.preorder.capacity) {
     const start = helsinkiIso(body.scheduled.date, "00:00");
     const end = helsinkiIso(nextDate(body.scheduled.date), "00:00");
@@ -561,7 +579,25 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
     if (error.message.includes("order.promoUnavailable")) throw new Error("promo.unavailable");
     throw error;
   }
+  if (redeemStreak) {
+    const streak = await readUserStreak(auth.sub);
+    await writeUserStreak(auth.sub, markPendingRedeem(streak, order.id));
+  }
   return { order, settings };
+}
+
+async function recordPaidStreak(order: Order): Promise<void> {
+  if (!order.userId) return;
+  const settings = await loadSettings();
+  if (!settings.orderStreak.enabled) return;
+  const current = await readUserStreak(order.userId);
+  await writeUserStreak(order.userId, applyPaidOrder(current, order.id, settings.orderStreak.target));
+}
+
+async function abandonStreakRedeem(order: Order): Promise<void> {
+  if (!order.userId) return;
+  const current = await readUserStreak(order.userId);
+  await writeUserStreak(order.userId, clearPendingRedeem(current, order.id));
 }
 
 async function releasePromoReservation(order: Order): Promise<void> {
@@ -584,6 +620,7 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
     const demo = { ...created.order, paymentStatus: "demo_paid" } as Order;
     const { error } = await supabaseDb.from("orders").update({ payment_status: "paid", payment_ref: `demo:${randomBytes(8).toString("hex")}` }).eq("id", demo.id);
     if (error) throw error;
+    await recordPaidStreak(demo);
     ok(res, { mode: "demo", order: { ...demo, status: orderStatus(demo) } });
     return;
   }
@@ -612,6 +649,7 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
     const { error: deleteError } = await supabaseDb.from("orders").delete().eq("id", created.order.id);
     if (deleteError) throw deleteError;
     await releasePromoReservation(created.order);
+    await abandonStreakRedeem(created.order);
     throw error;
   }
 }));
@@ -625,6 +663,7 @@ app.post("/api/orders", orderLimiter, requireCustomer, wrap(async (req, res) => 
   const order = { ...created.order, paymentStatus: "demo_paid" } as Order;
   const { error } = await supabaseDb.from("orders").update({ payment_status: "paid", payment_ref: `demo:${randomBytes(8).toString("hex")}` }).eq("id", order.id);
   if (error) throw error;
+  await recordPaidStreak(order);
   ok(res, { ...order, status: orderStatus(order) }, 201);
 }));
 
@@ -732,6 +771,7 @@ async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
       const { error } = await supabaseDb.from("orders").delete().eq("id", orderId);
       if (error) throw error;
       await releasePromoReservation(order);
+      await abandonStreakRedeem(order);
       return void ok(res, { received: true });
     }
     const amountMatches = Number(session.amount_total) === Math.round(order.total * 100) && session.currency === "eur";
@@ -743,6 +783,7 @@ async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
     const paymentRef = typeof session.payment_intent === "string" ? session.payment_intent : order.checkoutSessionId;
     const { error } = await supabaseDb.from("orders").update({ payment_status: "paid", payment_ref: paymentRef }).eq("id", orderId);
     if (error) throw error;
+    await recordPaidStreak({ ...order, paymentStatus: "paid" });
     ok(res, { received: true });
   } catch (error) {
     await supabaseDb.from("stripe_events").delete().eq("event_id", event.id);
@@ -919,6 +960,21 @@ app.put("/api/account/password", requireCustomer, wrap(async (req, res) => {
   const token = (req as any).accessToken as string | null;
   if (token) await supabaseDb.auth.admin.signOut(token, "others").catch(() => {});
   ok(res, { ok: true });
+}));
+
+app.get("/api/account/streak", requireCustomer, wrap(async (req, res) => {
+  const settings = await loadSettings();
+  const state = await readUserStreak(currentAuth(req)!.sub);
+  const cfg = settings.orderStreak;
+  ok(res, {
+    enabled: cfg.enabled,
+    target: cfg.target,
+    count: state.count,
+    rewardReady: state.rewardReady && cfg.enabled,
+    rewardItemId: cfg.rewardItemId,
+    rewardNameEn: cfg.rewardNameEn,
+    rewardNameFi: cfg.rewardNameFi,
+  });
 }));
 
 app.get("/api/account/orders", requireCustomer, wrap(async (req, res) => {

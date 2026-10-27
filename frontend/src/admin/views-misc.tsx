@@ -159,7 +159,7 @@ export function AdminStaffView() {
 
 /* ══ SETTINGS ══ */
 export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
-  const { settings, saveSettings, toast, logAudit } = useShop();
+  const { settings, saveSettings, toast, logAudit, adminItems } = useShop();
   const { dayName } = useLang();
   const [s, setS] = useState(settings);
   const [dirty, setDirty] = useState(false);
@@ -290,6 +290,33 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
         </label>
       </div>
 
+      <div className="space-y-3 rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
+        <h3 className="text-sm font-black text-cherry">Order streak loyalty</h3>
+        <p className="text-xs text-cherry/60">Paid orders fill 7 steps. At 7 the customer unlocks one free unit of the item you pick. Claiming it on checkout resets the streak.</p>
+        <label className="flex items-center justify-between text-sm font-black text-cherry">
+          Enable streak
+          <Switch on={Boolean(s.orderStreak?.enabled)} ariaLabel="order streak" onChange={() => markDirty({ ...s, orderStreak: { ...(s.orderStreak ?? settings.orderStreak), enabled: !s.orderStreak?.enabled } })} />
+        </label>
+        <Field label="Reward item">
+          <select
+            value={s.orderStreak?.rewardItemId ?? ""}
+            onChange={(e) => markDirty({ ...s, orderStreak: { ...(s.orderStreak ?? settings.orderStreak), rewardItemId: e.target.value } })}
+            className={inputCls}
+          >
+            <option value="">— pick a menu item —</option>
+            {adminItems.map((item) => (
+              <option key={item.id} value={item.id}>{item.name} ({item.id})</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="Reward name (EN)">
+          <input value={s.orderStreak?.rewardNameEn ?? ""} onChange={(e) => markDirty({ ...s, orderStreak: { ...(s.orderStreak ?? settings.orderStreak), rewardNameEn: e.target.value } })} className={inputCls} />
+        </Field>
+        <Field label="Reward name (FI)">
+          <input value={s.orderStreak?.rewardNameFi ?? ""} onChange={(e) => markDirty({ ...s, orderStreak: { ...(s.orderStreak ?? settings.orderStreak), rewardNameFi: e.target.value } })} className={inputCls} />
+        </Field>
+      </div>
+
       <div className="flex items-center justify-between rounded-2xl border border-cherry/10 bg-cream-deep/40 px-4 py-3 text-sm">
         <span className="font-black text-cherry">Today ({today}) — quick availability</span>
         <GhostBtn onClick={async () => {
@@ -322,6 +349,7 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
             headerLogo: s.headerLogo,
             hideUnavailable: s.hideUnavailable,
             offItems: s.offItems,
+            orderStreak: s.orderStreak,
           }, "Settings saved and reloaded from the database");
         }}>{saving ? "Saving…" : "Save settings"}</PrimaryBtn>
       </div>

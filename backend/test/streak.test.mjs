@@ -1,0 +1,32 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { applyPaidOrder, markPendingRedeem, streakFreeAmount } from "../src/streak.ts";
+
+test("seven paid orders unlock the reward and then freeze until redeem", () => {
+  let state = { count: 0, rewardReady: false };
+  for (let i = 1; i <= 7; i++) state = applyPaidOrder(state, `o${i}`, 7);
+  assert.equal(state.count, 7);
+  assert.equal(state.rewardReady, true);
+  const frozen = applyPaidOrder(state, "o8", 7);
+  assert.equal(frozen.count, 7);
+  assert.equal(frozen.rewardReady, true);
+});
+
+test("duplicate webhook for the same order does not double-count", () => {
+  let state = applyPaidOrder({ count: 0, rewardReady: false }, "o1", 7);
+  state = applyPaidOrder(state, "o1", 7);
+  assert.equal(state.count, 1);
+});
+
+test("redeeming order resets and starts the next cycle at 1", () => {
+  const ready = { count: 7, rewardReady: true };
+  const pending = markPendingRedeem(ready, "redeem-1");
+  const next = applyPaidOrder(pending, "redeem-1", 7);
+  assert.equal(next.count, 1);
+  assert.equal(next.rewardReady, false);
+});
+
+test("free amount is one unit of the configured reward item", () => {
+  assert.equal(streakFreeAmount([{ itemId: "pizza-1", unitPrice: 12.5, qty: 2 }], "pizza-1"), 12.5);
+  assert.equal(streakFreeAmount([{ itemId: "burger", unitPrice: 9, qty: 1 }], "pizza-1"), 0);
+});

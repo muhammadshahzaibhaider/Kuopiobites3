@@ -12,6 +12,8 @@ import { orderingInfo } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
 import { RESTAURANT } from "@/lib/menu";
 import { useShop } from "@/lib/store";
+import OrderStreak from "@/components/OrderStreak";
+import { apiAccountStreak } from "@/lib/api";
 
 export default function OrderPage() {
   const shop = useShop();
@@ -25,6 +27,8 @@ export default function OrderPage() {
   const [paying, setPaying] = useState(false);
   const { t, dayName, lang } = useLang();
   const [code, setCode] = useState("");
+  const [redeemStreak, setRedeemStreak] = useState(false);
+  const [streakReady, setStreakReady] = useState(false);
 
   /* Opening hours are time-of-day data: never render them during prerender or
      the first client pass (#418), and never from the bundled defaults while the
@@ -60,6 +64,14 @@ export default function OrderPage() {
   useEffect(() => {
     setPhone(user?.phone ?? "");
   }, [user?.phone]);
+  useEffect(() => {
+    if (!user || !settings.orderStreak?.enabled) { setStreakReady(false); return; }
+    let live = true;
+    apiAccountStreak().then((row) => { if (live) setStreakReady(Boolean(row.rewardReady)); }).catch(() => { if (live) setStreakReady(false); });
+    return () => { live = false; };
+  }, [user, settings.orderStreak?.enabled]);
+  const rewardId = settings.orderStreak?.rewardItemId;
+  const canRedeem = streakReady && Boolean(rewardId) && cart.some((line) => line.itemId === rewardId);
 
   useEffect(() => {
     if (type !== "delivery" || address.trim()) return;
@@ -130,6 +142,7 @@ export default function OrderPage() {
         scheduled,
         lang,
         code: code || undefined,
+        redeemStreak: canRedeem && redeemStreak,
         discount: disc.amount > 0 ? { amount: disc.amount, title: disc.title, offerId: disc.offer?.id } : undefined,
       });
       if (checkout.mode === "stripe" && checkout.url) {
@@ -195,7 +208,14 @@ export default function OrderPage() {
             </h2>
             {user ? (
               <div className="rounded-3xl border border-cherry/10 bg-cream-deep p-5 text-sm font-bold text-cherry/80 shadow-card">
-                {user.name} · {user.email}
+                <OrderStreak compact />
+                <p className="mt-4">{user.name} · {user.email}</p>
+                {canRedeem && (
+                  <label className="mt-4 flex items-center gap-3 rounded-2xl bg-gold/20 px-4 py-3 text-cherry">
+                    <input type="checkbox" checked={redeemStreak} onChange={(e) => setRedeemStreak(e.target.checked)} className="h-5 w-5 accent-[#0F3D3E]" />
+                    {t("streak.use")}
+                  </label>
+                )}
                 {(user.phone ?? "").replace(/\D/g, "").length < 9 && (
                   <input
                     type="tel"

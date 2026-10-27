@@ -7,6 +7,7 @@ import { RESTAURANT, WHATSAPP_DISPLAY, WHATSAPP_GREETING, whatsappUrl } from "@/
 import { useShop } from "@/lib/store";
 import WhatsAppIcon from "@/components/WhatsAppIcon";
 import SocialAccounts from "@/components/SocialAccounts";
+import OrderStreak from "@/components/OrderStreak";
 
 export default function AboutPage() {
   const { settings, settingsReady, toast } = useShop();
@@ -59,7 +60,8 @@ export default function AboutPage() {
       {/* contact */}
       <div className="container-x mt-20">
         <SectionHead kicker={t("about.write")} title={t("about.contact")} center />
-        <div className="mb-8">
+        <div className="mb-8 space-y-6">
+          <OrderStreak />
           <SocialAccounts />
         </div>
         <Stagger className="grid gap-6 lg:grid-cols-2">

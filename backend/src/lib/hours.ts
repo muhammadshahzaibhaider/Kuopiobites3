@@ -77,6 +77,7 @@ export const DEFAULT_SETTINGS: Settings = {
   audit: [],
   announcement: { enabled: false, text: "" },
   pauseMessage: "Keitti\u00f6mme pit\u00e4\u00e4 lyhyen tauon \u2014 palaamme pian!",
+  orderStreak: { enabled: true, target: 7, rewardItemId: "", rewardNameEn: "Free pizza", rewardNameFi: "Ilmainen pizza" },
 };
 
 export const DAY_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;

@@ -3,6 +3,7 @@ import { db } from "./supabase";
 import { DEFAULT_SETTINGS } from "./lib/hours";
 import { sanitizeToppingGroups } from "./lib/v3";
 import type { CatMeta, ModGroup, Offer, Settings, SpecialItem, ToppingMeta, UploadedImg } from "./lib/types";
+import { normalizeStreakCfg, normalizeStreakState, type StreakState } from "./streak";
 
 const slug = (value: string) => value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
@@ -181,6 +182,7 @@ export async function loadSettings(): Promise<Settings> {
     radiusKm: Number(row.radius_km),
     readyTimeMinutes: Number((extra.readyTimeMinutes as number | undefined) ?? DEFAULT_SETTINGS.readyTimeMinutes),
     deliveryRules: (extra.deliveryRules as Settings["deliveryRules"] | undefined) ?? DEFAULT_SETTINGS.deliveryRules,
+    orderStreak: normalizeStreakCfg(extra.orderStreak),
     vatRate: Number(row.vat_rate),
     preorder: row.preorder,
     blockedDates: row.blocked_dates ?? [],
@@ -294,7 +296,13 @@ export async function saveSettings(settings: Settings, client: SupabaseClient = 
     deliveryRules: settings.deliveryRules,
     readyTimeMinutes: settings.readyTimeMinutes,
     toppingList: settings.toppings,
+    orderStreak: settings.orderStreak,
   };
+  const previousExtra = await client.from("shop_settings").select("extra").eq("id", true).maybeSingle();
+  const keptStreaks = (previousExtra.data?.extra as Record<string, unknown> | undefined)?.orderStreaks;
+  if (keptStreaks && typeof keptStreaks === "object") {
+    (extra as Record<string, unknown>).orderStreaks = keptStreaks;
+  }
   await check(client.from("shop_settings").upsert({
     id: true,
     paused: settings.paused,
@@ -520,4 +528,22 @@ export async function saveSettings(settings: Settings, client: SupabaseClient = 
   if (changedSpecials.size) writes.push(() => check(client.from("todays_special").upsert([...changedSpecials.values()]), "special"));
 
   await runWrites(writes);
+}
+
+export async function readUserStreak(userId: string): Promise<StreakState> {
+  const { data, error } = await db.from("shop_settings").select("extra").eq("id", true).maybeSingle();
+  if (error) throw error;
+  const map = ((data?.extra as Record<string, unknown> | undefined)?.orderStreaks ?? {}) as Record<string, unknown>;
+  return normalizeStreakState(map[userId]);
+}
+
+export async function writeUserStreak(userId: string, state: StreakState): Promise<void> {
+  const { data, error } = await db.from("shop_settings").select("extra").eq("id", true).single();
+  if (error) throw error;
+  const extra = { ...((data?.extra as Record<string, unknown> | undefined) ?? {}) };
+  const map = { ...((extra.orderStreaks as Record<string, unknown> | undefined) ?? {}) };
+  map[userId] = state;
+  extra.orderStreaks = map;
+  const { error: writeError } = await db.from("shop_settings").update({ extra }).eq("id", true);
+  if (writeError) throw writeError;
 }
