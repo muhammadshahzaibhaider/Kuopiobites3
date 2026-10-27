@@ -16,49 +16,8 @@ export default function AboutPage() {
 
   return (
     <div className="pt-24 sm:pt-32">
+      {/* contact first */}
       <div className="container-x">
-        <SectionHead
-          kicker={t("about.kicker")}
-          title={t("about.title")}
-          sub={t("about.sub")}
-        />
-        <div className="grid items-start gap-10 lg:grid-cols-2">
-          <Reveal>
-            <div className="space-y-4 text-cherry/85">
-              <p>
-                {t("about.p1")}
-              </p>
-              <p>
-                {t("about.p2")}
-              </p>
-              <p>
-                {t("about.p3")}
-              </p>
-            </div>
-            <div className="mt-8 grid grid-cols-3 gap-4 text-center">
-              {[
-                ["36+", "pizza recipes"],
-                ["10", "kebab dishes"],
-                ["7", "days a week"],
-              ].map(([n, l]) => (
-                <div key={l} className="rounded-3xl bg-cream-deep p-4 shadow-card">
-                  <p className="font-display text-3xl font-black text-cherry-bright">{n}</p>
-                  <p className="text-xs font-black uppercase tracking-wide text-cherry/60">{l}</p>
-                </div>
-              ))}
-            </div>
-          </Reveal>
-          <Reveal delay={0.15} className="relative">
-            <Steam className="absolute -top-8 left-1/2 z-10 -translate-x-1/2" />
-            <div className="absolute -inset-2 rotate-1 rounded-3xl border-2 border-gold/60" aria-hidden />
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/img/hero.jpg" alt="The Kuopio Bites spread" className="relative aspect-[4/3] w-full rounded-3xl object-cover shadow-lift" />
-          </Reveal>
-        </div>
-      </div>
-
-      {/* contact */}
-      <div className="container-x mt-20">
         <SectionHead kicker={t("about.write")} title={t("about.contact")} center />
         <div className="mb-8 space-y-6">
           <OrderStreak />
@@ -112,6 +71,47 @@ export default function AboutPage() {
             </form>
           </StaggerItem>
         </Stagger>
+      </div>
+
+      <div className="container-x mt-20 pb-8">
+        <SectionHead
+          kicker={t("about.kicker")}
+          title={t("about.title")}
+          sub={t("about.sub")}
+        />
+        <div className="grid items-start gap-10 lg:grid-cols-2">
+          <Reveal>
+            <div className="space-y-4 text-cherry/85">
+              <p>
+                {t("about.p1")}
+              </p>
+              <p>
+                {t("about.p2")}
+              </p>
+              <p>
+                {t("about.p3")}
+              </p>
+            </div>
+            <div className="mt-8 grid grid-cols-3 gap-4 text-center">
+              {[
+                ["36+", "pizza recipes"],
+                ["10", "kebab dishes"],
+                ["7", "days a week"],
+              ].map(([n, l]) => (
+                <div key={l} className="rounded-3xl bg-cream-deep p-4 shadow-card">
+                  <p className="font-display text-3xl font-black text-cherry-bright">{n}</p>
+                  <p className="text-xs font-black uppercase tracking-wide text-cherry/60">{l}</p>
+                </div>
+              ))}
+            </div>
+          </Reveal>
+          <Reveal delay={0.15} className="relative">
+            <Steam className="absolute -top-8 left-1/2 z-10 -translate-x-1/2" />
+            <div className="absolute -inset-2 rotate-1 rounded-3xl border-2 border-gold/60" aria-hidden />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/img/hero.jpg" alt="The Kuopio Bites spread" className="relative aspect-[4/3] w-full rounded-3xl object-cover shadow-lift" />
+          </Reveal>
+        </div>
       </div>
     </div>
   );
