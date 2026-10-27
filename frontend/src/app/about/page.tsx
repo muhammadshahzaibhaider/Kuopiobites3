@@ -6,6 +6,7 @@ import { useLang } from "@/lib/i18n";
 import { RESTAURANT, WHATSAPP_DISPLAY, WHATSAPP_GREETING, whatsappUrl } from "@/lib/menu";
 import { useShop } from "@/lib/store";
 import WhatsAppIcon from "@/components/WhatsAppIcon";
+import SocialAccounts from "@/components/SocialAccounts";
 
 export default function AboutPage() {
   const { settings, settingsReady, toast } = useShop();
@@ -58,6 +59,9 @@ export default function AboutPage() {
       {/* contact */}
       <div className="container-x mt-20">
         <SectionHead kicker={t("about.write")} title={t("about.contact")} center />
+        <div className="mb-8">
+          <SocialAccounts />
+        </div>
         <Stagger className="grid gap-6 lg:grid-cols-2">
           <StaggerItem className="rounded-3xl border border-cherry/10 bg-cream-deep p-7 shadow-card">
             <h3 className="font-display text-xl font-black text-cherry">{t("about.visit")}</h3>
