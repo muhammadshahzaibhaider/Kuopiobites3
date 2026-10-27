@@ -278,6 +278,14 @@ export interface Settings {
   audit: { ts: number; who: string; msg: string }[];
   announcement: { enabled: boolean; text: string };
   pauseMessage: string;
+  /** 7-order loyalty: admin picks the free item unlocked at streak target. */
+  orderStreak: {
+    enabled: boolean;
+    target: number;
+    rewardItemId: string;
+    rewardNameEn: string;
+    rewardNameFi: string;
+  };
 }
 
 export interface MenuOverride {

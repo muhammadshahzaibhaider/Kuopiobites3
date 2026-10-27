@@ -93,7 +93,7 @@ interface ShopCtx {
   dismissCartIssues: () => void;
 
   orders: Order[];
-  startCheckout: (o: Omit<Order, "id" | "createdAt" | "paymentId" | "paymentStatus"> & { lang?: Lang; code?: string }) => Promise<{ mode: "stripe" | "demo"; url?: string; sessionId?: string; orderId?: string; order?: Order }>;
+  startCheckout: (o: Omit<Order, "id" | "createdAt" | "paymentId" | "paymentStatus"> & { lang?: Lang; code?: string; redeemStreak?: boolean }) => Promise<{ mode: "stripe" | "demo"; url?: string; sessionId?: string; orderId?: string; order?: Order }>;
   placeOrder: (o: Omit<Order, "id" | "createdAt" | "paymentId" | "paymentStatus">) => Promise<Order>;
   setOrderStatus: (id: string, s: OrderStatus) => Promise<boolean>;
   setOrderReadyTime: (id: string, minutes: number | null) => Promise<Order | null>;
@@ -671,7 +671,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const startCheckout: ShopCtx["startCheckout"] = async (o) => {
     return api.apiCreateCheckoutSession({
       type: o.type, customer: o.customer, address: o.address, note: o.note,
-      lines: o.lines, total: o.total, scheduled: o.scheduled, lang: o.lang, code: o.code,
+      lines: o.lines, total: o.total, scheduled: o.scheduled, lang: o.lang, code: o.code, redeemStreak: o.redeemStreak,
     });
   };
   const placeOrder: ShopCtx["placeOrder"] = async (o) => {

@@ -174,6 +174,7 @@ export const customerOrderSchema = z.object({
   /* Accepted for backwards compatibility only; the server ignores it completely. */
   total: finiteMoney,
   scheduled: preorderSchema.optional(), lang: z.enum(["en", "fi"]).optional(), code: text(40).optional(),
+  redeemStreak: z.boolean().optional(),
 }).strict();
 
 export const reservationSchema = z.object({
@@ -256,6 +257,13 @@ export const settingsSchema = z.object({
   offOptions: z.record(z.array(text(100)).max(100)), catMeta: z.record(catMetaSchema), catOrder: z.array(text(60)).max(200),
   audit: z.array(z.object({ ts: z.number().int().nonnegative(), who: text(120), msg: text(500) }).strict()).max(10000),
   announcement: z.object({ enabled: z.boolean(), text: text(500) }).strict(), pauseMessage: text(500),
+  orderStreak: z.object({
+    enabled: z.boolean(),
+    target: z.number().int().min(2).max(20),
+    rewardItemId: text(60),
+    rewardNameEn: text(80),
+    rewardNameFi: text(80),
+  }).strict(),
 }).strict();
 
 export const categoryCreateSchema = z.object({ title: text(60).min(1), en: text(60).optional() }).strict();

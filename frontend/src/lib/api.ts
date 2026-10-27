@@ -66,6 +66,11 @@ export const apiClearCart = () => api<CartLine[]>("/api/cart", { method: "DELETE
 export const apiMergeCart = (lines: CartLine[]) => api<CartLine[]>("/api/cart", { method: "PUT", body: { lines } });
 export const apiChangePassword = (current: string, next: string) => api<{ ok: true }>("/api/account/password", { method: "PUT", body: { current, next } });
 export const apiAccountOrders = () => api<Order[]>("/api/account/orders");
+export type OrderStreakStatus = {
+  enabled: boolean; target: number; count: number; rewardReady: boolean;
+  rewardItemId: string; rewardNameEn: string; rewardNameFi: string;
+};
+export const apiAccountStreak = () => api<OrderStreakStatus>("/api/account/streak");
 export const apiCustomers = () =>
   api<{ id: string; name: string; email: string; phone: string; marketing: number; created_at: number; orderCount: number; lifetimeSpend: number }[]>("/api/customers", { staff: true });
 
@@ -99,7 +104,7 @@ export const apiPriceCart = (lines: CartLine[], type: "pickup" | "delivery", lan
 export type CheckoutInput = {
   type: "pickup" | "delivery"; customer: Order["customer"]; address?: string; note?: string;
   lines: CartLine[]; total: number; scheduled?: { date: string; time: string };
-  lang?: "en" | "fi"; code?: string;
+  lang?: "en" | "fi"; code?: string; redeemStreak?: boolean;
 };
 export const apiCreateOrder = (o: CheckoutInput) => api<Order>("/api/orders", { method: "POST", body: o });
 export const apiCreateCheckoutSession = (o: CheckoutInput) =>

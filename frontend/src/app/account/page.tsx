@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import AuthForm, { PasswordStrength } from "@/components/AuthForm";
 import FavoritesSection from "@/components/FavoritesSection";
+import OrderStreak from "@/components/OrderStreak";
 import PasswordInput from "@/components/PasswordInput";
 import { describeAuthError, PASSWORD_MIN_LENGTH, passwordOk } from "@/lib/authErrors";
 import { cx, eur, fmtDate, fmtTime } from "@/lib/format";
@@ -46,6 +47,10 @@ export default function AccountPage() {
         <h1 className="text-4xl font-black text-cherry">{t("acct.title")}</h1>
         <div className="gold-rule mt-4 w-24" />
       </motion.div>
+
+      <div className="mt-8">
+        <OrderStreak />
+      </div>
 
       <div className="mt-8 grid gap-6 md:grid-cols-2">
         {/* profile */}
