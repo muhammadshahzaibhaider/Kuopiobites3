@@ -1,6 +1,7 @@
 "use client";
 import { motion } from "framer-motion";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { orderLineDetails } from "@/lib/cart-lines";
 import { cx, eur, fmtTime } from "@/lib/format";
 import { useShop } from "@/lib/store";
 import type { Order } from "@/lib/types";
@@ -124,9 +125,9 @@ export default function NewOrderAlert({
                     <li key={l.key} className="flex items-start justify-between gap-2 text-sm">
                       <span className="min-w-0">
                         <span className="font-black text-cherry">{l.qty}× {l.name}</span>
-                        <span className="block text-[11px] font-semibold text-cherry/50">
-                          {[l.variantLabel, ...(l.options ?? [])].filter(Boolean).join(" · ")}
-                        </span>
+                        {orderLineDetails(l).map((row) => (
+                          <span key={row} className="block text-[11px] font-semibold text-cherry/55">{row}</span>
+                        ))}
                       </span>
                       <span className="shrink-0 font-black tabular-nums text-cherry/80">{eur(l.unitPrice * l.qty)}</span>
                     </li>

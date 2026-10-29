@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
+import { orderLineDetails } from "@/lib/cart-lines";
 import { eur } from "@/lib/format";
 import { RESTAURANT } from "@/lib/menu";
 import { todayStrHelsinki } from "@/lib/hours";
@@ -191,7 +192,11 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
     { key: "time", label: "Placed", sort: (o) => o.createdAt, render: (o) => <span className="tabular-nums text-cherry/60">{fmtDT(o.createdAt)}</span> },
     { key: "cust", label: "Customer", sort: (o) => o.customer.name, render: (o) => <span className="font-bold">{o.customer.name}</span> },
     { key: "type", label: "Type", hideMd: true, render: (o) => <Pill tone={o.type === "delivery" ? "teal" : "gray"}>{o.type}</Pill> },
-    { key: "items", label: "Items", hideMd: true, render: (o) => <span className="text-cherry/60">{o.lines.reduce((a, l) => a + l.qty, 0)} pcs</span> },
+    { key: "items", label: "Items", hideMd: true, render: (o) => (
+      <span className="max-w-[280px] text-xs font-bold text-cherry/70">
+        {o.lines.map((l) => `${l.qty}× ${l.name}${l.variantLabel ? ` (${l.variantLabel})` : ""}`).join("; ") || "—"}
+      </span>
+    ) },
     {
       key: "total", label: "Total", sort: (o) => o.total,
       render: (o) => <span className="font-black tabular-nums">{eur(o.total)}</span>,
@@ -302,9 +307,17 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
               </div>
               <div>
                 <p className="font-black text-cherry">Items</p>
-                <ul className="mt-1 space-y-1 text-cherry/80">
+                <ul className="mt-1 space-y-2 text-cherry/80">
                   {detail.lines.map((l, i) => (
-                    <li key={i}>{l.qty}× {l.name} ({l.variantLabel}){l.options.length ? ` — ${l.options.join("; ")}` : ""} · {eur(l.unitPrice * l.qty)}</li>
+                    <li key={i} className="rounded-lg bg-cream px-2 py-1.5">
+                      <div className="flex justify-between gap-2">
+                        <span className="font-black text-cherry">{l.qty}× {l.name}</span>
+                        <span className="shrink-0 font-black tabular-nums">{eur(l.unitPrice * l.qty)}</span>
+                      </div>
+                      {orderLineDetails(l).map((row) => (
+                        <p key={row} className="text-xs font-bold text-cherry/65">{row}</p>
+                      ))}
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -404,12 +417,7 @@ function ticketLines(o: Order, vatRate: number): string {
   const invoiceNo = String(1_000_000 + (Math.abs(o.createdAt) % 900_000)).padStart(7, "0");
   const itemRows = o.lines.flatMap((l) => {
     const rows = [ticketPad(`${l.qty}x ${l.name}`, `${fiNum(l.unitPrice * l.qty)} B`)];
-    if (l.variantLabel) rows.push(`  ${l.variantLabel}`);
-    for (const opt of l.options) rows.push(`  ${opt}`);
-    if (l.pizza?.extras?.length) {
-      for (const extra of l.pizza.extras) rows.push(`  ${extra.count}x ${extra.label}`);
-    }
-    if (l.note) rows.push(`  ${l.note}`);
+    for (const row of orderLineDetails(l)) rows.push(`  ${row}`);
     return rows;
   });
   if (o.type === "delivery" && o.deliveryFee > 0) {

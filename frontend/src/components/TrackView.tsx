@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { cx, eur, fmtTime, fmtDate } from "@/lib/format";
 import { RESTAURANT } from "@/lib/menu";
 import { useLang } from "@/lib/i18n";
-import { cartOptionLabel } from "@/lib/v3";
+import { orderLineDetails } from "@/lib/cart-lines";
 import { useShop, useTick } from "@/lib/store";
 import { apiGetOrder } from "@/lib/api";
 import type { Order, OrderStatus } from "@/lib/types";
@@ -20,7 +20,7 @@ const STEPS: { id: OrderStatus; icon: string }[] = [
 
 /** Order tracking timeline + receipt. Shared by /track/[id] and /track?id=. */
 export default function TrackView({ id }: { id: string }) {
-  const { orders, orderStatus, adminItems, settings } = useShop();
+  const { orders, orderStatus } = useShop();
   const { t, lang } = useLang();
   const [remoteOrder, setRemoteOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
@@ -140,7 +140,9 @@ export default function TrackView({ id }: { id: string }) {
             <li key={i} className="flex justify-between gap-4">
               <span className="font-bold text-cherry/80">
                 {l.qty}× {l.name}
-                {l.options.length > 0 && <span className="block text-xs text-cherry/50">{l.options.map((option) => cartOptionLabel(adminItems.find((item) => item.id === l.itemId), settings, lang, option)).join(" · ")}</span>}
+                {orderLineDetails(l).map((row) => (
+                  <span key={row} className="block text-xs text-cherry/50">{row}</span>
+                ))}
               </span>
               <span className="font-black tabular-nums">{eur(l.unitPrice * l.qty)}</span>
             </li>
