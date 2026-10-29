@@ -87,3 +87,25 @@ export function sanitizeCartLines(raw: unknown): CartLine[] {
   }
   return out;
 }
+
+/** Kitchen / ticket / track: size, included toppings, extras, mods, line note. */
+export function orderLineDetails(line: CartLine): string[] {
+  const rows: string[] = [];
+  if (line.variantLabel) rows.push(line.variantLabel);
+  if (line.pizza?.builder) rows.push("Fantasia / custom");
+  if (line.pizza?.included?.length) rows.push(`Täytteet: ${line.pizza.included.join(", ")}`);
+  for (const extra of line.pizza?.extras ?? []) {
+    if (!extra.label) continue;
+    rows.push(extra.count > 1 ? `Extra ${extra.count}× ${extra.label}` : `Extra ${extra.label}`);
+  }
+  for (const opt of line.options ?? []) {
+    if (opt && !rows.includes(opt)) rows.push(opt);
+  }
+  if (line.note) rows.push(`Note: ${line.note}`);
+  return rows;
+}
+
+export function orderLineSummary(line: CartLine): string {
+  const bits = [`${line.qty}× ${line.name}`, ...orderLineDetails(line)];
+  return bits.join(" · ");
+}
