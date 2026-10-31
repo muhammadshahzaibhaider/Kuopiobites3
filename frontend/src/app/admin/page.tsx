@@ -12,7 +12,7 @@ import type { Order } from "@/lib/types";
 import { DashboardView, OrdersView, DiningView } from "@/admin/views-orders";
 import { MenuCategoriesView, MenuItemsView, ToppingsMasterView, SpecialsView } from "@/admin/views-menu";
 import { DeliveryRulesView, OffersView } from "@/admin/views-delivery";
-import { CustomersView, AnalyticsView, AdminStaffView, SettingsView } from "@/admin/views-misc";
+import { CustomersView, WalkInStreaksView, AnalyticsView, AdminStaffView, SettingsView } from "@/admin/views-misc";
 
 /* credentials live ONLY in the backend (bcrypt + scoped staff JWTs) */
 
@@ -169,7 +169,10 @@ const NAV: Group[] = [
     { id: "menu.delivery", label: "Delivery rules", icon: "clock" },
     { id: "menu.special", label: "Today's Special", icon: "star" },
   ] },
-  { id: "customers", label: "Customers", icon: "users", leaf: "customers" },
+  { id: "customers", label: "Customers", icon: "users", leaves: [
+    { id: "customers", label: "Directory", icon: "users" },
+    { id: "customers.streaks", label: "Walk-in stamps", icon: "star" },
+  ] },
   { id: "analytics", label: "Analytics", icon: "analytics", leaves: [
     { id: "analytics.sales", label: "Sales", icon: "analytics" },
     { id: "analytics.items", label: "Item Performance", icon: "list" },
@@ -581,6 +584,7 @@ function renderView(id: string, go: (v: string) => void) {
     case "menu.delivery": return <DeliveryRulesView />;
     case "menu.special": return <SpecialsView />;
     case "customers": return <CustomersView />;
+    case "customers.streaks": return <WalkInStreaksView />;
     case "analytics.sales": return <AnalyticsView mode="sales" />;
     case "analytics.items": return <AnalyticsView mode="items" />;
     case "analytics.peaks": return <AnalyticsView mode="peaks" />;

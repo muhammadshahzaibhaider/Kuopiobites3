@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyPaidOrder, markPendingRedeem, streakFreeAmount } from "../src/streak.ts";
+import { applyPaidOrder, markPendingRedeem, pendingWalkInClaim, streakFreeAmount } from "../src/streak.ts";
 
 test("seven paid orders unlock the reward and then freeze until redeem", () => {
   let state = { count: 0, rewardReady: false };
@@ -24,6 +24,15 @@ test("redeeming order resets and starts the next cycle at 1", () => {
   const next = applyPaidOrder(pending, "redeem-1", 7);
   assert.equal(next.count, 1);
   assert.equal(next.rewardReady, false);
+});
+
+test("only one pending walk-in claim per customer", () => {
+  const claims = [
+    { id: "a", userId: "u1", name: "A", email: "a@x", note: "", createdAt: 1, status: "approved" },
+    { id: "b", userId: "u1", name: "A", email: "a@x", note: "", createdAt: 2, status: "pending" },
+  ];
+  assert.equal(pendingWalkInClaim(claims, "u1")?.id, "b");
+  assert.equal(pendingWalkInClaim(claims, "u2"), undefined);
 });
 
 test("free amount is one unit of the configured reward item", () => {

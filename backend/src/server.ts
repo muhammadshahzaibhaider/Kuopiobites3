@@ -9,7 +9,7 @@ import { CFG } from "./config";
 import { authClient, codeFlowAuthClient, db as supabaseDb, logActivity } from "./supabase";
 import { getItem, listCategories, listItems, toDatabaseItem } from "./supabase-menu";
 import { getOrder, listCustomerOrders, listOrders } from "./supabase-orders";
-import { readUserStreak, saveSettings, writeUserStreak } from "./supabase-settings";
+import { readUserStreak, readWalkInClaims, saveSettings, writeUserStreak, writeWalkInClaims } from "./supabase-settings";
 import { sanitizeToppingGroups } from "./lib/v3";
 import {
   clearSessionCookies, currentAuth, customerRow, ensureCsrfCookie, ensureCustomerRow, issueCustomerSession, issueStaffSession,
@@ -17,13 +17,14 @@ import {
   type Role, type TokenPayload,
 } from "./auth";
 import { effectiveItems, loadSettings, orderStatus, priceCart, priceLines, round2, validateOrder } from "./logic";
-import { applyPaidOrder, clearPendingRedeem, markPendingRedeem, streakFreeAmount } from "./streak";
+import { applyPaidOrder, clearPendingRedeem, markPendingRedeem, pendingWalkInClaim, streakFreeAmount } from "./streak";
 import { openInfo } from "./lib/hours";
 import type { CartLine, MenuItem, Order, Reservation, Settings, User } from "./lib/types";
 import {
   accountPatchSchema, cartLineSchema, cartMergeSchema, cartQtySchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema,
   priceRequestSchema,
   customerOrderSchema, favoriteAddSchema, favoriteMergeSchema, passwordChangeSchema,
+  walkInClaimActionSchema, walkInClaimSchema,
   forgotPasswordSchema, loginSchema, menuItemSchema, paramId, promotionPatchSchema, registerSchema, reorderSchema, reservationSchema,
   resetPasswordSchema, settingsSchema, specialPatchSchema, staffLoginSchema, statusSchema, readyTimeSchema, translationSchema, newsletterSchema,
 } from "./schemas";
@@ -964,7 +965,9 @@ app.put("/api/account/password", requireCustomer, wrap(async (req, res) => {
 
 app.get("/api/account/streak", requireCustomer, wrap(async (req, res) => {
   const settings = await loadSettings();
-  const state = await readUserStreak(currentAuth(req)!.sub);
+  const userId = currentAuth(req)!.sub;
+  const state = await readUserStreak(userId);
+  const pending = pendingWalkInClaim(await readWalkInClaims(), userId);
   const cfg = settings.orderStreak;
   ok(res, {
     enabled: cfg.enabled,
@@ -974,7 +977,54 @@ app.get("/api/account/streak", requireCustomer, wrap(async (req, res) => {
     rewardItemId: cfg.rewardItemId,
     rewardNameEn: cfg.rewardNameEn,
     rewardNameFi: cfg.rewardNameFi,
+    pendingClaim: pending ? { id: pending.id, createdAt: pending.createdAt, status: pending.status } : null,
   });
+}));
+
+app.post("/api/account/streak/claim", requireCustomer, wrap(async (req, res) => {
+  const body = walkInClaimSchema.parse(req.body ?? {});
+  const settings = await loadSettings();
+  if (!settings.orderStreak.enabled) throw new Error("streak.disabled");
+  const auth = currentAuth(req)!;
+  const customer = authUser(req);
+  const claims = await readWalkInClaims();
+  if (pendingWalkInClaim(claims, auth.sub)) throw new Error("streak.claimPending");
+  const state = await readUserStreak(auth.sub);
+  if (state.rewardReady) throw new Error("streak.rewardReady");
+  const claim = {
+    id: uid("SC"),
+    userId: auth.sub,
+    name: String(customer?.name ?? "").slice(0, 80),
+    email: String(customer?.email ?? "").slice(0, 160),
+    note: body.note ?? "",
+    createdAt: Date.now(),
+    status: "pending" as const,
+  };
+  await writeWalkInClaims([...claims, claim]);
+  ok(res, { id: claim.id, status: claim.status }, 201);
+}));
+
+app.get("/api/admin/streak-claims", requireStaff("kitchen"), wrap(async (_req, res) => {
+  ok(res, await readWalkInClaims());
+}));
+
+app.post("/api/admin/streak-claims/:id", requireStaff("kitchen"), wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const { action } = walkInClaimActionSchema.parse(req.body);
+  const claims = await readWalkInClaims();
+  const claim = claims.find((row) => row.id === id);
+  if (!claim) throw new Error("streak.claimNotFound");
+  if (claim.status !== "pending") throw new Error("streak.claimSettled");
+  if (action === "approve") {
+    const settings = await loadSettings();
+    const current = await readUserStreak(claim.userId);
+    await writeUserStreak(claim.userId, applyPaidOrder(current, `walkin:${claim.id}`, settings.orderStreak.target));
+    claim.status = "approved";
+  } else {
+    claim.status = "rejected";
+  }
+  await writeWalkInClaims(claims.map((row) => row.id === id ? claim : row));
+  ok(res, claim);
 }));
 
 app.get("/api/account/orders", requireCustomer, wrap(async (req, res) => {

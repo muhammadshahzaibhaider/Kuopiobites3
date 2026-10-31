@@ -69,8 +69,18 @@ export const apiAccountOrders = () => api<Order[]>("/api/account/orders");
 export type OrderStreakStatus = {
   enabled: boolean; target: number; count: number; rewardReady: boolean;
   rewardItemId: string; rewardNameEn: string; rewardNameFi: string;
+  pendingClaim?: { id: string; createdAt: number; status: "pending" } | null;
 };
 export const apiAccountStreak = () => api<OrderStreakStatus>("/api/account/streak");
+export const apiSubmitWalkInStreak = (note?: string) =>
+  api<{ id: string; status: "pending" }>("/api/account/streak/claim", { method: "POST", body: { note } });
+export type WalkInStreakClaim = {
+  id: string; userId: string; name: string; email: string; note: string;
+  createdAt: number; status: "pending" | "approved" | "rejected";
+};
+export const apiListWalkInStreaks = () => api<WalkInStreakClaim[]>("/api/admin/streak-claims", { staff: true });
+export const apiResolveWalkInStreak = (id: string, action: "approve" | "reject") =>
+  api<WalkInStreakClaim>(`/api/admin/streak-claims/${encodeURIComponent(id)}`, { method: "POST", body: { action }, staff: true });
 export const apiCustomers = () =>
   api<{ id: string; name: string; email: string; phone: string; marketing: number; created_at: number; orderCount: number; lifetimeSpend: number }[]>("/api/customers", { staff: true });
 

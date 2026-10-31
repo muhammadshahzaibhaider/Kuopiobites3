@@ -20,7 +20,7 @@ export default function AboutPage() {
       <div className="container-x">
         <SectionHead kicker={t("about.write")} title={t("about.contact")} center />
         <div className="mb-8 space-y-6">
-          <OrderStreak />
+          <OrderStreak walkIn />
           <SocialAccounts />
         </div>
         <Stagger className="grid gap-6 lg:grid-cols-2">
