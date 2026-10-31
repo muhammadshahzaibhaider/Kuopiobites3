@@ -6,6 +6,7 @@
  * `expectedUnitPrice` is the same function the checkout path uses, so a line
  * priced here is priced exactly like it would be at checkout.
  */
+import { modsForItem } from "./ateria";
 import { activeToppings, builderUnitPrice, isCatOff, isItemOff, optionOff, pizzaUnitPrice } from "./v3";
 import type { CartLine, MenuItem, Settings } from "./types";
 
@@ -46,7 +47,7 @@ export function expectedUnitPrice(s: Settings, items: MenuItem[], line: CartLine
       : pizzaUnitPrice(s, m, vi, line.pizza.extras);
   }
   const selected = new Set<string>();
-  const groups = m.mods ?? [];
+  const groups = modsForItem(m, line.variantLabel);
   const sellableToppings = new Set(activeToppings(s));
   let price = m.prices[vi]?.value ?? 0;
   for (const opt of line.options) {

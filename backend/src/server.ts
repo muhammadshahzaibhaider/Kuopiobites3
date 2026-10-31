@@ -17,7 +17,7 @@ import {
   type Role, type TokenPayload,
 } from "./auth";
 import { effectiveItems, loadSettings, orderStatus, priceCart, priceLines, round2, validateOrder } from "./logic";
-import { applyPaidOrder, clearPendingRedeem, markPendingRedeem, pendingWalkInClaim, streakFreeAmount } from "./streak";
+import { applyPaidOrder, clearPendingRedeem, markPendingRedeem, pendingWalkInClaim, qualifiesForStreakStamp, streakFreeAmount } from "./streak";
 import { openInfo } from "./lib/hours";
 import type { CartLine, MenuItem, Order, Reservation, Settings, User } from "./lib/types";
 import {
@@ -589,8 +589,10 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
 
 async function recordPaidStreak(order: Order): Promise<void> {
   if (!order.userId) return;
+  try { await clearCart(order.userId); } catch { /* cart wipe must not block paid */ }
   const settings = await loadSettings();
   if (!settings.orderStreak.enabled) return;
+  if (!qualifiesForStreakStamp(Number(order.total))) return;
   const current = await readUserStreak(order.userId);
   await writeUserStreak(order.userId, applyPaidOrder(current, order.id, settings.orderStreak.target));
 }

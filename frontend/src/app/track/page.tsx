@@ -1,12 +1,18 @@
 "use client";
-import { Suspense } from "react";
+import { Suspense, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import TrackView from "@/components/TrackView";
+import { useShop } from "@/lib/store";
 
 function TrackQueryInner() {
   const params = useSearchParams();
+  const { clearCart } = useShop();
   const id = params.get("id") ?? "";
+  const paid = params.get("payment") === "success";
+  useEffect(() => {
+    if (paid) clearCart();
+  }, [paid, clearCart]);
   if (!id)
     return (
       <div className="container-x pt-32 text-center">

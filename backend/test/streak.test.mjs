@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyPaidOrder, markPendingRedeem, pendingWalkInClaim, streakFreeAmount } from "../src/streak.ts";
+import { applyPaidOrder, markPendingRedeem, pendingWalkInClaim, qualifiesForStreakStamp, streakFreeAmount } from "../src/streak.ts";
 
 test("seven paid orders unlock the reward and then freeze until redeem", () => {
   let state = { count: 0, rewardReady: false };
@@ -33,6 +33,12 @@ test("only one pending walk-in claim per customer", () => {
   ];
   assert.equal(pendingWalkInClaim(claims, "u1")?.id, "b");
   assert.equal(pendingWalkInClaim(claims, "u2"), undefined);
+});
+
+test("online streak stamp requires at least €10 paid", () => {
+  assert.equal(qualifiesForStreakStamp(9.99), false);
+  assert.equal(qualifiesForStreakStamp(10), true);
+  assert.equal(qualifiesForStreakStamp(14.5), true);
 });
 
 test("free amount is one unit of the configured reward item", () => {

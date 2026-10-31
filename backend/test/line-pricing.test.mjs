@@ -72,6 +72,16 @@ test("a valid multi-price line uses the requested variant price", () => {
   assert.equal(priced.unitPrice, variant.value);
 });
 
+test("Ateria meals require a 0.33 L cold drink option", () => {
+  const meal = MENU.find((m) => /ateria/i.test(m.name));
+  assert.ok(meal);
+  const missing = priceEachLine(settings, MENU, [line({ itemId: meal.id, variantLabel: meal.prices[0].label, options: [] })]);
+  assert.equal(missing[0].error, "validation.invalidOptions");
+  const withDrink = priceEachLine(settings, MENU, [line({ itemId: meal.id, variantLabel: meal.prices[0].label, options: ["Coca-Cola 0.33 L"] })]);
+  assert.equal(withDrink[0].error, null);
+  assert.equal(withDrink[0].unitPrice, meal.prices[0].value);
+});
+
 test("shape guard drops structural junk without throwing", () => {
   for (const bad of [null, 42, "line", {}, { itemId: single.id, qty: 0 }, { itemId: single.id, options: [{ label: "x" }] }]) {
     const { error } = coerceCartLine(bad, 0);

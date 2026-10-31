@@ -1,4 +1,10 @@
 export const STREAK_TARGET = 7;
+/** Online paid orders below this total (€) do not fill a streak stamp. */
+export const STREAK_MIN_TOTAL = 10;
+
+export function qualifiesForStreakStamp(total: number): boolean {
+  return Number.isFinite(total) && total >= STREAK_MIN_TOTAL;
+}
 
 export type OrderStreakCfg = {
   enabled: boolean;
