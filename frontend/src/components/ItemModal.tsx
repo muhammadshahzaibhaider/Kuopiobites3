@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { cx, eur } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
 import { useShop } from "@/lib/store";
+import { modsForItem } from "@/lib/ateria";
 import { activeToppings, itemDeal, modOptionLabel, optionOff, trDesc, trLabel, trName, visibleToppingOptions } from "@/lib/v3";
 import type { MenuItem } from "@/lib/types";
 import { MenuImage, QtyStepper, TagBadge } from "./ui";
@@ -34,7 +35,8 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
   const availableToppings = useMemo(() => new Set(activeToppings(settings)), [settings]);
   const groups = useMemo(() => {
     const total = availableToppings.size;
-    const mapped = (item?.mods ?? []).map((group) => {
+    const variantLabel = item?.prices[variant]?.label ?? "";
+    const mapped = modsForItem(item ?? { id: "", cat: "", name: "", prices: [] }, variantLabel).map((group) => {
       const options = visibleToppingOptions(settings, group);
       /* Builder (`top`) groups keep their options at runtime, so their tier
          minimum is bounded by the master list; per-item groups by what is left
@@ -45,7 +47,7 @@ export default function ItemModal({ item, onClose }: { item: MenuItem | null; on
       return { ...group, options, min: bound(group.min), exact: bound(group.exact) };
     });
     return mapped.filter((group) => group.id !== "topping" || group.options.length > 0);
-  }, [item, settings, availableToppings]);
+  }, [item, settings, availableToppings, variant]);
 
   /* Live settings refresh while the dialog is open (drops an ingredient from
      the catalogue): forget picks that are no longer offerable, so a hidden

@@ -127,6 +127,10 @@ export default function OrderPage() {
     if (type === "delivery" && !user.addresses.includes(address)) {
       await updateUser({ addresses: [...user.addresses, address] });
     }
+    const digits = (phone || "").replace(/\D/g, "");
+    if (digits.length >= 9 && phone.trim() !== (user.phone ?? "").trim()) {
+      await updateUser({ phone: phone.trim() });
+    }
     try {
       const checkout = await startCheckout({
         type,
@@ -216,16 +220,15 @@ export default function OrderPage() {
                     {t("streak.use")}
                   </label>
                 )}
-                {(user.phone ?? "").replace(/\D/g, "").length < 9 && (
-                  <input
-                    type="tel"
-                    autoComplete="tel"
-                    className="mt-3 min-h-[44px] w-full rounded-2xl border border-cherry/20 bg-cream px-4"
-                    placeholder="Phone for order updates (required)"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                  />
-                )}
+                <label className="mt-3 block text-xs font-black uppercase tracking-wide text-cherry/50">{t("order.phone")}</label>
+                <input
+                  type="tel"
+                  autoComplete="tel"
+                  className="mt-1 min-h-[44px] w-full rounded-2xl border border-cherry/20 bg-cream px-4"
+                  placeholder="Phone for order updates (required)"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                />
               </div>
             ) : (
               <AuthForm />

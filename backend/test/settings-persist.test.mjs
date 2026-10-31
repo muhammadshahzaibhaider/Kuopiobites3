@@ -60,6 +60,20 @@ function makeDb(seed, hooks = {}) {
       delete() { query.op = "delete"; return api; },
       upsert(values, options) { query.op = "upsert"; query.payload = values; query.options = options; return api; },
       eq(column, value) { query.filters.push([column, value]); return api; },
+      maybeSingle() {
+        return settle().then((result) => {
+          if (result.error) return result;
+          const row = Array.isArray(result.data) ? result.data[0] ?? null : result.data;
+          return { data: row, error: null };
+        });
+      },
+      single() {
+        return settle().then((result) => {
+          if (result.error) return result;
+          const row = Array.isArray(result.data) ? result.data[0] ?? null : result.data;
+          return { data: row, error: row ? null : { message: "not found" } };
+        });
+      },
       then(onFulfilled, onRejected) { return settle().then(onFulfilled, onRejected); },
     };
     return api;
