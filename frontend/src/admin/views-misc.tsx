@@ -7,11 +7,58 @@ import { useLang } from "@/lib/i18n";
 import { RESTAURANT } from "@/lib/menu";
 import { useShop } from "@/lib/store";
 import { AuditTab, Switch } from "@/app/admin/v3tabs";
-import { apiAnalyticsReport, type AnalyticsReport } from "@/lib/api";
+import { apiAnalyticsReport, apiListWalkInStreaks, apiResolveWalkInStreak, type AnalyticsReport, type WalkInStreakClaim } from "@/lib/api";
 import { Ic } from "./icons";
 import { Bars, DataTable, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, downloadCSV, inputCls, useDelayedReady, type Col } from "./ui";
 
 /* ══ CUSTOMERS ══ */
+export function WalkInStreaksView() {
+  const { toast } = useShop();
+  const [rows, setRows] = useState<WalkInStreakClaim[]>([]);
+  const [loading, setLoading] = useState(true);
+  const load = () => {
+    setLoading(true);
+    apiListWalkInStreaks().then(setRows).catch(() => setRows([])).finally(() => setLoading(false));
+  };
+  useEffect(() => { load(); }, []);
+  const pending = rows.filter((row) => row.status === "pending");
+  const decide = async (id: string, action: "approve" | "reject") => {
+    try {
+      const next = await apiResolveWalkInStreak(id, action);
+      setRows((prev) => prev.map((row) => row.id === id ? next : row));
+      toast(action === "approve" ? "Walk-in stamp approved" : "Walk-in request rejected");
+    } catch {
+      toast("Could not update the request", "err");
+    }
+  };
+  const cols: Col<WalkInStreakClaim>[] = [
+    { key: "name", label: "Customer", sort: (r) => r.name, render: (r) => <span className="font-black text-cherry">{r.name || r.email}</span> },
+    { key: "email", label: "Email", render: (r) => <span className="text-xs text-cherry/70">{r.email}</span> },
+    { key: "note", label: "Note", render: (r) => <span className="text-xs text-cherry/70">{r.note || "—"}</span> },
+    { key: "when", label: "Requested", sort: (r) => r.createdAt, render: (r) => <span className="tabular-nums text-cherry/60">{new Date(r.createdAt).toLocaleString("fi-FI", { timeZone: "Europe/Helsinki" })}</span> },
+    { key: "status", label: "Status", render: (r) => <Pill tone={r.status === "approved" ? "green" : r.status === "rejected" ? "red" : "gold"}>{r.status}</Pill> },
+    { key: "act", label: "Action", render: (r) => r.status === "pending" ? (
+      <span className="flex gap-1">
+        <PrimaryBtn onClick={() => void decide(r.id, "approve")}>Approve</PrimaryBtn>
+        <GhostBtn onClick={() => void decide(r.id, "reject")}>Reject</GhostBtn>
+      </span>
+    ) : <span className="text-xs text-cherry/40">—</span> },
+  ];
+  return (
+    <div className="space-y-4">
+      <p className="text-sm font-bold text-cherry/70">In-house till orders do not stamp the 7-order streak automatically. Customers send a request from Contact; approve only if they paid at the counter.</p>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatCard label="Pending requests" value={pending.length} icon="clock" tone="gold" />
+        <StatCard label="Approved" value={rows.filter((r) => r.status === "approved").length} icon="orders" tone="green" />
+        <StatCard label="Rejected" value={rows.filter((r) => r.status === "rejected").length} icon="warn" tone="red" />
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
+        <DataTable rows={rows} cols={cols} id={(r) => r.id} loading={loading} search={(r, q) => r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q) || r.note.toLowerCase().includes(q)} empty={<EmptyState icon="users" title="No walk-in stamp requests" sub="Contact-page requests appear here for approve / reject." />} />
+      </div>
+    </div>
+  );
+}
+
 export function CustomersView() {
   const { users, orders } = useShop();
   const ready = useDelayedReady("customers");

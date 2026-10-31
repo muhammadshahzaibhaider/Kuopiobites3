@@ -275,6 +275,8 @@ export const accountPatchSchema = z.object({
   name: text(80).min(1).optional(), phone: text(30).optional(), addresses: z.array(text(160)).max(6).optional(), marketing: z.boolean().optional(),
 }).strict();
 export const favoriteAddSchema = z.object({ itemId: text(60).min(1) }).strict();
+export const walkInClaimSchema = z.object({ note: text(400).optional() }).strict();
+export const walkInClaimActionSchema = z.object({ action: z.enum(["approve", "reject"]) }).strict();
 export const favoriteMergeSchema = z.object({ itemIds: z.array(text(100)).max(500) }).strict();
 export const cartMergeSchema = z.object({ lines: z.array(cartLineSchema).max(200) }).strict();
 export const cartQtySchema = z.object({ qty: z.number().int().min(0).max(99) }).strict();

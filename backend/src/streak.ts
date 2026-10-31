@@ -72,6 +72,43 @@ export function clearPendingRedeem(state: StreakState, orderId: string): StreakS
   return next;
 }
 
+export type WalkInClaim = {
+  id: string;
+  userId: string;
+  name: string;
+  email: string;
+  note: string;
+  createdAt: number;
+  status: "pending" | "approved" | "rejected";
+};
+
+export function normalizeWalkInClaims(raw: unknown): WalkInClaim[] {
+  if (!Array.isArray(raw)) return [];
+  const out: WalkInClaim[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const value = row as Record<string, unknown>;
+    const id = typeof value.id === "string" ? value.id.slice(0, 40) : "";
+    const userId = typeof value.userId === "string" ? value.userId.slice(0, 80) : "";
+    if (!id || !userId) continue;
+    const status = value.status === "approved" || value.status === "rejected" ? value.status : "pending";
+    out.push({
+      id,
+      userId,
+      name: typeof value.name === "string" ? value.name.slice(0, 80) : "",
+      email: typeof value.email === "string" ? value.email.slice(0, 160) : "",
+      note: typeof value.note === "string" ? value.note.slice(0, 400) : "",
+      createdAt: Number(value.createdAt) || 0,
+      status,
+    });
+  }
+  return out.slice(-200);
+}
+
+export function pendingWalkInClaim(claims: WalkInClaim[], userId: string): WalkInClaim | undefined {
+  return claims.find((claim) => claim.userId === userId && claim.status === "pending");
+}
+
 export function streakFreeAmount(lines: Array<{ itemId: string; unitPrice: number; qty: number }>, rewardItemId: string): number {
   if (!rewardItemId) return 0;
   const line = lines.find((row) => row.itemId === rewardItemId && row.qty > 0);

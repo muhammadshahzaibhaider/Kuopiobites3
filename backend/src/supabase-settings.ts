@@ -3,7 +3,7 @@ import { db } from "./supabase";
 import { DEFAULT_SETTINGS } from "./lib/hours";
 import { sanitizeToppingGroups } from "./lib/v3";
 import type { CatMeta, ModGroup, Offer, Settings, SpecialItem, ToppingMeta, UploadedImg } from "./lib/types";
-import { normalizeStreakCfg, normalizeStreakState, type StreakState } from "./streak";
+import { normalizeStreakCfg, normalizeStreakState, normalizeWalkInClaims, type StreakState, type WalkInClaim } from "./streak";
 
 const slug = (value: string) => value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 
@@ -299,9 +299,12 @@ export async function saveSettings(settings: Settings, client: SupabaseClient = 
     orderStreak: settings.orderStreak,
   };
   const previousExtra = await client.from("shop_settings").select("extra").eq("id", true).maybeSingle();
-  const keptStreaks = (previousExtra.data?.extra as Record<string, unknown> | undefined)?.orderStreaks;
-  if (keptStreaks && typeof keptStreaks === "object") {
-    (extra as Record<string, unknown>).orderStreaks = keptStreaks;
+  const prevExtra = (previousExtra.data?.extra as Record<string, unknown> | undefined) ?? {};
+  if (prevExtra.orderStreaks && typeof prevExtra.orderStreaks === "object") {
+    (extra as Record<string, unknown>).orderStreaks = prevExtra.orderStreaks;
+  }
+  if (Array.isArray(prevExtra.orderStreakClaims)) {
+    (extra as Record<string, unknown>).orderStreakClaims = prevExtra.orderStreakClaims;
   }
   await check(client.from("shop_settings").upsert({
     id: true,
@@ -544,6 +547,21 @@ export async function writeUserStreak(userId: string, state: StreakState): Promi
   const map = { ...((extra.orderStreaks as Record<string, unknown> | undefined) ?? {}) };
   map[userId] = state;
   extra.orderStreaks = map;
+  const { error: writeError } = await db.from("shop_settings").update({ extra }).eq("id", true);
+  if (writeError) throw writeError;
+}
+
+export async function readWalkInClaims(): Promise<WalkInClaim[]> {
+  const { data, error } = await db.from("shop_settings").select("extra").eq("id", true).maybeSingle();
+  if (error) throw error;
+  return normalizeWalkInClaims((data?.extra as Record<string, unknown> | undefined)?.orderStreakClaims);
+}
+
+export async function writeWalkInClaims(claims: WalkInClaim[]): Promise<void> {
+  const { data, error } = await db.from("shop_settings").select("extra").eq("id", true).single();
+  if (error) throw error;
+  const extra = { ...((data?.extra as Record<string, unknown> | undefined) ?? {}) };
+  extra.orderStreakClaims = claims.slice(-200);
   const { error: writeError } = await db.from("shop_settings").update({ extra }).eq("id", true);
   if (writeError) throw writeError;
 }
