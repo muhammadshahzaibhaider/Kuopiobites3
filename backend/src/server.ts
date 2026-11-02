@@ -108,10 +108,11 @@ app.use((req, res, next) => {
     || req.path === "/api/categories"
     || req.path === "/api/translations"
     || req.path === "/api/items"
+    || req.path === "/api/todays-special"
     || /^\/api\/items\/[^/]+$/.test(req.path)
   );
   res.setHeader("Cache-Control", publicGet
-    ? "public, max-age=300, stale-while-revalidate=600"
+    ? "public, max-age=600, stale-while-revalidate=1200"
     : "no-store");
   next();
 });

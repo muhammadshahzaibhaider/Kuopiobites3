@@ -244,7 +244,7 @@ export default function Home() {
           <StaggerItem className="rounded-3xl border border-cherry/10 bg-cream-deep p-6 shadow-card">
             <h3 className="font-display text-lg font-black text-cherry">{t("home.find")}</h3>
             <p className="mt-3 text-sm text-cherry/80">{RESTAURANT.address}, Finland</p>
-            <a href={RESTAURANT.mapLink} target="_blank" rel="noreferrer" className="mt-3 inline-block font-black text-gold-deep underline decoration-gold underline-offset-4">{t("home.dirs")}</a>
+            <a href={RESTAURANT.mapLink} target="_blank" rel="noopener noreferrer" className="mt-3 inline-block font-black text-gold-deep underline decoration-gold underline-offset-4">{t("home.dirs")}</a>
             <p className="mt-4 text-sm text-cherry/80">
               {t("home.pickup")} {settings.radiusKm} {t("home.km")} {eur(settings.minOrder)}
             </p>

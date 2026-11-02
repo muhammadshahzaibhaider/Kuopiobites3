@@ -63,6 +63,7 @@ async function request<T>(path: string, init: RequestInit, timeoutMs = REQUEST_T
       || path === "/api/categories"
       || path === "/api/translations"
       || path === "/api/items"
+      || path === "/api/todays-special"
       || /^\/api\/items\/[^/]+$/.test(path)
     );
     response = await fetch(apiBase() + path, {

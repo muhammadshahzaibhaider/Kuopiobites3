@@ -8,6 +8,7 @@
 import React, {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from "react";
+import { usePathname } from "next/navigation";
 import * as api from "./api";
 import { DEFAULT_SETTINGS } from "./hours";
 import { uid } from "./format";
@@ -146,6 +147,8 @@ const readPending = (): PendingAction | null => {
 const clearPending = () => { try { sessionStorage.removeItem(PENDING_ACTION_KEY); } catch { /* noop */ } };
 
 export function ShopProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname() || "";
+  const onAdmin = pathname.startsWith("/admin");
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [settingsReady, setSettingsReady] = useState(false);
   const [adminItems, setAdminItems] = useState<MenuItem[]>(BASE_ITEMS);
@@ -241,9 +244,11 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   /* ── boot: hydrate everything from the backend ── */
   const refresh = useCallback(async () => {
     try {
+      /* Public pages skip staff session + ticket lists — those burned Hobby CPU/CDN. */
       const [s, items, cats, tr, session, staffSession] = await Promise.all([
         api.fetchSettings(), api.fetchItems(), api.fetchCategories(), api.fetchTranslations(),
-        api.apiSession(), api.apiStaffSession(),
+        api.apiSession(),
+        onAdmin ? api.apiStaffSession() : Promise.resolve({ user: null, role: null as string | null }),
       ]);
       setSettings(s);
       hydrateMenu(items, cats);
@@ -281,7 +286,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       setSettingsReady(true);
       setAuthChecked(true);
     }
-  }, [hydrateUser]);
+  }, [hydrateUser, onAdmin]);
   useEffect(() => { void refresh(); }, [refresh]);
 
   const refreshKitchen = useCallback(async () => {
@@ -299,7 +304,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     const sync = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       const now = Date.now();
-      if (now - last < 120_000) return;
+      if (now - last < 180_000) return;
       last = now;
       api.fetchSettings().then(setSettings).catch(() => { /* keep the last good copy */ });
     };

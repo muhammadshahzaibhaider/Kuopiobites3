@@ -44,7 +44,7 @@ export default function TrackView({ id }: { id: string }) {
       if (document.visibilityState === "hidden") return;
       void load();
     };
-    const timer = window.setInterval(tick, 45_000);
+    const timer = window.setInterval(tick, 60_000);
     document.addEventListener("visibilitychange", tick);
     return () => {
       active = false;

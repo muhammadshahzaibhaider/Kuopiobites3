@@ -57,7 +57,7 @@ export default function Footer() {
           <a href={RESTAURANT.phoneHref} className="mt-2 block text-lg font-black text-gold-soft hover:text-gold">
             {RESTAURANT.phone}
           </a>
-          <a href={RESTAURANT.mapLink} target="_blank" rel="noreferrer" className="mt-1 inline-block text-sm underline decoration-gold underline-offset-4 hover:text-gold">
+          <a href={RESTAURANT.mapLink} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-sm underline decoration-gold underline-offset-4 hover:text-gold">
             {t("home.dirs")}
           </a>
           {(settings.platforms.wolt || settings.platforms.uberEats) && (

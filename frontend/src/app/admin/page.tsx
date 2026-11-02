@@ -218,7 +218,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
       if (document.visibilityState === "hidden") return;
       void refreshKitchen();
     };
-    const id = window.setInterval(tick, 90_000);
+    const id = window.setInterval(tick, 120_000);
     document.addEventListener("visibilitychange", tick);
     return () => {
       window.clearInterval(id);

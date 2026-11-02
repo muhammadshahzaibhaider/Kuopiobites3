@@ -586,7 +586,7 @@ export function SpecialsView() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-gold bg-gold/10 px-4 py-3">
         <p className="text-xs font-bold text-gold-deep">Carousel of 1–6 dishes — appears at the top of the public menu + footer “Päivän erikois” strip.</p>
-        <a href="/menu" target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-xs font-black text-cherry underline"><Ic n="eye" size={13} /> Preview on site</a>
+        <a href="/menu" target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-black text-cherry underline"><Ic n="eye" size={13} /> Preview on site</a>
       </div>
       <div className="overflow-hidden rounded-2xl border border-cherry/10 bg-cream-deep/40">
         <SpecialsPanel />
