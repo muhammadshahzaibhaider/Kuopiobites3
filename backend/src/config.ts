@@ -5,8 +5,9 @@ const here = typeof __dirname !== "undefined" ? __dirname : resolve(process.cwd(
 const envPath = resolve(here, "../.env");
 
 /**
- * Small dependency-free env loader for this local SQLite service. Deployment
+ * Small dependency-free env loader for local backend/.env. Deployment
  * secret managers still win because process.env is never overwritten.
+ * Production data is Supabase; SQLite (DB_FILE) is legacy seed/export only.
  */
 if (existsSync(envPath)) {
   for (const line of readFileSync(envPath, "utf8").split(/\r?\n/)) {
