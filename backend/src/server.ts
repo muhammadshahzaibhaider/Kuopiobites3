@@ -111,7 +111,7 @@ app.use((req, res, next) => {
     || /^\/api\/items\/[^/]+$/.test(req.path)
   );
   res.setHeader("Cache-Control", publicGet
-    ? "public, max-age=60, stale-while-revalidate=120"
+    ? "public, max-age=300, stale-while-revalidate=600"
     : "no-store");
   next();
 });

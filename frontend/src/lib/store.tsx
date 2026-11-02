@@ -299,7 +299,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     const sync = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       const now = Date.now();
-      if (now - last < 30_000) return;
+      if (now - last < 120_000) return;
       last = now;
       api.fetchSettings().then(setSettings).catch(() => { /* keep the last good copy */ });
     };
