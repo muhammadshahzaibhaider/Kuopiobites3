@@ -105,6 +105,8 @@ interface ShopCtx {
   cancelReservation: (id: string) => Promise<boolean>;
   setReservationStatus: (id: string, s: "accepted" | "declined") => Promise<boolean>;
 
+  /** Staff-only: refresh live tickets without reloading the whole catalogue. */
+  refreshKitchen: () => Promise<void>;
   toasts: Toast[];
   toast: (msg: string, kind?: "ok" | "err") => void;
   logAudit: (msg: string) => void;
@@ -282,6 +284,14 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   }, [hydrateUser]);
   useEffect(() => { void refresh(); }, [refresh]);
 
+  const refreshKitchen = useCallback(async () => {
+    try {
+      const [o, r] = await Promise.all([api.apiListOrders(), api.apiListReservations()]);
+      setOrders(o);
+      setReservations(r);
+    } catch { /* keep last tickets */ }
+  }, []);
+
   /* Settings are edited from another tab (/admin). Re-read them when this tab
      becomes visible again — throttled, so tab-flipping stays cheap. */
   useEffect(() => {
@@ -289,7 +299,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     const sync = () => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       const now = Date.now();
-      if (now - last < 30_000) return;
+      if (now - last < 120_000) return;
       last = now;
       api.fetchSettings().then(setSettings).catch(() => { /* keep the last good copy */ });
     };
@@ -756,7 +766,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     pulse, priceCart, serverPricing, cartIssuesDismissed, dismissCartIssues,
     orders, startCheckout, placeOrder, setOrderStatus, setOrderReadyTime, refundOrder, orderStatus,
     reservations, addReservation, cancelReservation, setReservationStatus,
-    toasts, toast, logAudit, refresh,
+    toasts, toast, logAudit, refresh, refreshKitchen,
   };
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

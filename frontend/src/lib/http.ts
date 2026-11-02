@@ -56,7 +56,21 @@ async function request<T>(path: string, init: RequestInit, timeoutMs = REQUEST_T
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
-    response = await fetch(apiBase() + path, { credentials: "include", cache: "no-store", ...init, signal: controller.signal });
+    const method = (init.method ?? "GET").toUpperCase();
+    const publicGet = method === "GET" && (
+      path === "/api/health"
+      || path === "/api/settings"
+      || path === "/api/categories"
+      || path === "/api/translations"
+      || path === "/api/items"
+      || /^\/api\/items\/[^/]+$/.test(path)
+    );
+    response = await fetch(apiBase() + path, {
+      credentials: "include",
+      cache: publicGet ? "default" : "no-store",
+      ...init,
+      signal: controller.signal,
+    });
   } catch (error) {
     /* Offline, DNS, proxy-down and timeout all surface as friendly codes. */
     throw new ApiError(error instanceof DOMException && error.name === "AbortError" ? "net.timeout" : "net.offline");

@@ -206,17 +206,25 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   });
   const [alertQueue, setAlertQueue] = useState<Order[]>([]);
   const seenOrders = useRef<Set<string> | null>(null);
-  const { orders, orderStatus, refresh } = useShop();
+  const { orders, orderStatus, refreshKitchen } = useShop();
   const { lang, setLang } = useLang();
   useTick(4000);
 
   const placed = orders.filter((o) => orderStatus(o) === "placed" && !o.refunded);
 
-  /* Poll so a new ticket reaches the kitchen even if this tab was left open. */
+  /* Poll tickets only — a full catalogue refresh every 15s burned Hobby CPU/CDN. */
   useEffect(() => {
-    const id = window.setInterval(() => { void refresh(); }, 15000);
-    return () => window.clearInterval(id);
-  }, [refresh]);
+    const tick = () => {
+      if (document.visibilityState === "hidden") return;
+      void refreshKitchen();
+    };
+    const id = window.setInterval(tick, 90_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", tick);
+    };
+  }, [refreshKitchen]);
 
   /* Browser audio needs a user gesture before it can play. */
   useEffect(() => {

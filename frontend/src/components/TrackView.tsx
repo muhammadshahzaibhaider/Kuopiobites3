@@ -40,8 +40,17 @@ export default function TrackView({ id }: { id: string }) {
     };
     setLoading(true);
     void load();
-    const timer = window.setInterval(() => { void load(); }, 10_000);
-    return () => { active = false; window.clearInterval(timer); };
+    const tick = () => {
+      if (document.visibilityState === "hidden") return;
+      void load();
+    };
+    const timer = window.setInterval(tick, 45_000);
+    document.addEventListener("visibilitychange", tick);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", tick);
+    };
   }, [id]);
 
   const order = orders.find((o) => o.id === id) ?? remoteOrder;
