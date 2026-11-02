@@ -101,7 +101,18 @@ app.post(
 
 app.use(express.json({ limit: CFG.jsonBodyLimit, strict: true }));
 app.use((req, res, next) => {
-  if (req.path.startsWith("/api/")) res.setHeader("Cache-Control", "no-store");
+  if (!req.path.startsWith("/api/")) return next();
+  const publicGet = req.method === "GET" && (
+    req.path === "/api/health"
+    || req.path === "/api/settings"
+    || req.path === "/api/categories"
+    || req.path === "/api/translations"
+    || req.path === "/api/items"
+    || /^\/api\/items\/[^/]+$/.test(req.path)
+  );
+  res.setHeader("Cache-Control", publicGet
+    ? "public, max-age=60, stale-while-revalidate=120"
+    : "no-store");
   next();
 });
 app.use((req, res, next) => {
