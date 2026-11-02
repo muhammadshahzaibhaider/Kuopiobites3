@@ -1,7 +1,7 @@
 /**
  * REAL API CLIENT (post-split). Every function maps 1:1 to the contract in
  * /backend/API.md. No business logic, no secrets, no localStorage data stores —
- * the backend owns all of that. Tokens live in http.ts.
+ * the backend owns all of that. Session is HttpOnly cookies via http.ts (not JWTs in JS).
  */
 import { api, apiBinary } from "./http";
 import type {

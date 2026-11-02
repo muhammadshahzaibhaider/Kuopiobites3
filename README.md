@@ -4,28 +4,32 @@ Production-quality, heavily animated, mobile-first site for **Kuopio Bites**,
 Jalkasenkatu 7, 70820 Kuopio · 044 981 6223.
 
 ## Stack
-- Next.js 14 (App Router) + TypeScript
+- Next.js 16 (App Router) + TypeScript in `frontend/`
+- Express API in `backend/` (Vercel serverless via `backend/api/index.ts`)
+- Supabase (Postgres + Auth + Storage); Stripe Checkout for paid orders
 - Tailwind CSS — v2 design tokens: deep teal `#0F3D3E/#12433F` (nav, footer, headings, buttons), warm cream `#FDF6E3/#FBEFC7`, burnt-orange accent `#E8792B`
 - Framer Motion (reveals, transitions, hero Ken Burns, marquee, micro-interactions)
 - Fonts: Fraunces Variable (display) + Nunito Sans Variable (body) + Caveat (script)
-- i18n: EN/FI dictionary (`src/lib/i18n.tsx`), header pill toggle, persisted in localStorage
+- i18n: EN/FI dictionary (`frontend/src/lib/i18n.tsx`), header pill toggle, persisted in localStorage
 
 ## Run
 ```bash
-npm install && npm run build && npm run start   # or: npm run dev
+cd frontend && npm ci && npm run dev    # :3000
+cd backend && npm ci && npm run dev     # :4000
 ```
+Production is two Vercel projects. Set `NEXT_PUBLIC_API_BASE_URL` on the frontend. REST contract: `backend/API.md`.
 
 ## Pages
 | Route | What it is |
 |---|---|
 | `/` | Teal hero with single Order Online + Dining CTA pair, live open/closed badge, single-dish Today's Special ticker (left-to-right marquee, static under reduced motion), round category grid (21 circles, staggered, scrollable on mobile), featured carousel, story, hours/map/contact |
 | `/menu` | Full 30+ category menu, sticky scrollable pills, search + veg filter, SELECT TOPPING modal for Fantasia/Pannu (min-tier toppings included, extras auto-priced €1/€2 with live running total) |
-| `/order` | Account gate → pickup/delivery → 70xxx radius + min-order checks → dot-formatted totals with VAT → stubbed Stripe pay → tracking |
+| `/order` | Account gate → pickup/delivery → 70xxx radius + min-order checks → server-priced totals with VAT → Stripe Checkout → tracking |
 | `/track/[id]` | Live status timeline (auto-progress + admin override) |
 | `/dining` | Dining hub: ambiance/seating/hours info + Reserve-a-Table flow (only-open slots, instant confirmation). `/reservations` redirects here |
 | `/account` | Profile, addresses, order history, marketing consent |
 | `/about` | Story, map, click-to-call, contact form |
-| `/admin` | **admin / kuopio2026** — dashboard (today's orders/revenue/pending/upcoming + 7-day revenue chart), live queue with status filters + alerts + refund, menu CRUD with drag-reorder, sold-out toggle, topping-list editor, single Today's Special picker, category creation, reservations accept/decline + 30-day calendar + date/slot blocking, customers, settings (hours, delivery rules, pause switch), per-language content editing |
+| `/admin` | Staff login (`staff_users` roles: kitchen / manager / owner) — dashboard, live queue, menu CRUD, reservations, customers, settings, translations |
 
 ## v2 fixes & features
 - **Client-nav bug (§18)**: page transitions are now enter-only keyed mounts (no AnimatePresence exit cycle), so content always renders immediately after Link navigation; scroll reveals re-register per route.
@@ -33,10 +37,8 @@ npm install && npm run build && npm run start   # or: npm run dev
 - **Biryani imagery** regenerated as authentic red-and-white Karachi style; hero updated to match.
 - **i18n** across nav, hero, sections, buttons, footer, admin tabs; menu names/descriptions editable per language from admin Content tab.
 
-## Backend stubs
-All network calls live in `src/lib/api.ts`, annotated with the real endpoints
-(`POST /api/orders`, `POST /api/reservations`, `POST /api/checkout`, `PATCH /api/orders/:id`,
-`POST /api/auth/*`, `PATCH /api/settings`). Swap bodies to wire a real backend.
+## API
+Browser calls same-origin `/api` (Next rewrite to the Express origin). Client wrappers: `frontend/src/lib/api.ts`. Server: `backend/src/server.ts`.
 
 ## Note
 10 category photos (burger, fillets, mix, bucket, noodles, rice, naan, curry, sides, drinks)
