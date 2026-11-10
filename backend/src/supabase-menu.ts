@@ -1,5 +1,8 @@
 import { db, must } from "./supabase";
+import { MENU as SEED_MENU } from "./lib/menu";
 import type { MenuItem, Tag } from "./lib/types";
+
+const seedById = new Map(SEED_MENU.map((item) => [item.id, item]));
 
 type ItemRow = {
   id: string;
@@ -24,6 +27,7 @@ type ItemRow = {
 
 export function toApiItem(row: ItemRow): MenuItem {
   const days = row.available_days ?? [];
+  const seed = seedById.get(row.id);
   return {
     id: row.id,
     cat: row.category_id,
@@ -39,6 +43,7 @@ export function toApiItem(row: ItemRow): MenuItem {
     imageUrl: row.photo_url ?? undefined,
     weightKg: row.weight_kg == null ? undefined : Number(row.weight_kg),
     archived: Boolean(row.is_archived),
+    ...(seed?.excludeFromCategoryOffers ? { excludeFromCategoryOffers: true } : {}),
     availability: row.pre_order_only || days.length || row.preorder_cutoff || row.lead_time_hours !== null
       ? {
           days,

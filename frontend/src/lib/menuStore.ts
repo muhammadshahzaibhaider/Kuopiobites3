@@ -11,7 +11,13 @@ let hydrated = false;
 export const menuHydrated = () => hydrated;
 
 export function hydrateMenu(items: MenuItem[], cats: Category[]) {
-  __setLiveMenu(items, cats);
+  const seedFlags = new Map(MENU.map((item) => [item.id, item.excludeFromCategoryOffers]));
+  const merged = items.map((item) =>
+    seedFlags.get(item.id) && !item.excludeFromCategoryOffers
+      ? { ...item, excludeFromCategoryOffers: true }
+      : item
+  );
+  __setLiveMenu(merged, cats);
   hydrated = true;
 }
 

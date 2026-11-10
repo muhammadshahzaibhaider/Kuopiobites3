@@ -295,6 +295,17 @@ export function offerCategoryIds(scope: Offer["scope"]): string[] {
   return [...new Set([...(scope.categories ?? []), ...(scope.category ? [scope.category] : [])].map((id) => id.trim()).filter(Boolean))];
 }
 
+/** Category/whole % deals skip add-ons unless the offer lists that item id. */
+export function itemInOfferScope(o: Pick<Offer, "scope">, m: MenuItem): boolean {
+  const picked = (o.scope.itemIds ?? []).includes(m.id);
+  if (picked) return true;
+  if (m.excludeFromCategoryOffers) return false;
+  const cats = offerCategoryIds(o.scope);
+  if (o.scope.whole) return true;
+  if (cats.length) return cats.includes(m.cat);
+  return false;
+}
+
 export interface OfferContext {
   type: "pickup" | "delivery";
   distanceKm?: number;
@@ -321,14 +332,10 @@ export function computeDiscount(
         || (scope.maxDistanceKm !== undefined && context.distanceKm > scope.maxDistanceKm))) continue;
     if ((scope.minWeightKg !== undefined && (context?.weightKg ?? 0) < scope.minWeightKg)
       || (scope.maxWeightKg !== undefined && (context?.weightKg ?? 0) > scope.maxWeightKg)) continue;
-    const cats = offerCategoryIds(scope);
-    const scoped = lines.filter((l) =>
-      scope.whole
-        ? true
-        : cats.length
-          ? cats.includes(menuItems.find((m) => m.id === l.itemId)?.cat ?? "")
-          : (scope.itemIds ?? []).includes(l.itemId)
-    );
+    const scoped = lines.filter((l) => {
+      const m = menuItems.find((item) => item.id === l.itemId);
+      return m ? itemInOfferScope(o, m) : false;
+    });
     const scopedTotal = scoped.reduce((a, l) => a + l.qty * l.unitPrice, 0);
     if (o.minOrder && subtotal < o.minOrder) continue;
     if (o.maxUses && (o.uses ?? 0) >= o.maxUses) continue;

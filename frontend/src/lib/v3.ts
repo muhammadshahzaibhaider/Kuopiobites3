@@ -280,14 +280,10 @@ export function computeDiscount(
   const live = liveOffers(s).filter((o) => !o.code || (code ?? "").toUpperCase() === o.code.toUpperCase());
   let best: DiscountResult = { amount: 0, title: "", freeDelivery: false };
   for (const o of live) {
-    const cats = offerCategoryIds(o.scope);
-    const scoped = lines.filter((l) =>
-      o.scope.whole
-        ? true
-        : cats.length
-          ? cats.includes(MENU.find((m) => m.id === l.itemId)?.cat ?? "")
-          : (o.scope.itemIds ?? []).includes(l.itemId)
-    );
+    const scoped = lines.filter((l) => {
+      const m = MENU.find((item) => item.id === l.itemId);
+      return m ? itemInOfferScope(o, m) : false;
+    });
     const scopedTotal = scoped.reduce((a, l) => a + l.qty * l.unitPrice, 0);
     if (o.minOrder && subtotal < o.minOrder) continue;
     if (o.maxUses && (o.uses ?? 0) >= o.maxUses) continue;
@@ -327,6 +323,17 @@ export function computeDiscount(
  * Basket-only offers (code, delivery distance/weight, fixed, bundle, free
  * item, free delivery) are excluded: they cannot be shown as an item price.
  */
+/** Category/whole % deals skip add-ons unless the offer lists that item id. */
+export function itemInOfferScope(o: Pick<Offer, "scope">, m: MenuItem): boolean {
+  const picked = (o.scope.itemIds ?? []).includes(m.id);
+  if (picked) return true;
+  if (m.excludeFromCategoryOffers) return false;
+  const cats = offerCategoryIds(o.scope);
+  if (o.scope.whole) return true;
+  if (cats.length) return cats.includes(m.cat);
+  return false;
+}
+
 function itemOfferEligible(o: Offer, m: MenuItem): boolean {
   if (o.code) return false; // only after the customer types the code
   if (o.scope.deliveryOnly) return false;
@@ -336,7 +343,7 @@ function itemOfferEligible(o: Offer, m: MenuItem): boolean {
   const picked = (o.scope.itemIds ?? []).includes(m.id);
   if (o.type === "override") return picked;
   if (o.type !== "percent") return false;
-  return o.scope.whole === true || offerCategoryIds(o.scope).includes(m.cat) || picked;
+  return itemInOfferScope(o, m);
 }
 
 /** The offer price for one unit priced at `was` (variant price + options). */
