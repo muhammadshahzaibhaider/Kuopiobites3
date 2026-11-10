@@ -59,11 +59,9 @@ async function request<T>(path: string, init: RequestInit, timeoutMs = REQUEST_T
     const method = (init.method ?? "GET").toUpperCase();
     const publicGet = method === "GET" && (
       path === "/api/health"
-      || path === "/api/settings"
       || path === "/api/categories"
       || path === "/api/translations"
       || path === "/api/items"
-      || path === "/api/todays-special"
       || /^\/api\/items\/[^/]+$/.test(path)
     );
     response = await fetch(apiBase() + path, {

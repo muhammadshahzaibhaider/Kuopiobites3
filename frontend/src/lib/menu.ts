@@ -203,7 +203,7 @@ export const MENU: MenuItem[] = [
     { label: "2pc", value: 5.2 },
   ], "Served with ketchup & raita"), nameFi: "Samosa", descFi: "Tarjoillaan ketsupin ja raitan kanssa." },
   ...reserveItemIds(1), // specials-7 was the separate two-piece entry
-  it("specials", "Shami Kebab", one(1.8)),
+  { ...it("specials", "Shami Kebab", one(1.8)), excludeFromCategoryOffers: true },
   it("specials", "Zinger Paratha", one(3.9), undefined, ["spicy"]),
   it("specials", "Tea", one(2.9), undefined, ["veg"]),
   it("specials", "Lassi", one(2.9), undefined, ["veg"]),

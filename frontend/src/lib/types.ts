@@ -55,6 +55,8 @@ export interface MenuItem {
   weightKg?: number;
   /** Manager-only catalog flag. Public menu reads omit archived rows. */
   archived?: boolean;
+  /** Add-ons (e.g. Shami Kebab) stay out of category/whole-menu % deals unless the offer lists this id. */
+  excludeFromCategoryOffers?: boolean;
 }
 
 export interface Category {

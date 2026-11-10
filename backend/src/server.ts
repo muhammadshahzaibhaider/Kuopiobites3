@@ -111,9 +111,12 @@ app.use((req, res, next) => {
     || req.path === "/api/todays-special"
     || /^\/api\/items\/[^/]+$/.test(req.path)
   );
-  res.setHeader("Cache-Control", publicGet
-    ? "public, max-age=600, stale-while-revalidate=1200"
-    : "no-store");
+  const liveSettings = req.method === "GET" && (req.path === "/api/settings" || req.path === "/api/todays-special");
+  res.setHeader("Cache-Control", liveSettings
+    ? "public, max-age=15, stale-while-revalidate=60"
+    : publicGet
+      ? "public, max-age=600, stale-while-revalidate=1200"
+      : "no-store");
   next();
 });
 app.use((req, res, next) => {

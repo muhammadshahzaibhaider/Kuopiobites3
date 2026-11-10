@@ -2,7 +2,7 @@
 import { eur } from "@/lib/format";
 import { useEffect, useRef, useState } from "react";
 import { useShop } from "@/lib/store";
-import { applyOfferToPrice, offerCategoryIds } from "@/lib/v3";
+import { applyOfferToPrice, itemInOfferScope, offerCategoryIds } from "@/lib/v3";
 import type { DeliveryRule, Offer } from "@/lib/types";
 import * as api from "@/lib/api";
 import { Drawer, Field, GhostBtn, Pill, PrimaryBtn, inputCls } from "./ui";
@@ -189,13 +189,7 @@ export function OffersView() {
             <section className="space-y-2 rounded-xl border border-gold/40 bg-gold/10 p-3">
               <h3 className="text-xs font-black uppercase tracking-wide text-cherry/60">Customer prices in this scope</h3>
               {(() => {
-                const scopedItems = adminItems.filter((item) => !item.archived && (
-                  selected.scope.whole
-                    ? true
-                    : offerCategoryIds(selected.scope).length
-                      ? offerCategoryIds(selected.scope).includes(item.cat)
-                      : (selected.scope.itemIds ?? []).includes(item.id)
-                ));
+                const scopedItems = adminItems.filter((item) => !item.archived && itemInOfferScope(selected, item));
                 const sample = scopedItems.slice(0, 4);
                 if (!["percent", "override"].includes(selected.type)) {
                   return <p className="text-xs font-bold text-cherry/60">This offer type is deducted from the cart total at checkout, so shelf prices stay unchanged.</p>;
