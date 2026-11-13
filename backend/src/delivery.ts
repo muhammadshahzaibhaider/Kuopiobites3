@@ -121,6 +121,14 @@ export function deliveryFeeFor(settings: Settings, distanceKm: number | undefine
   return matching?.fee ?? settings.deliveryFee;
 }
 
+/** Hard cap for delivery: shop radius, or the farthest active priced zone if that is larger. */
+export function deliveryCoverageKm(settings: Pick<Settings, "radiusKm" | "deliveryRules">): number {
+  const fromRules = settings.deliveryRules
+    .filter((rule) => rule.active && rule.maxDistanceKm != null)
+    .map((rule) => rule.maxDistanceKm as number);
+  return Math.max(settings.radiusKm || 0, fromRules.length ? Math.max(...fromRules) : 0);
+}
+
 /** Guarded in-memory test hook; production uses the real provider integration. */
 export function clearDeliveryDistanceCacheForTests(): void {
   distanceCache.clear();

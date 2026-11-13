@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { deliveryFeeFor, drivingKmFromShop, matchesDeliveryRule } from "../src/delivery.ts";
+import { deliveryCoverageKm, deliveryFeeFor, drivingKmFromShop, matchesDeliveryRule } from "../src/delivery.ts";
 
 const settings = {
   deliveryFee: 0,
@@ -26,6 +26,18 @@ test("a 4 km drive uses the 3.1–4 km band, not the free 0–3 km band", () => 
 test("inactive bands are skipped", () => {
   const off = { ...settings, deliveryRules: settings.deliveryRules.map((r) => r.id === "b" ? { ...r, active: false } : r) };
   assert.equal(deliveryFeeFor(off, 4, 0), 0);
+});
+
+test("coverage km follows the farthest active zone when it exceeds radiusKm", () => {
+  const live = {
+    radiusKm: 6,
+    deliveryRules: [
+      { id: "a", name: "near", fee: 0, active: true, maxDistanceKm: 3 },
+      { id: "b", name: "far", fee: 10, active: true, maxDistanceKm: 20 },
+      { id: "c", name: "off", fee: 99, active: false, maxDistanceKm: 50 },
+    ],
+  };
+  assert.equal(deliveryCoverageKm(live), 20);
 });
 
 test("Kolmisoppi-ish coords are not in the free 0–3 km band after the driving factor", () => {

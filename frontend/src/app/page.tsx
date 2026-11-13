@@ -7,6 +7,7 @@ import OffersSection from "@/components/OffersSection";
 import SpecialsCarousel from "@/components/SpecialsCarousel";
 import { BtnGhost, BtnPrimary, MenuImage, OpenBadge, Reveal, SectionHead, Stagger, StaggerItem } from "@/components/ui";
 import { eur } from "@/lib/format";
+import { deliveryCoverageKm } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
 import { CATEGORY_IMG, FEATURED, MENU as MENU_ALL, RESTAURANT } from "@/lib/menu";
 import { resolveImageSrc } from "@/lib/images";
@@ -246,7 +247,7 @@ export default function Home() {
             <p className="mt-3 text-sm text-cherry/80">{RESTAURANT.address}, Finland</p>
             <a href={RESTAURANT.mapLink} target="_blank" rel="noopener noreferrer" className="mt-3 inline-block font-black text-gold-deep underline decoration-gold underline-offset-4">{t("home.dirs")}</a>
             <p className="mt-4 text-sm text-cherry/80">
-              {t("home.pickup")} {settings.radiusKm} {t("home.km")} {eur(settings.minOrder)}
+              {t("home.pickup")} {deliveryCoverageKm(settings)} {t("home.km")} {eur(settings.minOrder)}
             </p>
           </StaggerItem>
           <StaggerItem className="rounded-3xl border border-cherry/10 bg-cream-deep p-6 shadow-card">

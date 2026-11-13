@@ -513,8 +513,8 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       };
       await api.apiPutItem(upd); await refresh();
       return true;
-    } catch {
-      toast("Item could not be saved", "err");
+    } catch (e) {
+      toast(e instanceof Error && e.message ? `Item could not be saved — ${e.message}` : "Item could not be saved", "err");
       return false;
     }
   };
@@ -524,8 +524,8 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       await api.apiPutItem(item);
       await refresh();
       return true;
-    } catch {
-      toast("Item could not be saved", "err");
+    } catch (e) {
+      toast(e instanceof Error && e.message ? `Item could not be saved — ${e.message}` : "Item could not be saved", "err");
       return false;
     }
   };

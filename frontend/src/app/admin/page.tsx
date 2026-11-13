@@ -450,15 +450,6 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
           <button onClick={() => setMobileNav(true)} aria-label="Open navigation" className="grid h-9 w-9 place-items-center rounded-lg border border-cherry/20 text-cherry lg:hidden">
             <Ic n="menu" size={17} />
           </button>
-          <span className="relative hidden flex-1 sm:block sm:max-w-sm">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-cherry/40"><Ic n="search" size={14} /></span>
-            <input
-              placeholder="Search orders, items… (sidebar search above)"
-              onFocus={() => setMobileNav(true)}
-              readOnly
-              className="min-h-[36px] w-full cursor-pointer rounded-lg border border-cherry/15 bg-cream-deep pl-9 pr-3 text-xs font-bold placeholder:text-cherry/40"
-            />
-          </span>
           <div className="ml-auto flex items-center gap-1.5">
             <button
               onClick={() => setLang(lang === "fi" ? "en" : "fi")}
