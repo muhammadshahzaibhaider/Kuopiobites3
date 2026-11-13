@@ -111,8 +111,13 @@ app.use((req, res, next) => {
     || req.path === "/api/todays-special"
     || /^\/api\/items\/[^/]+$/.test(req.path)
   );
-  const liveSettings = req.method === "GET" && (req.path === "/api/settings" || req.path === "/api/todays-special");
-  res.setHeader("Cache-Control", liveSettings
+  const liveCatalog = req.method === "GET" && (
+    req.path === "/api/settings"
+    || req.path === "/api/todays-special"
+    || req.path === "/api/items"
+    || /^\/api\/items\/[^/]+$/.test(req.path)
+  );
+  res.setHeader("Cache-Control", liveCatalog
     ? "public, max-age=15, stale-while-revalidate=60"
     : publicGet
       ? "public, max-age=600, stale-while-revalidate=1200"
@@ -691,8 +696,14 @@ function withStatus(order: Order) {
 
 app.get("/api/orders", requireStaff("kitchen"), wrap(async (_req, res) => {
   const orders = await listOrders(300);
+  const pendingWindowMs = 3 * 60 * 60 * 1000;
+  const now = Date.now();
   ok(res, orders
-    .filter((order) => ["paid", "demo_paid", "refunded"].includes(String(order.paymentStatus)))
+    .filter((order) => {
+      const pay = String(order.paymentStatus);
+      if (["paid", "demo_paid", "refunded"].includes(pay)) return true;
+      return pay === "pending" && now - order.createdAt < pendingWindowMs;
+    })
     .map((order) => ({ ...order, status: orderStatus(order) })));
 }));
 

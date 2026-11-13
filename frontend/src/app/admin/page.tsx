@@ -210,7 +210,8 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   const { lang, setLang } = useLang();
   useTick(4000);
 
-  const placed = orders.filter((o) => orderStatus(o) === "placed" && !o.refunded);
+  const isPaid = (o: Order) => o.paymentStatus === "paid" || o.paymentStatus === "demo_paid";
+  const placed = orders.filter((o) => orderStatus(o) === "placed" && !o.refunded && isPaid(o));
 
   /* Poll tickets only — a full catalogue refresh every 15s burned Hobby CPU/CDN. */
   useEffect(() => {
@@ -218,7 +219,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
       if (document.visibilityState === "hidden") return;
       void refreshKitchen();
     };
-    const id = window.setInterval(tick, 120_000);
+    const id = window.setInterval(tick, 5_000);
     document.addEventListener("visibilitychange", tick);
     return () => {
       window.clearInterval(id);
@@ -236,7 +237,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   /* New-order detection: chime + full-screen takeover. */
   useEffect(() => {
     const live = orders
-      .filter((o) => orderStatus(o) === "placed" && !o.refunded)
+      .filter((o) => orderStatus(o) === "placed" && !o.refunded && isPaid(o))
       .sort((a, b) => a.createdAt - b.createdAt);
     if (seenOrders.current === null) {
       seenOrders.current = new Set(live.map((o) => o.id));

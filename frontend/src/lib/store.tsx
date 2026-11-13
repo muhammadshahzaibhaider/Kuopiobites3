@@ -245,12 +245,15 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const refresh = useCallback(async () => {
     try {
       /* Public pages skip staff session + ticket lists — those burned Hobby CPU/CDN. */
-      const [s, items, cats, tr, session, staffSession] = await Promise.all([
+      const [s, publicItems, cats, tr, session, staffSession] = await Promise.all([
         api.fetchSettings(), api.fetchItems(), api.fetchCategories(), api.fetchTranslations(),
         api.apiSession(),
         onAdmin ? api.apiStaffSession() : Promise.resolve({ user: null, role: null as string | null }),
       ]);
       setSettings(s);
+      const items = staffSession.role === "manager"
+        ? await api.apiAdminItems(true).catch(() => publicItems)
+        : publicItems;
       hydrateMenu(items, cats);
       hydrateTranslations(tr);
       const sessionUser = (session.user ?? null) as User | null;
@@ -262,12 +265,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
         setCart([]);
       }
       setStaffRole(staffSession.role);
-      if (staffSession.role === "manager") {
-        const managerItems = await api.apiAdminItems(true).catch(() => items);
-        setAdminItems(managerItems);
-      } else {
-        setAdminItems(items);
-      }
+      setAdminItems(items);
       if (staffSession.role) {
         const [o, r] = await Promise.all([api.apiListOrders(), api.apiListReservations()]);
         setOrders(o); setReservations(r);

@@ -37,12 +37,20 @@ export default function NewOrderAlert({
 
   const portions = useMemo(() => order.lines.reduce((n, l) => n + l.qty, 0), [order.lines]);
 
+  const paid = order.paymentStatus === "paid" || order.paymentStatus === "demo_paid";
+
   const accept = async () => {
+    if (!paid) {
+      toast("Payment is not confirmed yet — keep this ticket open", "err");
+      return;
+    }
     setBusy(true);
     try {
-      await setOrderReadyTime(order.id, minutes);
+      const timed = await setOrderReadyTime(order.id, minutes);
+      if (!timed) return;
       const ok = await setOrderStatus(order.id, "accepted");
-      if (ok) toast(`Order ${order.id} accepted · ready in ${minutes} min`);
+      if (!ok) return;
+      toast(`Order ${order.id} accepted · ready in ${minutes} min`);
       onResolved();
     } finally {
       setBusy(false);
@@ -50,10 +58,15 @@ export default function NewOrderAlert({
   };
 
   const decline = async () => {
+    if (!paid) {
+      toast("Payment is not confirmed yet — cannot decline until Stripe settles", "err");
+      return;
+    }
     setBusy(true);
     try {
       const ok = await setOrderStatus(order.id, "cancelled");
-      if (ok) toast(`Order ${order.id} declined`, "err");
+      if (!ok) return;
+      toast(`Order ${order.id} declined`, "err");
       onResolved();
     } finally {
       setBusy(false);
@@ -176,7 +189,7 @@ export default function NewOrderAlert({
 
               <div className="rounded-2xl border border-cherry/10 bg-white/70 p-3.5">
                 <p className="text-[10px] font-black uppercase tracking-[0.18em] text-cherry/40">Payment</p>
-                <p className="mt-1 text-sm font-black text-cherry">{order.paymentStatus === "demo_paid" ? "Demo payment" : "Paid online"}</p>
+                <p className="mt-1 text-sm font-black text-cherry">{paid ? (order.paymentStatus === "demo_paid" ? "Demo payment" : "Paid online") : "Awaiting payment"}</p>
                 <p className="text-[11px] font-semibold text-cherry/50">{eur(order.total)} · {order.type === "delivery" ? "delivery" : "pickup"}</p>
               </div>
             </div>
@@ -206,10 +219,10 @@ export default function NewOrderAlert({
                 </button>
                 <button
                   onClick={() => void accept()}
-                  disabled={busy}
+                  disabled={busy || !paid}
                   className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-[#2e7d32] px-4 text-sm font-black text-cream shadow-card transition hover:bg-[#256428] disabled:opacity-60"
                 >
-                  <Ic n="check" size={15} /> {busy ? "Saving…" : `Accept · ${minutes} min`}
+                  <Ic n="check" size={15} /> {busy ? "Saving…" : paid ? `Accept · ${minutes} min` : "Waiting for payment"}
                 </button>
               </span>
             </>
