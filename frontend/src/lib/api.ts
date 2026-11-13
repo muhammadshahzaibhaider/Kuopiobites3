@@ -143,8 +143,13 @@ export const apiDeleteReservation = (id: string) =>
 export const apiSaveSettings = (s: Settings) => api<Settings>("/api/settings", { method: "PUT", body: s, staff: true, timeoutMs: 45_000 });
 export const apiSaveSpecial = (body: { special?: unknown; todaysSpecials?: unknown }) =>
   api<unknown>("/api/todays-special", { method: "PUT", body, staff: true, timeoutMs: 45_000 });
-export const apiPutItem = (m: MenuItem) => api<MenuItem>(`/api/items/${m.id}`, { method: "PUT", body: m, staff: true });
-export const apiPostItem = (m: MenuItem) => api<MenuItem>("/api/items", { method: "POST", body: m, staff: true });
+/** Seed-only flags stay client-side; a strict PUT used to 400 on them. */
+function itemBody(m: MenuItem): MenuItem {
+  const { excludeFromCategoryOffers: _omit, ...body } = m;
+  return body;
+}
+export const apiPutItem = (m: MenuItem) => api<MenuItem>(`/api/items/${m.id}`, { method: "PUT", body: itemBody(m), staff: true });
+export const apiPostItem = (m: MenuItem) => api<MenuItem>("/api/items", { method: "POST", body: itemBody(m), staff: true });
 export const apiDeleteItem = (id: string) => api<{ ok: true }>(`/api/items/${id}`, { method: "DELETE", staff: true });
 export const apiArchiveItem = (id: string, archived: boolean) =>
   api<{ id: string; archived: boolean }>(`/api/items/${encodeURIComponent(id)}/archive`, { method: "PATCH", body: { archived }, staff: true });

@@ -8,7 +8,7 @@ import { LineThumb, QtyStepper } from "@/components/ui";
 import { cx, eur, fmtDate, vatPct } from "@/lib/format";
 import { lineErrorKey } from "@/lib/cart-errors";
 import { cartOptionLabel, computeDiscount, etaLabel, isItemOff, validatePreorder } from "@/lib/v3";
-import { orderingInfo } from "@/lib/hours";
+import { deliveryCoverageKm, orderingInfo } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
 import { RESTAURANT } from "@/lib/menu";
 import { useShop } from "@/lib/store";
@@ -88,7 +88,8 @@ export default function OrderPage() {
   const postalOk = type !== "delivery" || kuopioPostcode;
   const deliveryTotal = serverPricing?.total ?? localTotal;
   const minOk = type !== "delivery" || deliveryTotal >= settings.minOrder;
-  const tooFar = type === "delivery" && serverPricing?.deliveryDistanceKm !== undefined && settings.radiusKm > 0 && serverPricing.deliveryDistanceKm > settings.radiusKm;
+  const coverageKm = deliveryCoverageKm(settings);
+  const tooFar = type === "delivery" && serverPricing?.deliveryDistanceKm !== undefined && coverageKm > 0 && serverPricing.deliveryDistanceKm > coverageKm;
   const phoneDigits = phone.replace(/\D/g, "").length;
   const phoneOk = phoneDigits >= 9;
   const invalidCount = serverPricing?.invalidCount ?? 0;
@@ -277,7 +278,7 @@ export default function OrderPage() {
                   />
                   {!postalOk && address.trim() !== "" && (
                     <p className="text-xs font-bold text-cherry-bright">
-                      We deliver within ~{settings.radiusKm} km of Kuopio centre (postal codes 70xxx).
+                      We deliver within ~{coverageKm} km of Kuopio centre (postal codes 70xxx).
                     </p>
                   )}
                   {serverPricing?.deliveryDistanceKm !== undefined && (

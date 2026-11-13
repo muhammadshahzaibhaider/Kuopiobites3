@@ -66,6 +66,7 @@ export const menuItemSchema = z.object({
   mods: z.array(modGroupSchema).max(30).optional(), availability: availabilitySchema.optional(),
   imageKey: text(160).optional(), imageUrl: imageSource.optional(),
   weightKg: z.number().finite().min(0).max(100).optional(), archived: z.boolean().optional(),
+  excludeFromCategoryOffers: z.boolean().optional(),
 }).strict().superRefine((item, ctx) => {
   if (item.prices.length === 1 && item.prices[0].label !== "") {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["prices", 0, "label"], message: "single-price variants must use an empty label" });

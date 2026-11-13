@@ -174,6 +174,14 @@ export function orderingInfo(
   return { open: !settings.paused && info.open, info, paused: settings.paused };
 }
 
+/** Hard cap for delivery: shop radius, or the farthest active priced zone if that is larger. */
+export function deliveryCoverageKm(settings: Pick<Settings, "radiusKm" | "deliveryRules">): number {
+  const fromRules = settings.deliveryRules
+    .filter((rule) => rule.active && rule.maxDistanceKm != null)
+    .map((rule) => rule.maxDistanceKm as number);
+  return Math.max(settings.radiusKm || 0, fromRules.length ? Math.max(...fromRules) : 0);
+}
+
 /** Available reservation slots for a date (30 min steps, last seating 60 min before close). */
 export function slotsFor(
   dateStr: string,

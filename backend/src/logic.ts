@@ -1,5 +1,5 @@
 import { listItems } from "./supabase-menu";
-import { cartWeightKg, deliveryFeeFor, resolveDeliveryDistanceKm } from "./delivery";
+import { cartWeightKg, deliveryCoverageKm, deliveryFeeFor, resolveDeliveryDistanceKm } from "./delivery";
 import { loadSettings as loadSupabaseSettings } from "./supabase-settings";
 import { computeDiscount, todayDayH, validatePreorder } from "./lib/v3";
 import { expectedUnitPrice, priceEachLine, type LineErrorCode, type PricedLine } from "./lib/line-pricing";
@@ -175,7 +175,8 @@ export async function validateOrder(
   /* Deliberately no client-total comparison: totals are recalculated from the
      current menu/settings and the persisted server total is authoritative. */
   const priced = await priceCart(s, body.lines, body.type, body.lang ?? "en", body.code, items, body.address);
-  if (body.type === "delivery" && priced.deliveryDistanceKm !== undefined && s.radiusKm > 0 && priced.deliveryDistanceKm > s.radiusKm)
+  const coverageKm = deliveryCoverageKm(s);
+  if (body.type === "delivery" && priced.deliveryDistanceKm !== undefined && coverageKm > 0 && priced.deliveryDistanceKm > coverageKm)
     throw new Error("order.deliveryRadius");
   return priced;
 }
