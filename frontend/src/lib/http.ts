@@ -61,8 +61,6 @@ async function request<T>(path: string, init: RequestInit, timeoutMs = REQUEST_T
       path === "/api/health"
       || path === "/api/categories"
       || path === "/api/translations"
-      || path === "/api/items"
-      || /^\/api\/items\/[^/]+$/.test(path)
     );
     response = await fetch(apiBase() + path, {
       credentials: "include",

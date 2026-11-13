@@ -208,6 +208,7 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
         <span className="flex items-center gap-2">
           <Pill tone={statusTone(orderStatus(o))}>{orderStatus(o)}</Pill>
           {o.refunded && <Pill tone="red">refunded</Pill>}
+          {o.paymentStatus === "pending" && <Pill tone="gold">awaiting payment</Pill>}
           {o.scheduled && <Pill tone="gold">pre-order</Pill>}
         </span>
       ),
@@ -217,7 +218,7 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
       render: (o) =>
         mode !== "refunds" && orderStatus(o) !== "completed" ? (
           <button
-            onClick={async (e) => { e.stopPropagation(); const next = NEXT[orderStatus(o)]; if (await setOrderStatus(o.id, next)) toast(`${o.id} → ${next}`); }}
+            onClick={async (e) => { e.stopPropagation(); if (o.paymentStatus === "pending") { toast("Wait until payment is confirmed", "err"); return; } const next = NEXT[orderStatus(o)]; if (await setOrderStatus(o.id, next)) toast(`${o.id} → ${next}`); }}
             className="inline-flex min-h-[30px] items-center gap-1 rounded-lg bg-cherry px-2.5 text-[11px] font-black text-cream hover:bg-cherry-bright"
           >
             <Ic n="chevR" size={12} /> {NEXT[orderStatus(o)]}
