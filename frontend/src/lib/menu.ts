@@ -3,9 +3,7 @@ import { WHATSAPP_DISPLAY, whatsappUrl } from "./whatsapp";
 export { WHATSAPP_DISPLAY, WHATSAPP_GREETING, WHATSAPP_NUMBER, whatsappUrl } from "./whatsapp";
 
 const FACEBOOK_URL = "https://www.facebook.com/share/1Cc27jbJMm/?mibextid=wwXIfr";
-const INSTAGRAM_URL = "https://www.instagram.com/kuopio.bites?rpxt=N2ZqdjFudWFuczA4";
-const WOLT_URL = "https://wolt.com/fi/fin/kuopio/restaurant/kuopio-bites";
-const UBER_EATS_URL = "https://www.ubereats.com/store-browse-uuid/2b21a27b-6e47-587c-956a-f00de5f5fcfa?diningMode=DELIVERY";
+const INSTAGRAM_URL = "https://www.instagram.com/kuopiobites.fi";
 export const RESTAURANT = {
   name: "Kuopio Bites",
   tagline: "& Asian cuisine",
@@ -21,8 +19,8 @@ export const RESTAURANT = {
   email: "hello@kuopiobites.fi",
   instagram: INSTAGRAM_URL,
   facebook: FACEBOOK_URL,
-  wolt: WOLT_URL,
-  uberEats: UBER_EATS_URL,
+  wolt: "",
+  uberEats: "",
   whatsapp: whatsappUrl(),
   whatsappDisplay: WHATSAPP_DISPLAY,
   mapEmbed:
@@ -33,8 +31,6 @@ export const RESTAURANT = {
 export const SOCIAL_LINKS = [
   { id: "facebook", label: "Facebook", ariaLabel: "Facebook", href: RESTAURANT.facebook },
   { id: "instagram", label: "Instagram", ariaLabel: "Instagram", href: RESTAURANT.instagram },
-  { id: "wolt", label: "Wolt", ariaLabel: "Order on Wolt", href: RESTAURANT.wolt },
-  { id: "uberEats", label: "Uber Eats", ariaLabel: "Order on Uber Eats", href: RESTAURANT.uberEats },
   { id: "whatsapp", label: "WhatsApp", ariaLabel: "Chat on WhatsApp", href: RESTAURANT.whatsapp },
 ] as const;
 export type SocialLinkId = (typeof SOCIAL_LINKS)[number]["id"];
