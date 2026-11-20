@@ -60,18 +60,6 @@ export default function Footer() {
           <a href={RESTAURANT.mapLink} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-sm underline decoration-gold underline-offset-4 hover:text-gold">
             {t("home.dirs")}
           </a>
-          {(settings.platforms.wolt || settings.platforms.uberEats) && (
-            <p className="mt-4 text-sm text-cream/70">
-              {t("order.platforms")}:{" "}
-              {settings.platforms.wolt && (
-                <a href={settings.platforms.wolt} target="_blank" rel="noopener noreferrer" className="font-black text-gold-soft underline decoration-gold underline-offset-4 hover:text-gold">Wolt</a>
-              )}
-              {settings.platforms.wolt && settings.platforms.uberEats && " · "}
-              {settings.platforms.uberEats && (
-                <a href={settings.platforms.uberEats} target="_blank" rel="noopener noreferrer" className="font-black text-gold-soft underline decoration-gold underline-offset-4 hover:text-gold">Uber Eats</a>
-              )}
-            </p>
-          )}
           <div className="mt-4 flex flex-col gap-1 text-sm">
             <Link className="hover:text-gold" href="/menu">{t("footer.links")}</Link>
             <Link className="hover:text-gold" href="/dining">{t("footer.book")}</Link>

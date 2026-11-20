@@ -32,8 +32,8 @@ export const DEFAULT_SETTINGS: Settings = {
   blockedSlots: [],
   blockedDates: [],
   platforms: {
-    wolt: "https://wolt.com/fi/fin/kuopio/restaurant/kuopio-bites",
-    uberEats: "https://www.ubereats.com/store-browse-uuid/2b21a27b-6e47-587c-956a-f00de5f5fcfa?diningMode=DELIVERY",
+    wolt: "",
+    uberEats: "",
   },
   headerLogo: "round",
   hideUnavailable: false,

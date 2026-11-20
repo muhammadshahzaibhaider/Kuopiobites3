@@ -26,9 +26,7 @@ const iconBox = "grid h-12 w-12 place-items-center rounded-2xl";
 
 export default function SocialAccounts() {
   const { t } = useLang();
-  const { settings, toast } = useShop();
-  const wolt = settings.platforms.wolt || RESTAURANT.wolt;
-  const uber = settings.platforms.uberEats || RESTAURANT.uberEats;
+  const { toast } = useShop();
 
   const copyPhone = async () => {
     try {
@@ -40,7 +38,7 @@ export default function SocialAccounts() {
   };
 
   return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
       <article className={cardCls}>
         <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#f9ce34] via-[#ee2a7b] to-[#6228d7]" />
         <div className="mt-1 flex items-start justify-between">
@@ -48,7 +46,7 @@ export default function SocialAccounts() {
           <span className={cx(badgeCls, "bg-cream-deep text-cherry/50")}>{t("about.igBadge")}</span>
         </div>
         <h3 className="mt-5 font-display text-2xl font-black text-cherry">Instagram</h3>
-        <p className="mt-1 text-sm font-bold text-cherry/55">@kuopio.bites</p>
+        <p className="mt-1 text-sm font-bold text-cherry/55">@kuopiobites.fi</p>
         <p className="mt-3 flex-1 text-sm leading-relaxed text-cherry/70">{t("about.igDesc")}</p>
         <a href={RESTAURANT.instagram} target="_blank" rel="noopener noreferrer" className="mt-5 inline-flex min-h-[44px] items-center justify-center rounded-full bg-cherry px-4 text-sm font-black text-cream">
           {t("about.igCta")} ↗
@@ -86,26 +84,6 @@ export default function SocialAccounts() {
         </button>
       </article>
 
-      <article className={cardCls}>
-        <span aria-hidden className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-[#00c2e8] to-[#00a0e8]" />
-        <div className="mt-1 flex items-start justify-between">
-          <span className={cx(iconBox, "bg-[#e6f9fc] text-[#0088a8]")}>
-            <svg viewBox="0 0 24 24" className="h-6 w-6 fill-current" aria-hidden><path d="M3.5 6.5h3.2l2.1 7.1 2.6-7.1h1.9l2.6 7.1 2.1-7.1h2.5l-3.4 11h-2.2l-2.6-7.1-2.5 7.1H7.6l-4.1-11Z" /></svg>
-          </span>
-          <span className={cx(badgeCls, "bg-cream-deep text-cherry/50")}>{t("about.woltBadge")}</span>
-        </div>
-        <h3 className="mt-5 font-display text-2xl font-black text-cherry">Wolt</h3>
-        <p className="mt-1 text-sm font-bold text-cherry/55">{RESTAURANT.name}</p>
-        <p className="mt-3 flex-1 text-sm leading-relaxed text-cherry/70">{t("about.woltDesc")}</p>
-        <a href={wolt} target="_blank" rel="noopener noreferrer" className="mt-5 inline-flex min-h-[44px] items-center justify-center rounded-full border-2 border-cherry/15 bg-cream-deep px-4 text-sm font-black text-cherry">
-          {t("about.woltCta")} ↗
-        </a>
-        {uber && (
-          <a href={uber} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex min-h-[44px] items-center justify-center rounded-full border-2 border-cherry/15 bg-cream-deep px-4 text-sm font-black text-cherry">
-            {t("about.ueCta")} ↗
-          </a>
-        )}
-      </article>
     </div>
   );
 }
