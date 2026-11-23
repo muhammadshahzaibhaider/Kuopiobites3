@@ -256,6 +256,8 @@ export interface Settings {
   platforms: { wolt: string; uberEats: string };
   headerLogo: "round" | "mark";
   hideUnavailable: boolean;
+  /** When false, customers can only place pickup orders. */
+  deliveryEnabled: boolean;
   preorder: {
     enabled: boolean;
     cutoffDay: number; // 6 = Saturday

@@ -30,6 +30,10 @@ export default function OrderPage() {
   const [redeemStreak, setRedeemStreak] = useState(false);
   const [streakReady, setStreakReady] = useState(false);
 
+  useEffect(() => {
+    if (!deliveryOn && type === "delivery") setType("pickup");
+  }, [deliveryOn, type]);
+
   /* Opening hours are time-of-day data: never render them during prerender or
      the first client pass (#418), and never from the bundled defaults while the
      real settings are still loading. `hoursReady` keeps both passes identical;
@@ -109,13 +113,14 @@ export default function OrderPage() {
     if (type === "delivery" && !address.trim()) reasons.push(t("order.needAddress"));
     else if (!postalOk) reasons.push(t("order.needPostcode"));
     if (!minOk) reasons.push(`Delivery minimum is ${eur(settings.minOrder)} — add ${eur(Math.max(0, settings.minOrder - deliveryTotal))} more.`);
+    if (type === "delivery" && !deliveryOn) reasons.push(t("order.deliveryOff"));
     if (tooFar) reasons.push(t("order.deliveryRadius"));
     if (!(open.open || !!scheduled)) reasons.push(t("order.closedNote"));
     if (unavailable.length > 0) reasons.push(`${t("cart.unavailBlock")} ${unavailable.map((l) => l.name).join(", ")}`);
     if (invalidCount > 0) reasons.push(t("cart.issuesBlock"));
     if (preErr) reasons.push(t(preErr));
     return reasons;
-  }, [hoursReady, user, phoneOk, type, address, postalOk, minOk, settings.minOrder, deliveryTotal, tooFar, open.open, scheduled, unavailable, invalidCount, preErr, t]);
+  }, [hoursReady, user, phoneOk, type, address, postalOk, minOk, settings.minOrder, deliveryTotal, tooFar, deliveryOn, open.open, scheduled, unavailable, invalidCount, preErr, t]);
   const canPay = hoursReady && payBlockers.length === 0 && !paying && cart.length > 0;
 
   const pay = async () => {
@@ -240,19 +245,24 @@ export default function OrderPage() {
           <section>
             <h2 className="mb-3 font-display text-xl font-black text-cherry">2 · {t("order.method")}</h2>
             <div className="flex rounded-full bg-cream-deep p-1">
-              {(["pickup", "delivery"] as const).map((mth) => (
+              {(["pickup", "delivery"] as const).map((mth) => {
+                const locked = mth === "delivery" && !deliveryOn;
+                return (
                 <button
                   key={mth}
-                  onClick={() => setType(mth)}
-                  className={cx("relative min-h-[48px] flex-1 rounded-full font-black capitalize transition", type === mth ? "text-cream" : "text-cherry")}
+                  disabled={locked}
+                  onClick={() => { if (!locked) setType(mth); }}
+                  className={cx("relative min-h-[48px] flex-1 rounded-full font-black capitalize transition", locked ? "cursor-not-allowed text-cherry/35" : type === mth ? "text-cream" : "text-cherry")}
                 >
-                  {type === mth && (
+                  {type === mth && !locked && (
                     <motion.span layoutId="method-pill" className="absolute inset-0 rounded-full bg-cherry-bright" transition={{ type: "spring", bounce: 0.25, duration: 0.5 }} />
                   )}
                   <span className="relative">{mth === "pickup" ? `🥡 ${t("order.pickup")}` : `🛵 ${t("order.delivery")}`}</span>
                 </button>
-              ))}
+                );
+              })}
             </div>
+            {!deliveryOn && <p className="mt-2 text-xs font-bold text-cherry/70">{t("order.deliveryOff")}</p>}
             <div className="mt-4 rounded-3xl border border-cherry/10 bg-cream-deep p-5 shadow-card">
               {type === "pickup" ? (
                 <p className="text-sm font-bold text-cherry/80">

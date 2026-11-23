@@ -283,6 +283,23 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
           }}
         />
       </div>
+      <div className="flex items-center justify-between rounded-2xl border border-cherry/10 bg-cream-deep/40 px-4 py-3">
+        <span>
+          <span className="block text-sm font-black text-cherry">Delivery orders</span>
+          <span className="text-xs text-cherry/60">Off = pickup only on the order page</span>
+        </span>
+        <Switch
+          on={s.deliveryEnabled !== false}
+          ariaLabel="delivery orders"
+          onChange={async () => {
+            const next = { ...settings, ...s, deliveryEnabled: s.deliveryEnabled === false };
+            markDirty(next);
+            if (await persist(next, next.deliveryEnabled ? "Delivery is on" : "Delivery is off — pickup only")) {
+              logAudit(`delivery ${next.deliveryEnabled ? "enabled" : "paused"}`);
+            }
+          }}
+        />
+      </div>
 
       <div className="rounded-2xl border border-cherry/10 bg-cream-deep/40 p-4">
         <h3 className="text-sm font-black text-cherry">Opening hours</h3>
@@ -395,6 +412,7 @@ export function SettingsView({ mode }: { mode: "general" | "restaurant" }) {
             platforms: s.platforms,
             headerLogo: s.headerLogo,
             hideUnavailable: s.hideUnavailable,
+            deliveryEnabled: s.deliveryEnabled !== false,
             offItems: s.offItems,
             orderStreak: s.orderStreak,
           }, "Settings saved and reloaded from the database");

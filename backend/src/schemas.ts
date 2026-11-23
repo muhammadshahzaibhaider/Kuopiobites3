@@ -251,7 +251,7 @@ export const settingsSchema = z.object({
   vatRate: z.number().finite().min(0).max(1), toppings: z.array(text(100)).max(200), special: specialCfgSchema,
   blockedSlots: z.array(z.string().regex(/^\d{4}-\d{2}-\d{2}T([01]\d|2[0-3]):[0-5]\d$/)).max(500),
   blockedDates: z.array(date).max(500), platforms: z.object({ wolt: url.or(z.literal("")), uberEats: url.or(z.literal("")) }).strict(),
-  headerLogo: z.enum(["round", "mark"]), hideUnavailable: z.boolean(),
+  headerLogo: z.enum(["round", "mark"]), hideUnavailable: z.boolean(), deliveryEnabled: z.boolean(),
   preorder: z.object({ enabled: z.boolean(), cutoffDay: z.number().int().min(0).max(6), cutoffTime: hhmm, slots: z.array(hhmm).max(100), capacity: z.number().int().positive().max(10000).optional(), noteEn: text(500), noteFi: text(500) }).strict(),
   offers: z.array(offerSchema).max(200), todaysSpecials: z.array(specialItemSchema).max(200), toppingMeta: z.record(toppingMetaSchema),
   itemImages: z.record(uploadedImgSchema), offItems: z.record(availabilityStateSchema), offCats: z.record(availabilityStateSchema),
