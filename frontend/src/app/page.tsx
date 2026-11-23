@@ -247,7 +247,7 @@ export default function Home() {
             <p className="mt-3 text-sm text-cherry/80">{RESTAURANT.address}, Finland</p>
             <a href={RESTAURANT.mapLink} target="_blank" rel="noopener noreferrer" className="mt-3 inline-block font-black text-gold-deep underline decoration-gold underline-offset-4">{t("home.dirs")}</a>
             <p className="mt-4 text-sm text-cherry/80">
-              {t("home.pickup")} {deliveryCoverageKm(settings)} {t("home.km")} {eur(settings.minOrder)}
+              {settings.deliveryEnabled === false ? t("home.pickupOnly") : t("home.pickup")} {deliveryCoverageKm(settings)} {t("home.km")} {eur(settings.minOrder)}
             </p>
           </StaggerItem>
           <StaggerItem className="rounded-3xl border border-cherry/10 bg-cream-deep p-6 shadow-card">

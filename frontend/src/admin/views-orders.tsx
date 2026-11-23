@@ -104,19 +104,22 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
         </div>
         <div className="space-y-2 rounded-2xl border border-cherry/10 bg-cream-deep p-4">
           <p className="text-[11px] font-black uppercase tracking-wide text-cherry/50">Quick actions</p>
+          <p className={deliveryOn ? "text-xs font-black text-[#2e7d32]" : "text-xs font-black text-brick"}>
+            Delivery: {deliveryOn ? "ON" : "OFF (pickup only)"}
+          </p>
           <PrimaryBtn onClick={() => go("menu.items")}>Add menu item</PrimaryBtn>
           <GhostBtn className="w-full justify-center" onClick={() => go("menu.special")}>★ Set Today's Special</GhostBtn>
           <button
-            onClick={() => setConfirmPause(true)}
-            className={settings.paused ? "min-h-[40px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream" : "min-h-[40px] w-full rounded-xl border-2 border-brick px-4 text-sm font-black text-brick hover:bg-brick hover:text-cream"}
+            onClick={() => setConfirmDelivery(true)}
+            className={deliveryOn ? "min-h-[44px] w-full rounded-xl border-2 border-brick px-4 text-sm font-black text-brick hover:bg-brick hover:text-cream" : "min-h-[44px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream"}
           >
-            {settings.paused ? "▶ Resume online ordering" : "⏸ Pause online ordering"}
+            {deliveryOn ? "🛵 Pause delivery (pickup only)" : "🛵 Resume delivery"}
           </button>
           <button
-            onClick={() => setConfirmDelivery(true)}
-            className={deliveryOn ? "min-h-[40px] w-full rounded-xl border-2 border-cherry px-4 text-sm font-black text-cherry hover:bg-cherry hover:text-cream" : "min-h-[40px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream"}
+            onClick={() => setConfirmPause(true)}
+            className="min-h-[36px] w-full text-xs font-bold text-cherry/45 underline decoration-cherry/20 underline-offset-4 hover:text-cherry"
           >
-            {deliveryOn ? "🛵 Turn delivery off" : "🛵 Turn delivery on"}
+            {settings.paused ? "Resume all online ordering" : "Emergency: pause ALL online ordering"}
           </button>
         </div>
       </div>

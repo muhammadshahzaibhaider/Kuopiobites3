@@ -244,25 +244,27 @@ export default function OrderPage() {
           {/* 2 · method */}
           <section>
             <h2 className="mb-3 font-display text-xl font-black text-cherry">2 · {t("order.method")}</h2>
+            {deliveryOn ? (
             <div className="flex rounded-full bg-cream-deep p-1">
-              {(["pickup", "delivery"] as const).map((mth) => {
-                const locked = mth === "delivery" && !deliveryOn;
-                return (
+              {(["pickup", "delivery"] as const).map((mth) => (
                 <button
                   key={mth}
-                  disabled={locked}
-                  onClick={() => { if (!locked) setType(mth); }}
-                  className={cx("relative min-h-[48px] flex-1 rounded-full font-black capitalize transition", locked ? "cursor-not-allowed text-cherry/35" : type === mth ? "text-cream" : "text-cherry")}
+                  onClick={() => setType(mth)}
+                  className={cx("relative min-h-[48px] flex-1 rounded-full font-black capitalize transition", type === mth ? "text-cream" : "text-cherry")}
                 >
-                  {type === mth && !locked && (
+                  {type === mth && (
                     <motion.span layoutId="method-pill" className="absolute inset-0 rounded-full bg-cherry-bright" transition={{ type: "spring", bounce: 0.25, duration: 0.5 }} />
                   )}
                   <span className="relative">{mth === "pickup" ? `🥡 ${t("order.pickup")}` : `🛵 ${t("order.delivery")}`}</span>
                 </button>
-                );
-              })}
+              ))}
             </div>
-            {!deliveryOn && <p className="mt-2 text-xs font-bold text-cherry/70">{t("order.deliveryOff")}</p>}
+            ) : (
+              <div className="rounded-2xl border border-cherry/15 bg-cream-deep p-4">
+                <p className="font-black text-cherry">🥡 {t("order.pickup")}</p>
+                <p className="mt-1 text-sm font-bold text-cherry/70">{t("order.deliveryOff")}</p>
+              </div>
+            )}
             <div className="mt-4 rounded-3xl border border-cherry/10 bg-cream-deep p-5 shadow-card">
               {type === "pickup" ? (
                 <p className="text-sm font-bold text-cherry/80">
