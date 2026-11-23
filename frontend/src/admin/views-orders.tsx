@@ -20,6 +20,8 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
   const [range, setRange] = useState<7 | 30>(7);
   const [report, setReport] = useState<AnalyticsReport | null>(null);
   const [confirmPause, setConfirmPause] = useState(false);
+  const [confirmDelivery, setConfirmDelivery] = useState(false);
+  const deliveryOn = settings.deliveryEnabled !== false;
   const ready = useDelayedReady("dash");
   useEffect(() => {
     let active = true;
@@ -110,6 +112,12 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
           >
             {settings.paused ? "▶ Resume online ordering" : "⏸ Pause online ordering"}
           </button>
+          <button
+            onClick={() => setConfirmDelivery(true)}
+            className={deliveryOn ? "min-h-[40px] w-full rounded-xl border-2 border-cherry px-4 text-sm font-black text-cherry hover:bg-cherry hover:text-cream" : "min-h-[40px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream"}
+          >
+            {deliveryOn ? "🛵 Turn delivery off" : "🛵 Turn delivery on"}
+          </button>
         </div>
       </div>
 
@@ -127,6 +135,23 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
               toast(paused ? "Ordering paused" : "Ordering resumed", paused ? "err" : "ok");
             }
             setConfirmPause(false);
+          })();
+        }}
+      />
+      <Confirm
+        open={confirmDelivery}
+        title={deliveryOn ? "Turn delivery off?" : "Turn delivery on?"}
+        body={deliveryOn ? "Customers will only be able to choose pickup until you turn delivery back on." : "Customers will be able to choose delivery again immediately."}
+        danger={deliveryOn}
+        onNo={() => setConfirmDelivery(false)}
+        onYes={() => {
+          void (async () => {
+            const next = !deliveryOn;
+            if (await saveSettings({ ...settings, deliveryEnabled: next })) {
+              logAudit(`delivery ${next ? "enabled" : "paused"} from dashboard`);
+              toast(next ? "Delivery is on" : "Delivery is off — pickup only", next ? "ok" : "err");
+            }
+            setConfirmDelivery(false);
           })();
         }}
       />

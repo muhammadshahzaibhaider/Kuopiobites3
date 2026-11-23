@@ -176,6 +176,7 @@ export async function validateOrder(
      current menu/settings and the persisted server total is authoritative. */
   const priced = await priceCart(s, body.lines, body.type, body.lang ?? "en", body.code, items, body.address);
   const coverageKm = deliveryCoverageKm(s);
+  if (body.type === "delivery" && s.deliveryEnabled === false) throw new Error("order.deliveryOff");
   if (body.type === "delivery" && priced.deliveryDistanceKm !== undefined && coverageKm > 0 && priced.deliveryDistanceKm > coverageKm)
     throw new Error("order.deliveryRadius");
   return priced;
