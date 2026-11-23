@@ -112,7 +112,7 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
             onClick={() => setConfirmDelivery(true)}
             className={deliveryOn ? "min-h-[44px] w-full rounded-xl border-2 border-brick px-4 text-sm font-black text-brick hover:bg-brick hover:text-cream" : "min-h-[44px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream"}
           >
-            {deliveryOn ? "🛵 Pause delivery (pickup only)" : "🛵 Resume delivery"}
+            {deliveryOn ? "⏸ Off delivery" : "▶ On delivery"}
           </button>
         </div>
       </div>
