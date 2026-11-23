@@ -19,7 +19,6 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
   const { t } = useLang();
   const [range, setRange] = useState<7 | 30>(7);
   const [report, setReport] = useState<AnalyticsReport | null>(null);
-  const [confirmPause, setConfirmPause] = useState(false);
   const [confirmDelivery, setConfirmDelivery] = useState(false);
   const deliveryOn = settings.deliveryEnabled !== false;
   const ready = useDelayedReady("dash");
@@ -115,32 +114,9 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
           >
             {deliveryOn ? "🛵 Pause delivery (pickup only)" : "🛵 Resume delivery"}
           </button>
-          <button
-            onClick={() => setConfirmPause(true)}
-            className="min-h-[36px] w-full text-xs font-bold text-cherry/45 underline decoration-cherry/20 underline-offset-4 hover:text-cherry"
-          >
-            {settings.paused ? "Resume all online ordering" : "Emergency: pause ALL online ordering"}
-          </button>
         </div>
       </div>
 
-      <Confirm
-        open={confirmPause}
-        title={settings.paused ? "Resume online ordering?" : "Pause online ordering?"}
-        body={settings.paused ? "Customers will be able to order again immediately." : "Customers will see the site as closed for online orders until you resume."}
-        danger={!settings.paused}
-        onNo={() => setConfirmPause(false)}
-        onYes={() => {
-          void (async () => {
-            const paused = !settings.paused;
-            if (await saveSettings({ ...settings, paused })) {
-              logAudit(`ordering ${paused ? "paused" : "resumed"} from dashboard`);
-              toast(paused ? "Ordering paused" : "Ordering resumed", paused ? "err" : "ok");
-            }
-            setConfirmPause(false);
-          })();
-        }}
-      />
       <Confirm
         open={confirmDelivery}
         title={deliveryOn ? "Turn delivery off?" : "Turn delivery on?"}
