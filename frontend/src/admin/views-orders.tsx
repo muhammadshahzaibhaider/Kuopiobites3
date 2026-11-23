@@ -9,6 +9,7 @@ import { useShop, useTick } from "@/lib/store";
 import { apiAnalyticsReport, type AnalyticsReport } from "@/lib/api";
 import type { Order, OrderStatus, Reservation } from "@/lib/types";
 import { Ic } from "./icons";
+import { Switch } from "@/app/admin/v3tabs";
 import { Bars, Confirm, DataTable, Drawer, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, Toolbar, downloadCSV, fmtDT, inputCls, statusTone, useDelayedReady, SkeletonRows, type Col, type FilterDef } from "./ui";
 
 const NEXT: Record<OrderStatus, OrderStatus> = { placed: "accepted", accepted: "preparing", preparing: "ready", ready: "completed", completed: "completed", cancelled: "cancelled" };
@@ -19,7 +20,6 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
   const { t } = useLang();
   const [range, setRange] = useState<7 | 30>(7);
   const [report, setReport] = useState<AnalyticsReport | null>(null);
-  const [confirmDelivery, setConfirmDelivery] = useState(false);
   const deliveryOn = settings.deliveryEnabled !== false;
   const ready = useDelayedReady("dash");
   useEffect(() => {
@@ -108,32 +108,27 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
           </p>
           <PrimaryBtn onClick={() => go("menu.items")}>Add menu item</PrimaryBtn>
           <GhostBtn className="w-full justify-center" onClick={() => go("menu.special")}>★ Set Today's Special</GhostBtn>
-          <button
-            onClick={() => setConfirmDelivery(true)}
-            className={deliveryOn ? "min-h-[44px] w-full rounded-xl border-2 border-brick px-4 text-sm font-black text-brick hover:bg-brick hover:text-cream" : "min-h-[44px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream"}
-          >
-            {deliveryOn ? "⏸ Off delivery" : "▶ On delivery"}
-          </button>
+          <div className="flex items-center justify-between rounded-2xl border border-cherry/10 bg-cream px-4 py-3">
+            <span>
+              <span className="block text-sm font-black text-cherry">Off delivery</span>
+              <span className="text-xs text-cherry/60">Pickup stays open — no home delivery</span>
+            </span>
+            <Switch
+              on={!deliveryOn}
+              ariaLabel="off delivery"
+              onChange={() => {
+                void (async () => {
+                  const next = !deliveryOn;
+                  if (await saveSettings({ ...settings, deliveryEnabled: next })) {
+                    logAudit(`delivery ${next ? "enabled" : "paused"} from dashboard`);
+                    toast(next ? "Delivery is on" : "Delivery is off — pickup only", next ? "ok" : "err");
+                  }
+                })();
+              }}
+            />
+          </div>
         </div>
       </div>
-
-      <Confirm
-        open={confirmDelivery}
-        title={deliveryOn ? "Turn delivery off?" : "Turn delivery on?"}
-        body={deliveryOn ? "Customers will only be able to choose pickup until you turn delivery back on." : "Customers will be able to choose delivery again immediately."}
-        danger={deliveryOn}
-        onNo={() => setConfirmDelivery(false)}
-        onYes={() => {
-          void (async () => {
-            const next = !deliveryOn;
-            if (await saveSettings({ ...settings, deliveryEnabled: next })) {
-              logAudit(`delivery ${next ? "enabled" : "paused"} from dashboard`);
-              toast(next ? "Delivery is on" : "Delivery is off — pickup only", next ? "ok" : "err");
-            }
-            setConfirmDelivery(false);
-          })();
-        }}
-      />
     </div>
   );
 }
