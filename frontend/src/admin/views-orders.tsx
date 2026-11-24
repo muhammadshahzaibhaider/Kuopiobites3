@@ -9,7 +9,6 @@ import { useShop, useTick } from "@/lib/store";
 import { apiAnalyticsReport, type AnalyticsReport } from "@/lib/api";
 import type { Order, OrderStatus, Reservation } from "@/lib/types";
 import { Ic } from "./icons";
-import { Switch } from "@/app/admin/v3tabs";
 import { Bars, Confirm, DataTable, Drawer, EmptyState, Field, GhostBtn, Pill, PrimaryBtn, StatCard, Toolbar, downloadCSV, fmtDT, inputCls, statusTone, useDelayedReady, SkeletonRows, type Col, type FilterDef } from "./ui";
 
 const NEXT: Record<OrderStatus, OrderStatus> = { placed: "accepted", accepted: "preparing", preparing: "ready", ready: "completed", completed: "completed", cancelled: "cancelled" };
@@ -108,25 +107,23 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
           </p>
           <PrimaryBtn onClick={() => go("menu.items")}>Add menu item</PrimaryBtn>
           <GhostBtn className="w-full justify-center" onClick={() => go("menu.special")}>★ Set Today's Special</GhostBtn>
-          <div className="flex items-center justify-between rounded-2xl border border-cherry/10 bg-cream px-4 py-3">
-            <span>
-              <span className="block text-sm font-black text-cherry">Off delivery</span>
-              <span className="text-xs text-cherry/60">Pickup stays open — no home delivery</span>
-            </span>
-            <Switch
-              on={!deliveryOn}
-              ariaLabel="off delivery"
-              onChange={() => {
-                void (async () => {
-                  const next = !deliveryOn;
-                  if (await saveSettings({ ...settings, deliveryEnabled: next })) {
-                    logAudit(`delivery ${next ? "enabled" : "paused"} from dashboard`);
-                    toast(next ? "Delivery is on" : "Delivery is off — pickup only", next ? "ok" : "err");
-                  }
-                })();
-              }}
-            />
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              void (async () => {
+                const next = !deliveryOn;
+                if (await saveSettings({ ...settings, deliveryEnabled: next })) {
+                  logAudit(`delivery ${next ? "enabled" : "paused"} from dashboard`);
+                  toast(next ? "Delivery is on" : "Delivery paused — pickup only", next ? "ok" : "err");
+                }
+              })();
+            }}
+            className={deliveryOn
+              ? "min-h-[44px] w-full rounded-xl border-2 border-brick px-4 text-sm font-black text-brick hover:bg-brick hover:text-cream"
+              : "min-h-[44px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream"}
+          >
+            {deliveryOn ? "⏸ Pause delivery only" : "▶ Resume delivery"}
+          </button>
         </div>
       </div>
     </div>

@@ -23,7 +23,8 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
   const { orders, reservations, users, orderStatus, settings, saveSettings, logAudit, toast, acceptOrder } = useShop();
   const { t } = useLang();
   const [range, setRange] = useState<7 | 30>(7);
-  const [confirmPause, setConfirmPause] = useState(false);
+  const [confirmDelivery, setConfirmDelivery] = useState(false);
+  const deliveryOn = settings.deliveryEnabled !== false;
   const ready = useDelayedReady("dash");
   const today = todayStrHelsinki();
   useTick(5000);
@@ -202,26 +203,26 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
             <GhostBtn className="w-full justify-start" onClick={() => go("menu.categories")}><Ic n="group" size={14} /> Edit categories</GhostBtn>
             <GhostBtn className="w-full justify-start" onClick={() => go("settings.general")}><Ic n="timer" size={14} /> Default prep time · {settings.prepTimeMinutes} min</GhostBtn>
             <button
-              onClick={() => setConfirmPause(true)}
-              className={settings.paused ? "min-h-[38px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream" : "min-h-[38px] w-full rounded-xl border border-brick/40 px-4 text-sm font-black text-brick hover:bg-brick hover:text-cream"}
+              onClick={() => setConfirmDelivery(true)}
+              className={deliveryOn ? "min-h-[38px] w-full rounded-xl border border-brick/40 px-4 text-sm font-black text-brick hover:bg-brick hover:text-cream" : "min-h-[38px] w-full rounded-xl bg-[#2e7d32] px-4 text-sm font-black text-cream"}
             >
-              {settings.paused ? "Resume online ordering" : "Pause online ordering"}
+              {deliveryOn ? "Pause delivery only" : "Resume delivery"}
             </button>
           </div>
         </Panel>
       </div>
 
       <Confirm
-        open={confirmPause}
-        title={settings.paused ? "Resume online ordering?" : "Pause online ordering?"}
-        body={settings.paused ? "Customers will be able to order again immediately." : "Customers will see the site as closed for online orders until you resume."}
-        danger={!settings.paused}
-        onNo={() => setConfirmPause(false)}
+        open={confirmDelivery}
+        title={deliveryOn ? "Pause delivery only?" : "Resume delivery?"}
+        body={deliveryOn ? "Pickup orders stay open. Customers will not be able to choose delivery." : "Customers will be able to choose delivery again."}
+        danger={deliveryOn}
+        onNo={() => setConfirmDelivery(false)}
         onYes={() => {
-          saveSettings({ ...settings, paused: !settings.paused });
-          logAudit(`ordering ${settings.paused ? "resumed" : "paused"} from dashboard`);
-          toast(settings.paused ? "Ordering resumed" : "Ordering paused", settings.paused ? "ok" : "err");
-          setConfirmPause(false);
+          saveSettings({ ...settings, deliveryEnabled: !deliveryOn });
+          logAudit(`delivery ${deliveryOn ? "paused" : "enabled"} from dashboard`);
+          toast(deliveryOn ? "Delivery paused — pickup only" : "Delivery is on", deliveryOn ? "err" : "ok");
+          setConfirmDelivery(false);
         }}
       />
     </div>
