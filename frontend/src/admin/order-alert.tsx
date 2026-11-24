@@ -46,8 +46,7 @@ export default function NewOrderAlert({
     }
     setBusy(true);
     try {
-      const timed = await setOrderReadyTime(order.id, minutes);
-      if (!timed) return;
+      await setOrderReadyTime(order.id, minutes);
       const ok = await setOrderStatus(order.id, "accepted");
       if (!ok) return;
       toast(`Order ${order.id} accepted · ready in ${minutes} min`);
