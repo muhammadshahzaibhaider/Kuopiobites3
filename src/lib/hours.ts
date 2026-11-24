@@ -36,6 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   headerLogo: "round",
   hideUnavailable: false,
+  deliveryEnabled: true,
   preorder: {
     enabled: true,
     cutoffDay: 6,

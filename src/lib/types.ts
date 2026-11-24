@@ -239,6 +239,7 @@ export interface Settings {
   platforms: { wolt: string; uberEats: string };
   headerLogo: "round" | "mark";
   hideUnavailable: boolean;
+  deliveryEnabled: boolean;
   preorder: {
     enabled: boolean;
     cutoffDay: number; // 6 = Saturday
