@@ -216,7 +216,6 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   /* Poll tickets only — a full catalogue refresh every 15s burned Hobby CPU/CDN. */
   useEffect(() => {
     const tick = () => {
-      if (document.visibilityState === "hidden") return;
       void refreshKitchen();
     };
     const id = window.setInterval(tick, 5_000);
@@ -227,12 +226,27 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
     };
   }, [refreshKitchen]);
 
-  /* Browser audio needs a user gesture before it can play. */
+  /* Browser audio needs a user gesture. Keep unlocking — a one-shot click
+     is easy to miss, and a suspended context plays silence. */
   useEffect(() => {
-    const unlock = () => unlockAudio();
-    window.addEventListener("pointerdown", unlock, { once: true });
-    return () => window.removeEventListener("pointerdown", unlock);
-  }, []);
+    const kick = () => {
+      void unlockAudio().then(() => {
+        if (!soundOn) return;
+        const live = orders.filter((o) => orderStatus(o) === "placed" && !o.refunded && isPaid(o));
+        if (!live.length) return;
+        const until = Math.max(...live.map((o) => o.createdAt + NEW_ORDER_RING_MS));
+        if (until > Date.now()) startNewOrderRing(until, ringTone);
+      });
+    };
+    window.addEventListener("pointerdown", kick);
+    window.addEventListener("keydown", kick);
+    window.addEventListener("touchstart", kick);
+    return () => {
+      window.removeEventListener("pointerdown", kick);
+      window.removeEventListener("keydown", kick);
+      window.removeEventListener("touchstart", kick);
+    };
+  }, [orders, orderStatus, soundOn, ringTone]);
 
   /* New-order detection: chime + full-screen takeover. */
   useEffect(() => {

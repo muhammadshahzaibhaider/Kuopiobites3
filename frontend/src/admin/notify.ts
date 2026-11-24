@@ -22,9 +22,12 @@ function getCtx(): AudioContext | null {
   return ctx;
 }
 
-export function unlockAudio(): void {
+export async function unlockAudio(): Promise<void> {
   const c = getCtx();
-  if (c && c.state === "suspended") void c.resume();
+  if (!c) return;
+  if (c.state === "suspended") {
+    try { await c.resume(); } catch { /* browser still blocking until a gesture */ }
+  }
 }
 
 export const RING_TONES = [
@@ -97,10 +100,12 @@ function playToneAt(c: AudioContext, tone: RingToneId, t: number): number {
 }
 
 export function playNewOrderChime(tone: RingToneId = "classic"): void {
-  const c = getCtx();
-  if (!c) return;
-  if (c.state === "suspended") void c.resume();
-  playToneAt(c, tone, c.currentTime + 0.02);
+  void (async () => {
+    await unlockAudio();
+    const c = getCtx();
+    if (!c || c.state !== "running") return;
+    playToneAt(c, tone, c.currentTime + 0.02);
+  })();
 }
 
 /** Keep ringing until the kitchen accepts, or 5 minutes, whichever is first. */
@@ -131,6 +136,8 @@ function scheduleAhead(): void {
 
 export function startNewOrderRing(untilTs: number, tone: RingToneId = "classic"): void {
   if (typeof window === "undefined") return;
+  const c0 = getCtx();
+  const blocked = !c0 || c0.state !== "running";
   const toneChanged = ringTimer != null && activeTone !== tone;
   activeTone = tone;
   ringUntil = Math.max(ringUntil, untilTs);
@@ -138,17 +145,19 @@ export function startNewOrderRing(untilTs: number, tone: RingToneId = "classic")
     stopNewOrderRing();
     return;
   }
-  if (ringTimer != null && !toneChanged) return;
+  if (ringTimer != null && !toneChanged && !blocked) return;
   if (ringTimer != null) {
     clearTimeout(ringTimer);
     ringTimer = null;
   }
-  unlockAudio();
-  const c = getCtx();
-  if (!c) return;
-  if (c.state === "suspended") void c.resume();
-  nextAt = c.currentTime;
-  scheduleAhead();
+  void (async () => {
+    await unlockAudio();
+    const c = getCtx();
+    if (!c || c.state !== "running") return;
+    if (Date.now() >= ringUntil) return;
+    nextAt = c.currentTime;
+    scheduleAhead();
+  })();
 }
 
 export function stopNewOrderRing(): void {
