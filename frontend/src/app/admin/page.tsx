@@ -211,7 +211,8 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   useTick(4000);
 
   const isPaid = (o: Order) => o.paymentStatus === "paid" || o.paymentStatus === "demo_paid";
-  const placed = orders.filter((o) => orderStatus(o) === "placed" && !o.refunded && isPaid(o));
+  const isOpenTicket = (o: Order) => orderStatus(o) === "placed" && !o.refunded;
+  const placed = orders.filter((o) => isOpenTicket(o) && isPaid(o));
 
   /* Poll tickets only — a full catalogue refresh every 15s burned Hobby CPU/CDN. */
   useEffect(() => {
@@ -232,7 +233,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
     const kick = () => {
       void unlockAudio().then(() => {
         if (!soundOn) return;
-        const live = orders.filter((o) => orderStatus(o) === "placed" && !o.refunded && isPaid(o));
+        const live = orders.filter(isOpenTicket);
         if (!live.length) return;
         const until = Math.max(...live.map((o) => o.createdAt + NEW_ORDER_RING_MS));
         if (until > Date.now()) startNewOrderRing(until, ringTone);
@@ -250,26 +251,25 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
 
   /* New-order detection: chime + full-screen takeover. */
   useEffect(() => {
-    const live = orders
-      .filter((o) => orderStatus(o) === "placed" && !o.refunded && isPaid(o))
-      .sort((a, b) => a.createdAt - b.createdAt);
+    const live = orders.filter(isOpenTicket).sort((a, b) => a.createdAt - b.createdAt);
+    const livePaid = live.filter(isPaid);
     if (seenOrders.current === null) {
       seenOrders.current = new Set(live.map((o) => o.id));
-      if (live.length) setAlertQueue(live);
+      if (livePaid.length) setAlertQueue(livePaid);
     } else {
       /* Drop alerts handled elsewhere (another tab/device). */
       setAlertQueue((q) => {
         const next = q.filter((a) => {
           const current = orders.find((o) => o.id === a.id);
-          return !!current && orderStatus(current) === "placed" && !current.refunded;
+          return !!current && orderStatus(current) === "placed" && !current.refunded && isPaid(current);
         });
         return next.length === q.length ? q : next;
       });
-      const fresh = live.filter((o) => !seenOrders.current!.has(o.id));
-      if (fresh.length) {
-        fresh.forEach((o) => seenOrders.current!.add(o.id));
-        setAlertQueue((q) => [...q, ...fresh.filter((o) => !q.some((x) => x.id === o.id))]);
-      }
+      live.forEach((o) => seenOrders.current!.add(o.id));
+      setAlertQueue((q) => {
+        const incoming = livePaid.filter((o) => !q.some((x) => x.id === o.id));
+        return incoming.length ? [...q, ...incoming] : q;
+      });
     }
     /* Ring until every live ticket is accepted, or 5 minutes from its createdAt. */
     if (!soundOn || !live.length) {

@@ -807,11 +807,16 @@ async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
       await abandonStreakRedeem(order);
       return void ok(res, { received: true });
     }
-    const amountMatches = Number(session.amount_total) === Math.round(Number(order.total) * 100) && String(session.currency || "").toLowerCase() === "eur";
+    const stripePaid = session.payment_status === "paid" || event.type === "checkout.session.async_payment_succeeded";
+    const amountMatches = Math.abs(Number(session.amount_total) - Math.round(Number(order.total) * 100)) <= 1
+      && String(session.currency || "").toLowerCase() === "eur";
     if (!amountMatches) {
-      await releasePromoReservation(order);
       logActivity("stripe-webhook", "security", `amount mismatch for order ${orderId}`);
-      return void fail(res, 400, "payment.amountMismatch");
+      /* Do not 400: Stripe would retry, hit duplicate event_id, and never mark paid. */
+      if (!stripePaid) {
+        await supabaseDb.from("stripe_events").delete().eq("event_id", event.id);
+        return void ok(res, { received: true, ignored: "amountMismatch" });
+      }
     }
     const paymentRef = typeof session.payment_intent === "string" ? session.payment_intent : order.checkoutSessionId;
     const { error } = await supabaseDb.from("orders").update({ payment_status: "paid", payment_ref: paymentRef }).eq("id", orderId);
