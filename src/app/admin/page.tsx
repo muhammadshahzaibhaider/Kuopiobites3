@@ -7,7 +7,7 @@ import { useShop, useTick } from "@/lib/store";
 import { Ic } from "@/admin/icons";
 import { SolidBtn, useLocal } from "@/admin/ui";
 import NewOrderAlert from "@/admin/order-alert";
-import { playNewOrderChime, playTestChime, unlockAudio } from "@/admin/notify";
+import { NEW_ORDER_RING_MS, playNewOrderChime, playTestChime, startNewOrderRing, stopNewOrderRing, unlockAudio } from "@/admin/notify";
 import { DashboardView, OrdersView, DiningView } from "@/admin/views-orders";
 import { MenuCategoriesView, MenuItemsView, ToppingsMasterView, SpecialsView } from "@/admin/views-menu";
 import { CustomersView, AnalyticsView, AdminStaffView, SettingsView } from "@/admin/views-misc";
@@ -219,6 +219,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   const userRef = useRef<HTMLDivElement>(null);
   const quickRef = useRef<HTMLDivElement>(null);
   const seenOrders = useRef<Set<string> | null>(null);
+  const firstSeenAt = useRef<Map<string, number>>(new Map());
   const { orders, orderStatus, settings } = useShop();
   const { lang, setLang } = useLang();
   useTick(5000);
@@ -247,39 +248,61 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
     if (active !== activeId) setActive(next.includes(activeId) ? activeId : next[0]);
   }, [tabs, active, activeId, validIds, setTabs, setActive]);
 
-  /* sound preference + browser audio unlock */
   useEffect(() => {
-    const unlock = () => unlockAudio();
-    window.addEventListener("pointerdown", unlock, { once: true });
-    return () => window.removeEventListener("pointerdown", unlock);
-  }, []);
+    const kick = () => {
+      unlockAudio();
+      if (!soundOn) return;
+      const live = orders.filter((o) => orderStatus(o) === "placed" && !o.refunded);
+      if (!live.length) return;
+      const now = Date.now();
+      const until = Math.max(...live.map((o) => (firstSeenAt.current.get(o.id) ?? now) + NEW_ORDER_RING_MS));
+      if (until > now) startNewOrderRing(until);
+    };
+    window.addEventListener("pointerdown", kick);
+    window.addEventListener("keydown", kick);
+    return () => {
+      window.removeEventListener("pointerdown", kick);
+      window.removeEventListener("keydown", kick);
+    };
+  }, [orders, orderStatus, soundOn]);
 
   /* new-order detection: sound + full-screen takeover */
   useEffect(() => {
     const live = orders
       .filter((o) => orderStatus(o) === "placed" && !o.refunded)
       .sort((a, b) => a.createdAt - b.createdAt);
+    const now = Date.now();
+    const liveIds = new Set(live.map((o) => o.id));
+    for (const id of [...firstSeenAt.current.keys()]) {
+      if (!liveIds.has(id)) firstSeenAt.current.delete(id);
+    }
+    for (const o of live) {
+      if (!firstSeenAt.current.has(o.id)) firstSeenAt.current.set(o.id, now);
+    }
     if (seenOrders.current === null) {
       seenOrders.current = new Set(live.map((o) => o.id));
-      if (live.length) {
-        setAlertQueue(live);
-        if (soundOn) window.setTimeout(() => playNewOrderChime(), 500);
+      if (live.length) setAlertQueue(live);
+    } else {
+      setAlertQueue((q) => {
+        const next = q.filter((a) => {
+          const current = orders.find((o) => o.id === a.id);
+          return !!current && orderStatus(current) === "placed" && !current.refunded;
+        });
+        return next.length === q.length ? q : next;
+      });
+      const fresh = live.filter((o) => !seenOrders.current!.has(o.id));
+      if (fresh.length) {
+        fresh.forEach((o) => seenOrders.current!.add(o.id));
+        setAlertQueue((q) => [...q, ...fresh.filter((o) => !q.some((x) => x.id === o.id))]);
       }
+    }
+    if (!soundOn || !live.length) {
+      stopNewOrderRing();
       return;
     }
-    /* drop alerts that were handled elsewhere (another tab/device) */
-    setAlertQueue((q) => {
-      const next = q.filter((a) => {
-        const current = orders.find((o) => o.id === a.id);
-        return !!current && orderStatus(current) === "placed" && !current.refunded;
-      });
-      return next.length === q.length ? q : next;
-    });
-    const fresh = live.filter((o) => !seenOrders.current!.has(o.id));
-    if (!fresh.length) return;
-    fresh.forEach((o) => seenOrders.current!.add(o.id));
-    setAlertQueue((q) => [...q, ...fresh.filter((o) => !q.some((x) => x.id === o.id))]);
-    if (soundOn) playNewOrderChime();
+    const until = Math.max(...live.map((o) => (firstSeenAt.current.get(o.id) ?? now) + NEW_ORDER_RING_MS));
+    if (until > now) startNewOrderRing(until);
+    else stopNewOrderRing();
   }, [orders, orderStatus, soundOn]);
 
   const toggleSound = () => {
