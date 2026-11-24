@@ -700,8 +700,9 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       const upd = await api.apiPatchOrderStatus(id, s);
       setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
       return true;
-    } catch {
-      toast("Order status could not be updated", "err");
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      toast(code === "payment.notPaid" ? "Payment is not confirmed yet — wait for Stripe, then accept" : "Order status could not be updated", "err");
       return false;
     }
   };
@@ -710,8 +711,9 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       const updated = await api.apiPatchOrderReadyTime(id, minutes);
       setOrders((current) => current.map((order) => order.id === id ? { ...order, ...updated } : order));
       return updated;
-    } catch {
-      toast("Order ready-time estimate could not be saved", "err");
+    } catch (error) {
+      const code = error instanceof Error ? error.message : "";
+      if (code !== "payment.notPaid") toast("Order ready-time estimate could not be saved", "err");
       return null;
     }
   };

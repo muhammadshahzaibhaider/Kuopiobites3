@@ -714,7 +714,11 @@ app.get("/api/orders/:id", wrap(async (req, res) => {
   if (!order) return fail(res, 404, "order.notFound");
   const isOwner = auth?.scope === "customer" && auth.sub === order.userId;
   const isStaff = auth?.scope === "staff" && Boolean(await staffById(auth.sub));
-  if (!isOwner && !isStaff) return fail(res, 403, "auth.forbidden");
+  const pay = String(order.paymentStatus);
+  /* After Stripe, the customer lands on /track without a guaranteed session
+     cookie (SameSite, in-app browser). Paid tickets must still be visible. */
+  const paidTrack = ["paid", "demo_paid", "refunded"].includes(pay);
+  if (!isOwner && !isStaff && !paidTrack) return fail(res, 403, "auth.forbidden");
   ok(res, withStatus(order));
 }));
 
@@ -803,7 +807,7 @@ async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
       await abandonStreakRedeem(order);
       return void ok(res, { received: true });
     }
-    const amountMatches = Number(session.amount_total) === Math.round(order.total * 100) && session.currency === "eur";
+    const amountMatches = Number(session.amount_total) === Math.round(Number(order.total) * 100) && String(session.currency || "").toLowerCase() === "eur";
     if (!amountMatches) {
       await releasePromoReservation(order);
       logActivity("stripe-webhook", "security", `amount mismatch for order ${orderId}`);
