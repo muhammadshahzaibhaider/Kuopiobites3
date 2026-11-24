@@ -88,6 +88,8 @@ function Gate({ onOk }: { onOk: () => void }) {
             autoComplete="off"
             onSubmit={async (e) => {
               e.preventDefault();
+              /* Unlock in this same click — awaiting login drops the gesture. */
+              unlockAudio();
               setBusy(true);
               setErr(false);
               const problem = await adminLogin(u, p); // POST /api/auth/admin-login
@@ -206,6 +208,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   });
   const [alertQueue, setAlertQueue] = useState<Order[]>([]);
   const seenOrders = useRef<Set<string> | null>(null);
+  const firstSeenAt = useRef<Map<string, number>>(new Map());
   const { orders, orderStatus, refreshKitchen } = useShop();
   const { lang, setLang } = useLang();
   useTick(4000);
@@ -227,17 +230,19 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
     };
   }, [refreshKitchen]);
 
-  /* Browser audio needs a user gesture. Keep unlocking — a one-shot click
-     is easy to miss, and a suspended context plays silence. */
+  /* Browser audio needs a user gesture in the same tick as play(). */
   useEffect(() => {
     const kick = () => {
-      void unlockAudio().then(() => {
-        if (!soundOn) return;
-        const live = orders.filter(isOpenTicket);
-        if (!live.length) return;
-        const until = Math.max(...live.map((o) => o.createdAt + NEW_ORDER_RING_MS));
-        if (until > Date.now()) startNewOrderRing(until, ringTone);
-      });
+      unlockAudio();
+      if (!soundOn) return;
+      const live = orders.filter(isOpenTicket);
+      if (!live.length) return;
+      const now = Date.now();
+      const until = Math.max(...live.map((o) => {
+        const seen = firstSeenAt.current.get(o.id) ?? now;
+        return seen + NEW_ORDER_RING_MS;
+      }));
+      if (until > now) startNewOrderRing(until, ringTone);
     };
     window.addEventListener("pointerdown", kick);
     window.addEventListener("keydown", kick);
@@ -253,11 +258,18 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   useEffect(() => {
     const live = orders.filter(isOpenTicket).sort((a, b) => a.createdAt - b.createdAt);
     const livePaid = live.filter(isPaid);
+    const now = Date.now();
+    const liveIds = new Set(live.map((o) => o.id));
+    for (const id of [...firstSeenAt.current.keys()]) {
+      if (!liveIds.has(id)) firstSeenAt.current.delete(id);
+    }
+    for (const o of live) {
+      if (!firstSeenAt.current.has(o.id)) firstSeenAt.current.set(o.id, now);
+    }
     if (seenOrders.current === null) {
       seenOrders.current = new Set(live.map((o) => o.id));
       if (livePaid.length) setAlertQueue(livePaid);
     } else {
-      /* Drop alerts handled elsewhere (another tab/device). */
       setAlertQueue((q) => {
         const next = q.filter((a) => {
           const current = orders.find((o) => o.id === a.id);
@@ -271,13 +283,13 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
         return incoming.length ? [...q, ...incoming] : q;
       });
     }
-    /* Ring until every live ticket is accepted, or 5 minutes from its createdAt. */
+    /* Ring 5 minutes from when THIS tab first saw the ticket — not createdAt. */
     if (!soundOn || !live.length) {
       stopNewOrderRing();
       return;
     }
-    const until = Math.max(...live.map((o) => o.createdAt + NEW_ORDER_RING_MS));
-    if (until > Date.now()) startNewOrderRing(until, ringTone);
+    const until = Math.max(...live.map((o) => (firstSeenAt.current.get(o.id) ?? now) + NEW_ORDER_RING_MS));
+    if (until > now) startNewOrderRing(until, ringTone);
     else stopNewOrderRing();
   }, [orders, orderStatus, soundOn, ringTone]);
 
