@@ -185,7 +185,7 @@ export async function validateOrder(
 /** Status is driven only by explicit kitchen actions — never by a timer.
     A brand-new order stays "placed" until staff accept or decline it. */
 export function orderStatus(o: Order): string {
-  return o.statusOverride ?? "placed";
+  return o.statusOverride ?? o.status ?? "placed";
 }
 
 export const round2 = (n: number) => Math.round(n * 100) / 100;

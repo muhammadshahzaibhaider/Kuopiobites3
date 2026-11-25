@@ -107,6 +107,7 @@ export interface Order {
   vat: number;
   scheduled?: { date: string; time: string };
   statusOverride?: OrderStatus;
+  status?: OrderStatus;
   refunded?: boolean;
   paymentStatus?: "pending" | "paid" | "failed" | "refunded" | "demo_paid";
   paymentId?: string;
