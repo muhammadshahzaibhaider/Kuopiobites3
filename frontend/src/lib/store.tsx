@@ -698,7 +698,8 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const setOrderStatus: ShopCtx["setOrderStatus"] = async (id, s) => {
     try {
       const upd = await api.apiPatchOrderStatus(id, s);
-      setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
+      const nextStatus = upd.statusOverride ?? upd.status ?? s;
+      setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd, statusOverride: nextStatus, status: nextStatus } : x)));
       return true;
     } catch (error) {
       const code = error instanceof Error ? error.message : "";
@@ -729,7 +730,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   };
   /* Manual only: a new order stays "placed" until the kitchen accepts,
      declines or moves it forward explicitly. Nothing advances on a timer. */
-  const orderStatus = (o: Order): OrderStatus => o.statusOverride ?? "placed";
+  const orderStatus = (o: Order): OrderStatus => o.statusOverride ?? o.status ?? "placed";
 
   /* ── reservations ── */
   const addReservation: ShopCtx["addReservation"] = async (r) => {

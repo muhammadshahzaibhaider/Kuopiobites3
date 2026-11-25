@@ -144,6 +144,14 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
   const ready = useDelayedReady(mode);
 
   useEffect(() => {
+    if (!detail) return;
+    const live = orders.find((o) => o.id === detail.id);
+    if (live && (live.statusOverride ?? live.status) !== (detail.statusOverride ?? detail.status)) {
+      setDetail(live);
+    }
+  }, [orders, detail]);
+
+  useEffect(() => {
     if (!detail?.estimatedReadyAt) { setReadyMinutes(String(settings.readyTimeMinutes)); return; }
     setReadyMinutes(String(Math.max(5, Math.min(240, Math.ceil((detail.estimatedReadyAt - Date.now()) / 60_000)))));
   }, [detail?.id, detail?.estimatedReadyAt, settings.readyTimeMinutes]);
@@ -345,7 +353,10 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
             </dl>
             <div className="flex flex-wrap gap-2">
               {orderStatus(detail) !== "completed" && (
-                <select value={orderStatus(detail)} onChange={async (e) => { if (await setOrderStatus(detail.id, e.target.value as OrderStatus)) setDetail({ ...detail }); }} className={inputCls + " w-auto"}>
+                <select value={orderStatus(detail)} onChange={async (e) => {
+                  const next = e.target.value as OrderStatus;
+                  if (await setOrderStatus(detail.id, next)) setDetail({ ...detail, statusOverride: next, status: next });
+                }} className={inputCls + " w-auto"}>
                   {["placed", "accepted", "preparing", "ready", "completed"].map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               )}

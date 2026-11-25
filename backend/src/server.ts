@@ -730,10 +730,12 @@ app.patch("/api/orders/:id/status", requireStaff("kitchen"), wrap(async (req, re
   if (order.paymentStatus !== "paid" && order.paymentStatus !== "demo_paid") return fail(res, 400, "payment.notPaid");
   const { error } = await supabaseDb.from("orders").update({ status: b.status }).eq("id", id);
   if (error) throw error;
-  order.statusOverride = b.status;
+  const saved = await getOrder(id);
+  const next = saved ?? { ...order, statusOverride: b.status };
+  next.statusOverride = b.status === "placed" ? undefined : b.status;
   const staff = authStaff(req);
   logActivity(staff.username, staff.role, `order ${id} -> ${b.status}`);
-  ok(res, { ...order, status: b.status });
+  ok(res, withStatus(next));
 }));
 
 app.patch("/api/orders/:id/ready-time", requireStaff("kitchen"), wrap(async (req, res) => {

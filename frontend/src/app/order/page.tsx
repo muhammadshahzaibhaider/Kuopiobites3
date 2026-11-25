@@ -29,6 +29,7 @@ export default function OrderPage() {
   const [code, setCode] = useState("");
   const [redeemStreak, setRedeemStreak] = useState(false);
   const [streakReady, setStreakReady] = useState(false);
+  const deliveryOn = settings.deliveryEnabled !== false;
 
   useEffect(() => {
     if (!deliveryOn && type === "delivery") setType("pickup");
