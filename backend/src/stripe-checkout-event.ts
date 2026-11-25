@@ -9,8 +9,9 @@ export type StripeEventLike = {
 export type StripeDecision =
   | { action: "ack" }
   | { action: "markPaid"; orderId: string; paymentRef: string }
+  | { action: "ensurePaid"; orderId: string }
   | { action: "abandonUnpaid"; orderId: string }
-  | { action: "ignore"; reason: "unpaidSession" | "amountMismatch" | "sessionMismatch" | "alreadyFinal" };
+  | { action: "ignore"; reason: "unpaidSession" | "amountMismatch" | "sessionMismatch" | "alreadyFinal" | "missingSession" };
 
 const SUCCESS = new Set(["checkout.session.completed", "checkout.session.async_payment_succeeded"]);
 const FAILURE = new Set(["checkout.session.expired", "checkout.session.async_payment_failed"]);
@@ -27,12 +28,14 @@ function amountOk(session: Record<string, unknown>, order: Order): boolean {
   return Number.isFinite(got) && got === expected && currency === "eur";
 }
 
-function sessionBound(session: Record<string, unknown>, order: Order): boolean {
-  const sessionId = typeof session.id === "string" ? session.id : "";
-  const stored = order.checkoutSessionId || "";
-  if (stored && sessionId && stored !== sessionId) return false;
+/** Both sides must have a session id and they must be identical, plus metadata.order_id. */
+export function sessionIdentityOk(session: Record<string, unknown>, order: Order): boolean {
+  const sessionId = typeof session.id === "string" ? session.id.trim() : "";
+  const stored = typeof order.checkoutSessionId === "string" ? order.checkoutSessionId.trim() : "";
+  if (!sessionId || !stored) return false;
+  if (sessionId !== stored) return false;
   const metaId = (session.metadata as { order_id?: unknown } | undefined)?.order_id;
-  if (typeof metaId === "string" && metaId !== order.id) return false;
+  if (typeof metaId !== "string" || !metaId || metaId !== order.id) return false;
   return true;
 }
 
@@ -41,51 +44,76 @@ function isFinalPayment(order: Order): boolean {
   return pay === "paid" || pay === "demo_paid" || pay === "refunded";
 }
 
+function sessionObject(event: StripeEventLike): Record<string, unknown> {
+  return (event.data?.object ?? {}) as Record<string, unknown>;
+}
+
 /** Pure decision used by the Stripe webhook handler and regression tests. */
 export function decideStripeCheckoutAction(event: StripeEventLike, order: Order | null): StripeDecision {
   if (!SUCCESS.has(event.type) && !FAILURE.has(event.type)) return { action: "ack" };
-  const session = (event.data?.object ?? {}) as Record<string, unknown>;
+  const session = sessionObject(event);
   const orderId = (session.metadata as { order_id?: unknown } | undefined)?.order_id;
   if (typeof orderId !== "string" || !orderId) return { action: "ack" };
   if (!order) return { action: "ack" };
+
+  const sessionId = typeof session.id === "string" ? session.id.trim() : "";
+  const stored = typeof order.checkoutSessionId === "string" ? order.checkoutSessionId.trim() : "";
+  if (!sessionId || !stored) return { action: "ignore", reason: "missingSession" };
+  if (!sessionIdentityOk(session, order)) return { action: "ignore", reason: "sessionMismatch" };
 
   if (FAILURE.has(event.type)) {
     if (isFinalPayment(order)) return { action: "ignore", reason: "alreadyFinal" };
     return { action: "abandonUnpaid", orderId: order.id };
   }
 
-  if (!sessionBound(session, order)) return { action: "ignore", reason: "sessionMismatch" };
   if (!sessionPaid(event, session)) return { action: "ignore", reason: "unpaidSession" };
   if (!amountOk(session, order)) return { action: "ignore", reason: "amountMismatch" };
-  if (isFinalPayment(order)) return { action: "ack" };
+  if (order.paymentStatus === "refunded") return { action: "ignore", reason: "alreadyFinal" };
+  if (isFinalPayment(order)) return { action: "ensurePaid", orderId: order.id };
 
   const pi = session.payment_intent;
-  const paymentRef = typeof pi === "string" && pi ? pi : (typeof session.id === "string" ? session.id : order.checkoutSessionId || order.id);
+  const paymentRef = typeof pi === "string" && pi ? pi : sessionId;
   return { action: "markPaid", orderId: order.id, paymentRef };
 }
 
 export type StripeWebhookDeps = {
   getOrder: (id: string) => Promise<Order | null>;
-  markPaid: (orderId: string, paymentRef: string) => Promise<void>;
-  abandonUnpaid: (order: Order) => Promise<void>;
+  /** Persist paid. Return updated=true only when a pending row actually flipped. */
+  markPaid: (orderId: string, paymentRef: string) => Promise<{ updated: boolean }>;
+  /** Cancel still-pending. Return updated=true only when the row changed. */
+  cancelPending: (order: Order) => Promise<{ updated: boolean }>;
+  afterCancel: (order: Order) => Promise<void>;
   onPaid: (order: Order) => Promise<void>;
 };
 
-export async function applyStripeCheckoutEvent(event: StripeEventLike, deps: StripeWebhookDeps): Promise<{ received: true; duplicate?: boolean; ignored?: string }> {
-  const session = event.data?.object as Record<string, unknown> | undefined;
-  const orderId = (session?.metadata as { order_id?: unknown } | undefined)?.order_id;
+export async function applyStripeCheckoutEvent(event: StripeEventLike, deps: StripeWebhookDeps): Promise<{ received: true; ignored?: string; paidSaved?: boolean }> {
+  const session = sessionObject(event);
+  const orderId = (session.metadata as { order_id?: unknown } | undefined)?.order_id;
   const order = typeof orderId === "string" ? await deps.getOrder(orderId) : null;
   const decision = decideStripeCheckoutAction(event, order);
 
   if (decision.action === "markPaid") {
-    await deps.markPaid(decision.orderId, decision.paymentRef);
-    if (order) await deps.onPaid({ ...order, paymentStatus: "paid" });
-    return { received: true };
+    const { updated } = await deps.markPaid(decision.orderId, decision.paymentRef);
+    try {
+      if (order) await deps.onPaid({ ...order, paymentStatus: "paid" });
+    } catch (error) {
+      /* Payment row is already saved — retry must run onPaid via ensurePaid, not roll back. */
+      throw Object.assign(error instanceof Error ? error : new Error(String(error)), { paymentSaved: true });
+    }
+    return { received: true, paidSaved: updated || true };
   }
+
+  if (decision.action === "ensurePaid") {
+    if (order) await deps.onPaid({ ...order, paymentStatus: order.paymentStatus === "refunded" ? "refunded" : "paid" });
+    return { received: true, paidSaved: true };
+  }
+
   if (decision.action === "abandonUnpaid" && order) {
-    await deps.abandonUnpaid(order);
+    const { updated } = await deps.cancelPending(order);
+    if (updated) await deps.afterCancel(order);
     return { received: true };
   }
+
   if (decision.action === "ignore") return { received: true, ignored: decision.reason };
   return { received: true };
 }

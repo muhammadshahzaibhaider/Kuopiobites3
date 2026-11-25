@@ -798,13 +798,25 @@ async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
     const result = await applyStripeCheckoutEvent(event, {
       getOrder,
       markPaid: async (orderId, paymentRef) => {
-        const { error } = await supabaseDb.from("orders").update({ payment_status: "paid", payment_ref: paymentRef }).eq("id", orderId);
+        const { data, error } = await supabaseDb.from("orders")
+          .update({ payment_status: "paid", payment_ref: paymentRef })
+          .eq("id", orderId)
+          .eq("payment_status", "pending")
+          .select("id");
         if (error) throw error;
+        return { updated: Boolean(data?.length) };
       },
-      abandonUnpaid: async (order) => {
-        /* Keep the row — expiry must not erase history, especially paid/refunded. */
-        const { error } = await supabaseDb.from("orders").update({ status: "cancelled" }).eq("id", order.id).eq("payment_status", "pending");
+      cancelPending: async (order) => {
+        const { data, error } = await supabaseDb.from("orders")
+          .update({ status: "cancelled" })
+          .eq("id", order.id)
+          .eq("payment_status", "pending")
+          .neq("status", "cancelled")
+          .select("id");
         if (error) throw error;
+        return { updated: Boolean(data?.length) };
+      },
+      afterCancel: async (order) => {
         await releasePromoReservation(order);
         await abandonStreakRedeem(order);
       },
@@ -812,6 +824,7 @@ async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
     });
     ok(res, result);
   } catch (error) {
+    /* Always drop the event id so Stripe can retry. Payment is not rolled back. */
     await supabaseDb.from("stripe_events").delete().eq("event_id", event.id);
     throw error;
   }
