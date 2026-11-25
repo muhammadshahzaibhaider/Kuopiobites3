@@ -8,6 +8,8 @@
     "build": "npm run check-i18n && npm run list-images && next build --webpack",
     "start": "next start -H 0.0.0.0 -p 3000",
     "typecheck": "tsc --noEmit",
+    "test:ring": "node --experimental-strip-types --test src/admin/notify-ring.test.mjs",
+    "test:ring:browser": "node scripts/test-notify-browser.mjs",
     "check-i18n": "node scripts/check-i18n.mjs",
     "list-images": "node scripts/list-images.mjs"
   },

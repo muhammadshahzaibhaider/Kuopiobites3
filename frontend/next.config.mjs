@@ -26,7 +26,7 @@ const nextConfig = {
       {
         source: "/(.*)",
         headers: [
-          { key: "Content-Security-Policy", value: `default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; connect-src 'self' ${apiConnect}; frame-src 'self' https://www.google.com https://maps.google.com; worker-src 'self' blob:${productionOnly ? "; upgrade-insecure-requests" : ""}` },
+          { key: "Content-Security-Policy", value: `default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src ${scriptSrc}; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob:; connect-src 'self' ${apiConnect}; frame-src 'self' https://www.google.com https://maps.google.com; worker-src 'self' blob:${productionOnly ? "; upgrade-insecure-requests" : ""}` },
           { key: "Strict-Transport-Security", value: productionOnly ? "max-age=63072000; includeSubDomains; preload" : "max-age=0" },
 
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
