@@ -30,6 +30,7 @@ import {
 } from "./schemas";
 import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
 import { buildAnalyticsReport } from "./analytics";
+import { applyStripeCheckoutEvent } from "./stripe-checkout-event";
 import { addFavorite, listFavorites, mergeFavorites, removeFavorite, safeListFavorites } from "./supabase-favorites";
 import { addCartLine, clearCart, listCart, mergeCartLines, removeCartLine, safeListCart, setCartLineQty } from "./supabase-cart";
 
@@ -794,37 +795,22 @@ async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
   if (eventError?.code === "23505") return void ok(res, { received: true, duplicate: true });
   if (eventError) throw eventError;
   try {
-    const handledSuccess = event.type === "checkout.session.completed" || event.type === "checkout.session.async_payment_succeeded";
-    const handledFailure = event.type === "checkout.session.expired" || event.type === "checkout.session.async_payment_failed";
-    if (!handledSuccess && !handledFailure) return void ok(res, { received: true });
-    const session = event.data?.object;
-    const orderId = session?.metadata?.order_id;
-    if (typeof orderId !== "string") return void ok(res, { received: true });
-    const order = await getOrder(orderId);
-    if (!order) return void ok(res, { received: true });
-    if (handledFailure) {
-      const { error } = await supabaseDb.from("orders").delete().eq("id", orderId);
-      if (error) throw error;
-      await releasePromoReservation(order);
-      await abandonStreakRedeem(order);
-      return void ok(res, { received: true });
-    }
-    const stripePaid = session.payment_status === "paid" || event.type === "checkout.session.async_payment_succeeded";
-    const amountMatches = Math.abs(Number(session.amount_total) - Math.round(Number(order.total) * 100)) <= 1
-      && String(session.currency || "").toLowerCase() === "eur";
-    if (!amountMatches) {
-      logActivity("stripe-webhook", "security", `amount mismatch for order ${orderId}`);
-      /* Do not 400: Stripe would retry, hit duplicate event_id, and never mark paid. */
-      if (!stripePaid) {
-        await supabaseDb.from("stripe_events").delete().eq("event_id", event.id);
-        return void ok(res, { received: true, ignored: "amountMismatch" });
-      }
-    }
-    const paymentRef = typeof session.payment_intent === "string" ? session.payment_intent : order.checkoutSessionId;
-    const { error } = await supabaseDb.from("orders").update({ payment_status: "paid", payment_ref: paymentRef }).eq("id", orderId);
-    if (error) throw error;
-    await recordPaidStreak({ ...order, paymentStatus: "paid" });
-    ok(res, { received: true });
+    const result = await applyStripeCheckoutEvent(event, {
+      getOrder,
+      markPaid: async (orderId, paymentRef) => {
+        const { error } = await supabaseDb.from("orders").update({ payment_status: "paid", payment_ref: paymentRef }).eq("id", orderId);
+        if (error) throw error;
+      },
+      abandonUnpaid: async (order) => {
+        /* Keep the row — expiry must not erase history, especially paid/refunded. */
+        const { error } = await supabaseDb.from("orders").update({ status: "cancelled" }).eq("id", order.id).eq("payment_status", "pending");
+        if (error) throw error;
+        await releasePromoReservation(order);
+        await abandonStreakRedeem(order);
+      },
+      onPaid: recordPaidStreak,
+    });
+    ok(res, result);
   } catch (error) {
     await supabaseDb.from("stripe_events").delete().eq("event_id", event.id);
     throw error;
