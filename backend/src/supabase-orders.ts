@@ -16,6 +16,7 @@ type OrderRow = {
   total: number;
   payment_status: "pending" | "paid" | "refunded";
   payment_ref: string | null;
+  checkout_session_id?: string | null;
   contact_name: string;
   contact_phone: string | null;
   contact_email: string | null;
@@ -88,7 +89,8 @@ export function toApiOrder(row: OrderRow): Order {
     statusOverride: row.status === "placed" ? undefined : row.status,
     paymentStatus: row.payment_status === "paid" && paymentRef.startsWith("demo:") ? "demo_paid" : row.payment_status,
     paymentId: paymentRef.startsWith("pi_") ? paymentRef : undefined,
-    checkoutSessionId: paymentRef.startsWith("cs_") ? paymentRef : undefined,
+    checkoutSessionId: row.checkout_session_id ?? (paymentRef.startsWith("cs_") ? paymentRef : undefined),
+    refunded: row.payment_status === "refunded",
     estimatedReadyAt: row.estimated_ready_at ? Date.parse(row.estimated_ready_at) : undefined,
     userId: row.customer_id ?? "",
   } as Order;
