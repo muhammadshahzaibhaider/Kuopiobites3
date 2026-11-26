@@ -649,17 +649,18 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
     return;
   }
   const created = await createPendingOrder(req, body);
-  let externalSessionCreated = false;
+  let externalSessionRequested = false;
   try {
-  // Capture only charged, unchanged cart rows before the customer leaves for Stripe.
-  const lineKeys = created.order.lines.map((line) => line.key).filter(Boolean);
-  const { data: cartRows, error: cartError } = lineKeys.length
-    ? await supabaseDb.from("cart_items").select("id, line_key, qty, updated_at")
-      .eq("customer_id", created.order.userId).in("line_key", lineKeys)
-    : { data: [], error: null };
-  if (cartError) throw new Error("payment.cartSnapshotFailed");
-  const cartSnapshot = (cartRows ?? []).filter((row) =>
-    created.order.lines.some((line) => line.key === row.line_key && line.qty === row.qty));
+    // Capture only charged, unchanged cart rows before the customer leaves for Stripe.
+    const lineKeys = created.order.lines.map((line) => line.key).filter(Boolean);
+    const { data: cartRows, error: cartError } = lineKeys.length
+      ? await supabaseDb.from("cart_items").select("id, line_key, qty, updated_at")
+        .eq("customer_id", created.order.userId).in("line_key", lineKeys)
+      : { data: [], error: null };
+    if (cartError) throw new Error("payment.cartSnapshotFailed");
+    const cartSnapshot = (cartRows ?? []).filter((row) =>
+      created.order.lines.some((line) => line.key === row.line_key && line.qty === row.qty));
+    externalSessionRequested = true;
     const session = await stripeClient.checkout.sessions.create({
       mode: "payment",
       line_items: [{
@@ -675,8 +676,7 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
       success_url: `${CFG.publicWebUrl}/track?id=${created.order.id}&payment=success`,
       cancel_url: `${CFG.publicWebUrl}/order?payment=cancelled`,
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
-    });
-    externalSessionCreated = true;
+    }, { idempotencyKey: `checkout:${created.order.id}` });
     const { data, error } = await supabaseDb.from("orders").update({
       payment_ref: session.id, checkout_session_id: session.id,
       checkout_cart_snapshot: cartSnapshot, checkout_redeems_reward: Boolean(body.redeemStreak),
@@ -684,9 +684,9 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
     if (error || !data?.length) throw new Error("payment.sessionBindingFailed");
     ok(res, { mode: "stripe", url: session.url, sessionId: session.id, orderId: created.order.id });
   } catch (error) {
-    // Once Stripe created a session, preserve the order even if binding/response failed.
-    // Its expiry/payment signal or explicit reconciliation must resolve it.
-    if (!externalSessionCreated) {
+    // A transport error may hide a successfully created Stripe session.
+    // Preserve uncertain external attempts for reconciliation; never delete their orders.
+    if (!externalSessionRequested) {
       const { error: cancelError } = await supabaseDb.rpc("process_stripe_checkout_event", {
         p_event_id: `checkout-create-failed-${created.order.id}`,
         p_event_type: "checkout.creation_failed", p_order_id: created.order.id,

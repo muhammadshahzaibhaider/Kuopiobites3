@@ -164,3 +164,19 @@ dbTest("unbound creation failure cancels atomically but cannot cancel an existin
  const bound=order();const r=processEvent(cmd(bound,{p_event_type:"checkout.creation_failed",p_payment_status:"unpaid"}));
  assert.equal(r.ignored,"alreadyBoundOrFinal");assert.equal(row(bound).status,"placed");
 });
+
+dbTest("reward redemption resets once and below-threshold payments do not stamp", () => {
+ const o=order({checkout_redeems_reward:true});
+ query("update public.shop_settings set extra=jsonb_set(extra,'{orderStreaks}',"+quote({[user]:{count:7,rewardReady:true,pendingRedeemOrderId:o.id}})+"::jsonb)");
+ processEvent(cmd(o));processEvent(cmd(o));assert.equal(streak().count,1);assert.equal(streak().rewardReady,false);
+ assert.equal(streak().pendingRedeemOrderId,undefined);
+ const small=order({subtotal:9,total:9});processEvent(cmd(small,{p_amount_total:900}));assert.equal(streak().count,1);
+});
+dbTest("cart deletion rolls back with failed receipt and is retried safely", () => {
+ const cartId=randomUUID(),time="2026-11-25T10:00:00Z";
+ const o=order({checkout_cart_snapshot:[{id:cartId,qty:1,updated_at:time}]});
+ query("insert into public.cart_items(id,customer_id,line_key,qty,updated_at) values("+[cartId,user,"charged",1,time].map(quote).join(",")+")");
+ failReceipt();try {assert.throws(()=>processEvent(cmd(o)),/injected/);assert.equal(count("cart_items"),1);}
+ finally {resumeReceipt();}
+ processEvent(cmd(o));assert.equal(count("cart_items"),0);
+});
