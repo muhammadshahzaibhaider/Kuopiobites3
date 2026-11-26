@@ -2,6 +2,7 @@ import { db } from "./supabase";
 import { safeLogError } from "./security";
 import { getItem } from "./supabase-menu";
 import type { CartLine } from "./lib/types";
+import { nextCartQty } from "./checkout-attempt";
 
 /* Server-side per-customer cart. Stored fields (name/img/unitPrice) are
    display snapshots for the cart UI only — money is always recomputed from the
@@ -47,24 +48,31 @@ export async function safeListCart(requestId: string, customerId: string): Promi
 export async function addCartLine(customerId: string, line: CartLine): Promise<{ qty: number } | false> {
   const item = await getItem(line.itemId);
   if (!item) return false;
-  const { data: existing, error: findError } = await db.from("cart_items")
-    .select("id, qty").eq("customer_id", customerId).eq("line_key", line.key).maybeSingle();
-  if (findError) throw new Error(findError.message);
-  const qty = Math.min(99, (existing?.qty ?? 0) + Math.max(1, line.qty));
-  if (existing) {
-    const { error } = await db.from("cart_items")
-      .update({ qty, updated_at: new Date().toISOString() }).eq("id", existing.id);
-    if (error) throw new Error(error.message);
-  } else {
+  const add = Math.max(1, line.qty);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const { data: existing, error: findError } = await db.from("cart_items")
+      .select("id, qty").eq("customer_id", customerId).eq("line_key", line.key).maybeSingle();
+    if (findError) throw new Error(findError.message);
+    if (existing) {
+      const qty = nextCartQty(existing.qty, add);
+      const { data, error } = await db.from("cart_items")
+        .update({ qty, updated_at: new Date().toISOString() })
+        .eq("id", existing.id).eq("qty", existing.qty).select("id");
+      if (error) throw new Error(error.message);
+      if ((data ?? []).length) return { qty };
+      continue;
+    }
+    const qty = nextCartQty(0, add);
     const { error } = await db.from("cart_items").insert({
       customer_id: customerId, line_key: line.key, item_id: line.itemId,
       name_snap: (line.name || "").slice(0, 160) || null, variant_label: (line.variantLabel || "").slice(0, 40),
-      qty: Math.max(1, line.qty), options: line.options ?? [], note: (line.note || "").slice(0, 400) || null,
+      qty, options: line.options ?? [], note: (line.note || "").slice(0, 400) || null,
       pizza: line.pizza ?? null, preorder: line.preorder ?? null, img: line.img ?? null, unit_price: line.unitPrice ?? null,
     });
-    if (error && !/duplicate|23505/i.test(error.message)) throw new Error(error.message);
+    if (!error) return { qty };
+    if (!/duplicate|23505/i.test(error.message)) throw new Error(error.message);
   }
-  return { qty };
+  throw new Error("cart.busy");
 }
 
 /** Sets an absolute quantity; qty<=0 removes the line. Returns false if absent. */

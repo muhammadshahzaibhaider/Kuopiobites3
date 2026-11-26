@@ -171,7 +171,8 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [cartIssuesDismissed, setCartIssuesDismissed] = useState(false);
   const cartMutGen = useRef(0);
   const priceGen = useRef(0);
-  const cartSig = cart.map((line) => `${line.key}:${line.qty}`).join("|");
+  const quoteInputs = useRef({ type: "pickup" as "pickup" | "delivery", code: "", address: "", lang: "en" });
+  const cartSig = `${quoteInputs.current.type}|${quoteInputs.current.address}|${quoteInputs.current.code}|${quoteInputs.current.lang}|${cart.map((line) => `${line.key}:${line.qty}`).join("|")}`;
   const serverPricing = quoted && quoted.cartSig === cartSig ? quoted : null;
   const allItems = BASE_ITEMS; // live array, hydrated in place from the backend
   const allCats = BASE_CATS;
@@ -287,9 +288,12 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   }, [hydrateUser, onAdmin]);
   useEffect(() => { void refresh(); }, [refresh]);
 
+  const kitchenGen = useRef(0);
   const refreshKitchen = useCallback(async () => {
+    const gen = ++kitchenGen.current;
     try {
       const [o, r] = await Promise.all([api.apiListOrders(), api.apiListReservations()]);
+      if (gen !== kitchenGen.current) return;
       setOrders(o);
       setReservations(r);
     } catch { /* keep last tickets */ }
@@ -454,8 +458,9 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const cartSubtotal = cart.reduce((a, l) => a + l.qty * l.unitPrice, 0);
 
   const priceCart = useCallback<ShopCtx["priceCart"]>(async (type, code, address, lang = "en") => {
+    quoteInputs.current = { type, code: code ?? "", address: address ?? "", lang: lang ?? "en" };
     const snapshot = cart;
-    const sig = snapshot.map((line) => `${line.key}:${line.qty}`).join("|");
+    const sig = `${type}|${address ?? ""}|${code ?? ""}|${lang ?? "en"}|${snapshot.map((line) => `${line.key}:${line.qty}`).join("|")}`;
     const gen = ++priceGen.current;
     if (!snapshot.length) { setQuoted(null); return; }
     try {

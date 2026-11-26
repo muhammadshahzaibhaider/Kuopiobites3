@@ -18,7 +18,8 @@ import {
 } from "./auth";
 import { effectiveItems, loadSettings, orderStatus, priceCart, priceLines, round2, validateOrder } from "./logic";
 import { applyPaidOrder, clearPendingRedeem, markPendingRedeem, pendingWalkInClaim, qualifiesForStreakStamp, streakFreeAmount } from "./streak";
-import { openInfo } from "./lib/hours";
+import { openInfo, slotsFor } from "./lib/hours";
+import { checkoutFingerprint, sameCheckoutAttempt } from "./checkout-attempt";
 import type { CartLine, MenuItem, Order, Reservation, Settings, User } from "./lib/types";
 import {
   accountPatchSchema, cartLineSchema, cartMergeSchema, cartQtySchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema,
@@ -514,7 +515,7 @@ function nextDate(date: string): string {
   return value.toISOString().slice(0, 10);
 }
 
-async function createPendingOrder(req: Request, body: z.infer<typeof customerOrderSchema>): Promise<{ order: Order; settings: Settings }> {
+async function createPendingOrder(req: Request, body: z.infer<typeof customerOrderSchema>, opts: { reuse?: boolean } = {}): Promise<{ order: Order; settings: Settings; reused?: boolean }> {
   const auth = currentAuth(req);
   const customer = authUser(req);
   if (!auth || !customer) throw new Error("auth.required");
@@ -542,8 +543,8 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
   if (body.scheduled && settings.preorder.capacity) {
     const start = helsinkiIso(body.scheduled.date, "00:00");
     const end = helsinkiIso(nextDate(body.scheduled.date), "00:00");
-    const { data, error } = await supabaseDb.from("orders").select("order_items(quantity, is_preorder)")
-      .gte("scheduled_for", start).lt("scheduled_for", end).in("payment_status", ["pending", "paid"]);
+    const { data, error } = await supabaseDb.from("orders").select("order_items(quantity, is_preorder), status")
+      .gte("scheduled_for", start).lt("scheduled_for", end).in("payment_status", ["pending", "paid"]).neq("status", "cancelled");
     if (error) throw error;
     const reserved = (data ?? []).reduce((sum, row) => sum + (row.order_items ?? [])
       .filter((line) => line.is_preorder).reduce((qty, line) => qty + line.quantity, 0), 0);
@@ -554,6 +555,37 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
   if (body.type === "delivery" && priced.total < settings.minOrder) throw new Error("order.minOrder");
   if (priced.total <= 0) throw new Error("payment.amountInvalid");
 
+  const snapshot = {
+    type: body.type,
+    address: body.address,
+    scheduled: body.scheduled,
+    code: body.code,
+    redeemStreak,
+    total: priced.total,
+    lines: priced.lines,
+  };
+  if (opts.reuse !== false) {
+  const { data: pendingRows, error: pendingError } = await supabaseDb.from("orders")
+    .select("id")
+    .eq("customer_id", auth.sub).eq("payment_status", "pending").neq("status", "cancelled")
+    .order("created_at", { ascending: false }).limit(8);
+  if (pendingError) throw pendingError;
+  for (const row of pendingRows ?? []) {
+    const existing = await getOrder(row.id);
+    if (!existing) continue;
+    if (!sameCheckoutAttempt(snapshot, {
+      type: existing.type,
+      address: existing.address,
+      scheduled: existing.scheduled,
+      code: body.code,
+      redeemStreak,
+      total: existing.total,
+      lines: existing.lines,
+    })) continue;
+    return { order: existing, settings, reused: true as const };
+  }
+  }
+  void checkoutFingerprint(snapshot);
   const createdAt = Date.now();
   const readyBase = body.scheduled
     ? Date.parse(helsinkiIso(body.scheduled.date, body.scheduled.time))
@@ -653,6 +685,16 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
     return;
   }
   const created = await createPendingOrder(req, body);
+  if (created.reused && created.order.checkoutSessionId && stripeClient) {
+    const existingSession = await stripeClient.checkout.sessions.retrieve(created.order.checkoutSessionId);
+    if (existingSession.status === "open" && existingSession.url) {
+      ok(res, { mode: "stripe", url: existingSession.url, sessionId: existingSession.id, orderId: created.order.id });
+      return;
+    }
+    // Expired/consumed Stripe session: mint a new pending order instead of reusing the Stripe idempotency key.
+    const retry = await createPendingOrder(req, body, { reuse: false });
+    Object.assign(created, retry);
+  }
   let externalSessionRequested = false;
   try {
     // Capture only charged, unchanged cart rows before the customer leaves for Stripe.
@@ -833,6 +875,13 @@ app.post("/api/reservations", resvLimiter, wrap(async (req, res) => {
     return fail(res, 400, "resv.blockedSlot");
   const todayFi = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Helsinki" }).format(new Date());
   if (body.date < todayFi) return fail(res, 400, "resv.past");
+  const { data: dayReservations, error: dayError } = await supabaseDb.from("reservations")
+    .select("date, time, status, party_size").eq("date", body.date);
+  if (dayError) throw dayError;
+  const offered = slotsFor(body.date, settings, (dayReservations ?? []).map((row) => ({
+    id: "", date: row.date, time: row.time, party: row.party_size, name: "", phone: "", status: row.status,
+  })));
+  if (!offered.includes(body.time)) return fail(res, 400, "resv.unavailable");
   const reservation: Reservation = { ...body, id: uid("R"), createdAt: Date.now(), status: "pending" };
   const { error } = await supabaseDb.from("reservations").insert({
     id: reservation.id,
@@ -1191,7 +1240,10 @@ app.put("/api/todays-special", requireStaff("manager"), wrap(async (req, res) =>
   ok(res, { special: next.special, todaysSpecials: next.todaysSpecials });
 }));
 
-app.get("/api/promotions", wrap(async (_req, res) => ok(res, (await loadSettings()).offers)));
+app.get("/api/promotions", wrap(async (_req, res) => {
+  const offers = (await loadSettings()).offers.filter((offer) => offer.active).map(({ code: _code, ...offer }) => offer);
+  ok(res, offers);
+}));
 app.post("/api/promotions", requireStaff("manager"), wrap(async (req, res) => {
   const current = await loadSettings();
   const patch = promotionPatchSchema.parse(req.body);
