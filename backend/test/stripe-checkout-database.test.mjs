@@ -41,6 +41,18 @@ before(() => {
  for (const id of ['11111111-1111-4111-8111-111111111111','22222222-2222-4222-8222-222222222222'])
    assert.throws(()=>query("set role authenticated; set request.jwt.claim.sub='"+id+"'; select extra from public.shop_settings"),/permission denied/);
  assert.throws(()=>query("set role anon; select extra from public.shop_settings"),/permission denied/);
+ // Exercise the new RPCs against actual application types, not just the reduced fixture.
+ query("insert into public.categories(id,name_fi,name_en) values('fixture-cat','Fixture','Fixture'); insert into public.menu_items(id,category_id,name_fi,price_med) values('fixture-pizza','fixture-cat','Fixture pizza',10);");
+ const fullLine={key:'fixture-line',itemId:'fixture-pizza',name:'Fixture pizza',qty:1,unitPrice:10,options:['Extra sauce']};
+ assert.equal(query("set role service_role; select public.add_cart_line("+quote(user)+","+quote(fullLine)+"::jsonb)"),'1');
+ assert.equal(query("set role service_role; select public.add_cart_line("+quote(user)+","+quote(fullLine)+"::jsonb)"),'2');
+ assert.deepEqual(JSON.parse(query("select options from public.cart_items where line_key='fixture-line'")),['Extra sauce']);
+ const fullOrder={id:'KB-full-schema',customer_id:user,type:'pickup',subtotal:20,discount:0,delivery_fee:0,vat:0,total:20,payment_status:'pending',contact_name:'Fixture'};
+ const fullItems=[{line_key:'fixture-line',menu_item_id:'fixture-pizza',item_name_snapshot:'Fixture pizza',variant_label:'',options:['Extra sauce'],quantity:2,unit_price:10,line_price:20,is_preorder:false}];
+ const created=JSON.parse(query("set role service_role; select public.create_checkout_order("+[fullOrder,fullItems,'full-schema-attempt','full-schema-hash',false,null].map(quote).join(',')+")"));
+ assert.equal(created.id,fullOrder.id);
+ assert.equal(query("select quantity from public.order_items where order_id='KB-full-schema'"),'2');
+ assert.equal(query("select jsonb_array_length(checkout_cart_snapshot) from public.orders where id='KB-full-schema'"),'1');
  // Minimal payment-specific fixture tests historical upgrade/backfill and fault injection separately.
  query(readFileSync(new URL("./fixtures/stripe-checkout-schema.sql",import.meta.url),"utf8"));
  const base=readFileSync(new URL("../../supabase/migrations/20261005000000_kuopio_bites_schema.sql",import.meta.url),"utf8");

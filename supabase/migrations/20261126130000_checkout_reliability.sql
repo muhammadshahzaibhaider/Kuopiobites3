@@ -147,7 +147,7 @@ declare v_qty integer;
 begin
  insert into public.cart_items(customer_id,line_key,item_id,name_snap,variant_label,qty,options,note,pizza,preorder,img,unit_price)
  values(p_customer,p_line->>'key',p_line->>'itemId',p_line->>'name',coalesce(p_line->>'variantLabel',''),
-   least(99,greatest(1,(p_line->>'qty')::integer)),array(select jsonb_array_elements_text(coalesce(p_line->'options','[]'::jsonb))),
+   least(99,greatest(1,(p_line->>'qty')::integer)),coalesce(p_line->'options','[]'::jsonb),
    p_line->>'note',p_line->'pizza',p_line->'preorder',p_line->>'img',(p_line->>'unitPrice')::numeric)
  on conflict(customer_id,line_key) do update set qty=least(99,public.cart_items.qty+excluded.qty),updated_at=clock_timestamp()
  returning qty into v_qty;

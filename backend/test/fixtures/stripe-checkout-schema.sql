@@ -36,7 +36,7 @@ create table public.shop_settings (id boolean primary key default true check(id)
 create table public.cart_items (
  id uuid primary key default gen_random_uuid(),customer_id uuid not null,line_key text not null,
  qty integer not null check(qty between 1 and 99),created_at timestamptz not null default now(),updated_at timestamptz not null default now(),
- item_id text,name_snap text,variant_label text,options text[],note text,pizza jsonb,preorder jsonb,img text,unit_price numeric,
+ item_id text,name_snap text,variant_label text,options jsonb, note text,pizza jsonb,preorder jsonb,img text,unit_price numeric,
  unique(customer_id,line_key)
 );
 create table public.stripe_events (event_id text primary key,received_at timestamptz not null default now());
