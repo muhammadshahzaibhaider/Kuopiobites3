@@ -31,6 +31,7 @@ import {
 import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
 import { buildAnalyticsReport } from "./analytics";
 import { changePaidOrderStatus, reconcileOrderPayment } from "./order-payment";
+import { publicTrackOrder } from "./order-public";
 import { receiveStripeCheckoutWebhook, type CheckoutCommand } from "./stripe-checkout-event";
 import { addFavorite, listFavorites, mergeFavorites, removeFavorite, safeListFavorites } from "./supabase-favorites";
 import { addCartLine, clearCart, listCart, mergeCartLines, removeCartLine, safeListCart, setCartLineQty } from "./supabase-cart";
@@ -526,6 +527,7 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
     const streak = await readUserStreak(auth.sub);
     const free = streakCfg.enabled && streak.rewardReady ? streakFreeAmount(priced.lines, streakCfg.rewardItemId) : 0;
     if (!streakCfg.enabled || !streak.rewardReady || free <= 0) throw new Error("streak.notReady");
+    if (streak.pendingRedeemOrderId) throw new Error("streak.reserved");
     const nextTotal = round2(priced.total - free);
     if (nextTotal <= 0) throw new Error("streak.needOtherItems");
     priced.total = nextTotal;
@@ -743,6 +745,7 @@ app.get("/api/orders/:id", wrap(async (req, res) => {
      cookie (SameSite, in-app browser). Paid tickets must still be visible. */
   const paidTrack = ["paid", "demo_paid", "refunded"].includes(pay);
   if (!isOwner && !isStaff && !paidTrack) return fail(res, 403, "auth.forbidden");
+  if (!isOwner && !isStaff) return ok(res, publicTrackOrder(order));
   ok(res, withStatus(order));
 }));
 
@@ -794,7 +797,9 @@ app.post("/api/orders/:id/refund", requireStaff("manager"), wrap(async (req, res
     order.refunded = true; order.paymentStatus = "refunded"; order.statusOverride = "completed";
   } else {
     if (!stripeClient || !order.paymentId) return fail(res, 503, "payment.unavailable");
-    await stripeClient.refunds.create({ payment_intent: order.paymentId }, { idempotencyKey: `refund-${id}` });
+    const refund = await stripeClient.refunds.create({ payment_intent: order.paymentId }, { idempotencyKey: `refund-${id}` });
+    if (refund.status === "failed" || refund.status === "canceled") return fail(res, 502, "payment.refundFailed");
+    if (refund.status !== "succeeded") return fail(res, 409, "payment.refundPending");
     order.refunded = true; order.paymentStatus = "refunded"; order.statusOverride = "completed";
   }
   const { error } = await supabaseDb.from("orders").update({ payment_status: "refunded", status: "completed" }).eq("id", id);
@@ -824,7 +829,10 @@ app.post("/api/reservations", resvLimiter, wrap(async (req, res) => {
   const body = reservationSchema.parse(req.body);
   const settings = await loadSettings();
   if (settings.blockedDates.includes(body.date)) return fail(res, 400, "resv.blockedDate");
-  if (settings.blockedSlots.includes(`${body.date}T${body.time}`)) return fail(res, 400, "resv.blockedSlot");
+  if (settings.blockedSlots.includes(`${body.date}T${body.time}`) || settings.blockedSlots.includes(`${body.date}|${body.time}`))
+    return fail(res, 400, "resv.blockedSlot");
+  const todayFi = new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Helsinki" }).format(new Date());
+  if (body.date < todayFi) return fail(res, 400, "resv.past");
   const reservation: Reservation = { ...body, id: uid("R"), createdAt: Date.now(), status: "pending" };
   const { error } = await supabaseDb.from("reservations").insert({
     id: reservation.id,
