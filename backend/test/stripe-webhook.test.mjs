@@ -1,224 +1,119 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { applyStripeCheckoutEvent, decideStripeCheckoutAction } from "../src/stripe-checkout-event.ts";
-
-const order = (over = {}) => ({
-  id: "KB-test1",
-  total: 11.2,
-  paymentStatus: "pending",
-  checkoutSessionId: "cs_live_abc",
-  ...over,
-});
+import { applyStripeCheckoutEvent, receiveStripeCheckoutWebhook } from "../src/stripe-checkout-event.ts";
+import Stripe from "stripe";
+import express from "express";
+import { createHmac } from "node:crypto";
 
 const session = (over = {}) => ({
-  id: "cs_live_abc",
-  amount_total: 1120,
-  currency: "eur",
-  payment_status: "paid",
-  payment_intent: "pi_live_1",
-  metadata: { order_id: "KB-test1" },
-  ...over,
+  id: "cs_expected", metadata: { order_id: "KB-review" }, payment_status: "paid",
+  status: "complete", payment_intent: "pi_expected", amount_total: 1120, currency: "eur", ...over,
+});
+const event = (type = "checkout.session.completed", over = {}) =>
+  ({ id: "evt_review", type, data: { object: session(over) } });
+const deps = (canonical = session(), process = async () => ({ received: true, paidSaved: true })) =>
+  ({ retrieveSession: async () => canonical, process });
+
+test("valid canonical payment forwards complete, typed identity", async () => {
+  let command;
+  const r = await applyStripeCheckoutEvent(event(), deps(session(), async (x) => { command = x; return { received: true, paidSaved: true }; }));
+  assert.equal(r.paidSaved, true);
+  assert.equal(command.p_session_id, "cs_expected");
+  assert.equal(command.p_payment_intent_id, "pi_expected");
+  assert.equal(command.p_order_id, "KB-review");
+  assert.equal(command.p_amount_total, 1120);
+});
+test("ignores unhandled events without retrieving or processing", async () => {
+  let calls = 0;
+  const r = await applyStripeCheckoutEvent(event("payment_intent.created"), { retrieveSession: async () => { calls++; }, process: async () => { calls++; } });
+  assert.equal(r.ignored, "unhandledEvent"); assert.equal(calls, 0);
+});
+test("missing incoming identity cannot be treated as a match", async () => {
+  for (const over of [{ id: undefined }, { id: "" }, { metadata: {} }, { metadata: null }]) {
+    const r = await applyStripeCheckoutEvent(event("checkout.session.completed", over), deps());
+    assert.equal(r.ignored, "missingIdentity");
+  }
+});
+test("unpaid canonical session never marks paid, even if event claims success", async () => {
+  let calls = 0;
+  const r = await applyStripeCheckoutEvent(event("checkout.session.async_payment_succeeded"), deps(session({ payment_status: "unpaid" }), async () => { calls++; }));
+  assert.equal(r.ignored, "unpaidSession"); assert.equal(calls, 0);
+});
+test("out-of-order failure uses current paid Stripe state instead of cancelling", async () => {
+  let command;
+  await applyStripeCheckoutEvent(event("checkout.session.expired", { payment_status: "unpaid" }),
+    deps(session(), async (x) => { command = x; return { received: true, paidSaved: true }; }));
+  assert.equal(command.p_payment_status, "paid");
+});
+test("canonical order and session must both match the signed signal", async () => {
+  for (const canonical of [session({ id: "cs_wrong" }), session({ metadata: { order_id: "other" } })]) {
+    const r = await applyStripeCheckoutEvent(event(), deps(canonical));
+    assert.equal(r.ignored, "sessionMismatch");
+  }
+});
+test("invalid amount, currency or missing PaymentIntent cannot confirm payment", async () => {
+  for (const over of [{ amount_total: null }, { amount_total: "1120" }, { amount_total: 1.5 }, { amount_total: 0 }, { currency: "usd" }, { payment_intent: null }]) {
+    const r = await applyStripeCheckoutEvent(event(), deps(session(over)));
+    assert.equal(r.ignored, "invalidPayment");
+  }
+});
+test("expanded PaymentIntent is handled without losing identity", async () => {
+  let command;
+  await applyStripeCheckoutEvent(event(), deps(session({ payment_intent: { id: "pi_expanded" } }), async (x) => { command = x; return { received: true }; }));
+  assert.equal(command.p_payment_intent_id, "pi_expanded");
+});
+test("canonical unpaid expiry forwards cancellation without a payment side effect", async () => {
+  let command;
+  await applyStripeCheckoutEvent(event("checkout.session.expired"), deps(session({ payment_status: "unpaid", status: "expired", payment_intent: null }), async (x) => { command = x; return { received: true }; }));
+  assert.equal(command.p_payment_status, "unpaid"); assert.equal(command.p_session_status, "expired");
+});
+test("Stripe/database failures are retriable errors, not successful acknowledgements", async () => {
+  await assert.rejects(() => applyStripeCheckoutEvent(event(), { ...deps(), retrieveSession: async () => { throw new Error("Stripe down"); } }), /Stripe down/);
+  await assert.rejects(() => applyStripeCheckoutEvent(event(), deps(session(), async () => { throw new Error("database down"); })), /database down/);
+  await assert.rejects(() => applyStripeCheckoutEvent(event(), deps(session(), async () => null)), /processingFailed/);
+});
+test("does not invent fulfillment for zero affected database state", async () => {
+  const r = await applyStripeCheckoutEvent(event(), deps(session(), async () => ({ received: true, ignored: "alreadyFinal" })));
+  assert.equal(r.paidSaved, undefined); assert.equal(r.ignored, "alreadyFinal");
 });
 
-const event = (type, object) => ({ id: `evt_${type}`, type, data: { object } });
+const secret = "whsec_local_test_only";
+const sdk = new Stripe("sk_test_local_only");
+const signature = (raw, time = Math.floor(Date.now() / 1000)) =>
+  "t=" + time + ",v1=" + createHmac("sha256", secret).update(time + "." + raw).digest("hex");
 
-const noopDeps = (over = {}) => ({
-  getOrder: async () => order(),
-  markPaid: async () => ({ updated: true }),
-  cancelPending: async () => ({ updated: true }),
-  afterCancel: async () => {},
-  onPaid: async () => {},
-  ...over,
-});
-
-test("unpaid checkout.session.completed does not mark paid", () => {
-  const d = decideStripeCheckoutAction(
-    event("checkout.session.completed", session({ payment_status: "unpaid" })),
-    order(),
-  );
-  assert.equal(d.action, "ignore");
-  assert.equal(d.reason, "unpaidSession");
-});
-
-test("wrong amount or currency is ignored", () => {
-  const amt = decideStripeCheckoutAction(
-    event("checkout.session.completed", session({ amount_total: 9999 })),
-    order(),
-  );
-  assert.equal(amt.reason, "amountMismatch");
-  const cur = decideStripeCheckoutAction(
-    event("checkout.session.completed", session({ currency: "usd" })),
-    order(),
-  );
-  assert.equal(cur.reason, "amountMismatch");
-});
-
-test("session id must match the order checkout session", () => {
-  const d = decideStripeCheckoutAction(
-    event("checkout.session.completed", session({ id: "cs_other" })),
-    order(),
-  );
-  assert.equal(d.reason, "sessionMismatch");
-});
-
-test("missing session ids are not treated as a match (success or failure)", () => {
-  const noEventId = decideStripeCheckoutAction(
-    event("checkout.session.completed", session({ id: "" })),
-    order(),
-  );
-  assert.equal(noEventId.reason, "missingSession");
-  const noOrderId = decideStripeCheckoutAction(
-    event("checkout.session.expired", session({ payment_status: "unpaid" })),
-    order({ checkoutSessionId: "" }),
-  );
-  assert.equal(noOrderId.reason, "missingSession");
-  const missingBoth = decideStripeCheckoutAction(
-    event("checkout.session.async_payment_failed", session({ id: undefined, payment_status: "unpaid" })),
-    order({ checkoutSessionId: undefined }),
-  );
-  assert.equal(missingBoth.reason, "missingSession");
-});
-
-test("valid paid session marks the order paid", () => {
-  const d = decideStripeCheckoutAction(
-    event("checkout.session.completed", session()),
-    order(),
-  );
-  assert.deepEqual(d, { action: "markPaid", orderId: "KB-test1", paymentRef: "pi_live_1" });
-});
-
-test("delayed async_payment_succeeded confirms payment", () => {
-  const d = decideStripeCheckoutAction(
-    event("checkout.session.async_payment_succeeded", session({ payment_status: "paid" })),
-    order(),
-  );
-  assert.equal(d.action, "markPaid");
-});
-
-test("expiry does not delete or abandon a paid order", () => {
-  const d = decideStripeCheckoutAction(
-    event("checkout.session.expired", session({ payment_status: "unpaid" })),
-    order({ paymentStatus: "paid" }),
-  );
-  assert.equal(d.reason, "alreadyFinal");
-});
-
-test("expiry does not touch refunded orders", () => {
-  const d = decideStripeCheckoutAction(
-    event("checkout.session.async_payment_failed", session()),
-    order({ paymentStatus: "refunded" }),
-  );
-  assert.equal(d.reason, "alreadyFinal");
-});
-
-test("wrong-session expiry does not cancel", () => {
-  const d = decideStripeCheckoutAction(
-    event("checkout.session.expired", session({ id: "cs_other", payment_status: "unpaid" })),
-    order(),
-  );
-  assert.equal(d.reason, "sessionMismatch");
-});
-
-test("unpaid expiry cancels without implying delete", () => {
-  const d = decideStripeCheckoutAction(
-    event("checkout.session.expired", session({ payment_status: "unpaid" })),
-    order(),
-  );
-  assert.equal(d.action, "abandonUnpaid");
-});
-
-test("applyStripeCheckoutEvent: unpaid completed never writes paid", async () => {
-  const writes = [];
-  const result = await applyStripeCheckoutEvent(
-    event("checkout.session.completed", session({ payment_status: "unpaid" })),
-    noopDeps({
-      markPaid: async () => { writes.push("paid"); return { updated: true }; },
-      cancelPending: async () => { writes.push("cancel"); return { updated: true }; },
-    }),
-  );
-  assert.equal(result.ignored, "unpaidSession");
-  assert.deepEqual(writes, []);
-});
-
-test("applyStripeCheckoutEvent: valid payment writes once; duplicate event is a no-op write", async () => {
-  const writes = [];
-  const deps = noopDeps({
-    markPaid: async (id, ref) => { writes.push(`paid:${id}:${ref}`); return { updated: true }; },
-    onPaid: async () => { writes.push("streak"); },
+test("actual HTTP raw-body adapter verifies SDK signatures and preserves retry status", async () => {
+  let calls = 0, failDatabase = false;
+  const app = express();
+  const stripe = { webhooks: sdk.webhooks, checkout: { sessions: { retrieve: async () => session() } } };
+  app.post("/api/webhooks/stripe", express.raw({ type: "application/json" }), async (req, res) => {
+    try {
+      const r = await receiveStripeCheckoutWebhook(req.body, req.headers["stripe-signature"], secret, {
+        stripe, process: async () => { calls++; if (failDatabase) throw new Error("db unavailable"); return { received: true }; },
+      });
+      res.status(r.status).json(r.body);
+    } catch { res.status(500).json({ error: "internal" }); }
   });
-  const first = await applyStripeCheckoutEvent(event("checkout.session.completed", session()), deps);
-  assert.equal(first.received, true);
-  const second = await applyStripeCheckoutEvent(event("checkout.session.completed", session()), {
-    ...deps,
-    getOrder: async () => order({ paymentStatus: "paid" }),
-    markPaid: async () => { writes.push("paid-again"); return { updated: false }; },
-  });
-  assert.equal(second.received, true);
-  assert.deepEqual(writes, ["paid:KB-test1:pi_live_1", "streak", "streak"]);
+  const listener = app.listen(0, "127.0.0.1");
+  await new Promise(resolve => listener.once("listening", resolve));
+  const url = "http://127.0.0.1:" + listener.address().port + "/api/webhooks/stripe";
+  const raw = JSON.stringify(event());
+  const send = (body, sig) => fetch(url, { method: "POST", body, headers: { "content-type": "application/json", "stripe-signature": sig } });
+  try {
+    assert.equal((await send(raw, "bad")).status, 400);
+    assert.equal((await send(raw, signature(raw, Math.floor(Date.now()/1000)-600))).status, 400);
+    assert.equal((await send(raw + " ", signature(raw))).status, 400);
+    assert.equal(calls, 0);
+    assert.equal((await send(raw, signature(raw))).status, 200);
+    assert.equal((await send(raw, signature(raw) + ",v1=" + "0".repeat(64))).status, 200);
+    assert.equal(calls, 2);
+    failDatabase = true;
+    assert.equal((await send(raw, signature(raw))).status, 500);
+  } finally { listener.closeAllConnections(); await new Promise(resolve => listener.close(resolve)); }
 });
-
-test("applyStripeCheckoutEvent: expiry of paid order does not abandon", async () => {
-  const writes = [];
-  await applyStripeCheckoutEvent(
-    event("checkout.session.expired", session({ payment_status: "unpaid" })),
-    noopDeps({
-      getOrder: async () => order({ paymentStatus: "paid" }),
-      cancelPending: async () => { writes.push("cancel"); return { updated: true }; },
-      afterCancel: async () => { writes.push("cleanup"); },
-    }),
-  );
-  assert.deepEqual(writes, []);
-});
-
-test("wrong-session expiry does not cancel or clean up", async () => {
-  const writes = [];
-  const result = await applyStripeCheckoutEvent(
-    event("checkout.session.expired", session({ id: "cs_other", payment_status: "unpaid" })),
-    noopDeps({
-      cancelPending: async () => { writes.push("cancel"); return { updated: true }; },
-      afterCancel: async () => { writes.push("cleanup"); },
-    }),
-  );
-  assert.equal(result.ignored, "sessionMismatch");
-  assert.deepEqual(writes, []);
-});
-
-test("repeated failure events clean up only after a real pending→cancelled transition", async () => {
-  const writes = [];
-  let pending = true;
-  const deps = noopDeps({
-    cancelPending: async () => {
-      writes.push("cancel");
-      if (!pending) return { updated: false };
-      pending = false;
-      return { updated: true };
-    },
-    afterCancel: async () => { writes.push("cleanup"); },
-  });
-  await applyStripeCheckoutEvent(event("checkout.session.expired", session({ payment_status: "unpaid" })), deps);
-  await applyStripeCheckoutEvent(event("checkout.session.async_payment_failed", session({ payment_status: "unpaid" })), deps);
-  assert.deepEqual(writes, ["cancel", "cleanup", "cancel"]);
-});
-
-test("partial failure: payment saved then onPaid throws; retry still runs onPaid without a second markPaid", async () => {
-  const writes = [];
-  let paid = false;
-  const first = noopDeps({
-    getOrder: async () => order(),
-    markPaid: async () => { paid = true; writes.push("mark"); return { updated: true }; },
-    onPaid: async () => { writes.push("streak-fail"); throw new Error("streak down"); },
-  });
-  await assert.rejects(
-    () => applyStripeCheckoutEvent(event("checkout.session.completed", session()), first),
-    /streak down/,
-  );
-  assert.equal(paid, true);
-  const retry = noopDeps({
-    getOrder: async () => order({ paymentStatus: "paid" }),
-    markPaid: async () => { writes.push("mark-again"); return { updated: false }; },
-    onPaid: async () => { writes.push("streak-ok"); },
-  });
-  const result = await applyStripeCheckoutEvent(event("checkout.session.completed", session()), retry);
-  assert.equal(result.paidSaved, true);
-  assert.deepEqual(writes, ["mark", "streak-fail", "streak-ok"]);
+test("missing configuration or parsed body is rejected without processing", async () => {
+  const missing = await receiveStripeCheckoutWebhook(Buffer.from("{}"), "x", secret, { stripe: null, process: async () => { throw new Error("must not run"); } });
+  assert.equal(missing.status, 503);
+  const parsed = await receiveStripeCheckoutWebhook({}, "x", secret, { stripe: sdk, process: async () => { throw new Error("must not run"); } });
+  assert.equal(parsed.status, 400);
 });

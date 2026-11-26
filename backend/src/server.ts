@@ -3,7 +3,7 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { createHmac, randomBytes, timingSafeEqual, createHash } from "node:crypto";
+import { randomBytes, createHash } from "node:crypto";
 import Stripe from "stripe";
 import { CFG } from "./config";
 import { authClient, codeFlowAuthClient, db as supabaseDb, logActivity } from "./supabase";
@@ -30,7 +30,7 @@ import {
 } from "./schemas";
 import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
 import { buildAnalyticsReport } from "./analytics";
-import { applyStripeCheckoutEvent } from "./stripe-checkout-event";
+import { receiveStripeCheckoutWebhook } from "./stripe-checkout-event";
 import { addFavorite, listFavorites, mergeFavorites, removeFavorite, safeListFavorites } from "./supabase-favorites";
 import { addCartLine, clearCart, listCart, mergeCartLines, removeCartLine, safeListCart, setCartLineQty } from "./supabase-cart";
 
@@ -153,7 +153,7 @@ const wrap =
         return fail(res, 400, "validation.failed");
       }
       const message = error instanceof Error ? error.message : "internal";
-      if (message === "auth.emailUnavailable" || message === "payment.unavailable" || message === "payment.required")
+      if (["auth.emailUnavailable", "payment.unavailable", "payment.required", "payment.cartSnapshotFailed", "payment.sessionBindingFailed", "payment.checkoutCleanupFailed"].includes(message))
         return fail(res, 503, message);
       if (businessError.test(message)) return fail(res, 400, message);
       next(error);
@@ -649,7 +649,17 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
     return;
   }
   const created = await createPendingOrder(req, body);
+  let externalSessionCreated = false;
   try {
+  // Capture only charged, unchanged cart rows before the customer leaves for Stripe.
+  const lineKeys = created.order.lines.map((line) => line.key).filter(Boolean);
+  const { data: cartRows, error: cartError } = lineKeys.length
+    ? await supabaseDb.from("cart_items").select("id, line_key, qty, updated_at")
+      .eq("customer_id", created.order.userId).in("line_key", lineKeys)
+    : { data: [], error: null };
+  if (cartError) throw new Error("payment.cartSnapshotFailed");
+  const cartSnapshot = (cartRows ?? []).filter((row) =>
+    created.order.lines.some((line) => line.key === row.line_key && line.qty === row.qty));
     const session = await stripeClient.checkout.sessions.create({
       mode: "payment",
       line_items: [{
@@ -666,14 +676,25 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
       cancel_url: `${CFG.publicWebUrl}/order?payment=cancelled`,
       expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
     });
-    const { error } = await supabaseDb.from("orders").update({ payment_ref: session.id }).eq("id", created.order.id);
-    if (error) throw error;
+    externalSessionCreated = true;
+    const { data, error } = await supabaseDb.from("orders").update({
+      payment_ref: session.id, checkout_session_id: session.id,
+      checkout_cart_snapshot: cartSnapshot, checkout_redeems_reward: Boolean(body.redeemStreak),
+    }).eq("id", created.order.id).eq("payment_status", "pending").select("id");
+    if (error || !data?.length) throw new Error("payment.sessionBindingFailed");
     ok(res, { mode: "stripe", url: session.url, sessionId: session.id, orderId: created.order.id });
   } catch (error) {
-    const { error: deleteError } = await supabaseDb.from("orders").delete().eq("id", created.order.id);
-    if (deleteError) throw deleteError;
-    await releasePromoReservation(created.order);
-    await abandonStreakRedeem(created.order);
+    // Once Stripe created a session, preserve the order even if binding/response failed.
+    // Its expiry/payment signal or explicit reconciliation must resolve it.
+    if (!externalSessionCreated) {
+      const { error: cancelError } = await supabaseDb.rpc("process_stripe_checkout_event", {
+        p_event_id: `checkout-create-failed-${created.order.id}`,
+        p_event_type: "checkout.creation_failed", p_order_id: created.order.id,
+        p_session_id: null, p_payment_intent_id: null, p_amount_total: null,
+        p_currency: null, p_payment_status: "unpaid", p_session_status: "creation_failed",
+      });
+      if (cancelError) throw new Error("payment.checkoutCleanupFailed");
+    }
     throw error;
   }
 }));
@@ -774,60 +795,16 @@ app.post("/api/orders/:id/refund", requireStaff("manager"), wrap(async (req, res
 }));
 
 /* ── Stripe webhook: HMAC verification, idempotence, amount re-check ───── */
-function verifyStripeSignature(payload: Buffer, header: string, secret: string): boolean {
-  const pieces = Object.fromEntries(header.split(",").map((part) => part.split("=", 2) as [string, string]));
-  const timestamp = Number(pieces.t);
-  const received = pieces.v1 || "";
-  if (!Number.isFinite(timestamp) || Math.abs(Date.now() / 1000 - timestamp) > 300 || !/^[a-f0-9]{64}$/i.test(received)) return false;
-  const expected = createHmac("sha256", secret).update(`${timestamp}.${payload.toString("utf8")}`).digest("hex");
-  return timingSafeEqual(Buffer.from(expected, "hex"), Buffer.from(received, "hex"));
-}
-
 async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
-  if (!CFG.stripeWebhookSecret) return void fail(res, 503, "payment.webhookUnavailable");
-  const signature = req.headers["stripe-signature"];
-  const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from("");
-  if (typeof signature !== "string" || !verifyStripeSignature(body, signature, CFG.stripeWebhookSecret)) return void fail(res, 400, "payment.invalidSignature");
-  let event: any;
-  try { event = JSON.parse(body.toString("utf8")); } catch { return void fail(res, 400, "payment.invalidEvent"); }
-  if (!event?.id || typeof event.type !== "string") return void fail(res, 400, "payment.invalidEvent");
-  const { error: eventError } = await supabaseDb.from("stripe_events").insert({ event_id: event.id });
-  if (eventError?.code === "23505") return void ok(res, { received: true, duplicate: true });
-  if (eventError) throw eventError;
-  try {
-    const result = await applyStripeCheckoutEvent(event, {
-      getOrder,
-      markPaid: async (orderId, paymentRef) => {
-        const { data, error } = await supabaseDb.from("orders")
-          .update({ payment_status: "paid", payment_ref: paymentRef })
-          .eq("id", orderId)
-          .eq("payment_status", "pending")
-          .select("id");
-        if (error) throw error;
-        return { updated: Boolean(data?.length) };
-      },
-      cancelPending: async (order) => {
-        const { data, error } = await supabaseDb.from("orders")
-          .update({ status: "cancelled" })
-          .eq("id", order.id)
-          .eq("payment_status", "pending")
-          .neq("status", "cancelled")
-          .select("id");
-        if (error) throw error;
-        return { updated: Boolean(data?.length) };
-      },
-      afterCancel: async (order) => {
-        await releasePromoReservation(order);
-        await abandonStreakRedeem(order);
-      },
-      onPaid: recordPaidStreak,
-    });
-    ok(res, result);
-  } catch (error) {
-    /* Always drop the event id so Stripe can retry. Payment is not rolled back. */
-    await supabaseDb.from("stripe_events").delete().eq("event_id", event.id);
-    throw error;
-  }
+  const result = await receiveStripeCheckoutWebhook(req.body, req.headers["stripe-signature"], CFG.stripeWebhookSecret, {
+    stripe: stripeClient,
+    process: async (command) => {
+      const { data, error } = await supabaseDb.rpc("process_stripe_checkout_event", command);
+      if (error || !data) throw new Error("payment.processingFailed");
+      return data;
+    },
+  });
+  res.status(result.status).json(result.body);
 }
 
 /* ── reservations ─────────────────────────────────────────────────────── */

@@ -23,6 +23,7 @@ jobs:
           --health-cmd "pg_isready -U postgres -d kuopio_test"
           --health-interval 5s --health-timeout 5s --health-retries 12
     env:
+      ALLOW_TEST_DATABASE_RESET: '1'
       TEST_DATABASE_URL: postgresql://postgres:local-ci-only@127.0.0.1:5432/kuopio_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -52,10 +53,6 @@ jobs:
       - name: Backend regression suite
         working-directory: backend
         run: npm test
-      - name: Database transaction regression suite
+      - name: TypeScript compilation
         working-directory: backend
-        shell: bash
-        run: |
-          if test -f test/stripe-checkout-database.test.mjs; then
-            node --import tsx --test test/stripe-checkout-database.test.mjs
-          fi
+        run: npx tsc --noEmit
