@@ -76,6 +76,12 @@ test("reservation slots stop before midnight on an overnight close", () => {
   assert.ok(slots.every((slot) => Number(slot.slice(0, 2)) < 24));
 });
 
+test("blocked slots stored as dateTtime are excluded like date|time", () => {
+  const settings = { ...DEFAULT_SETTINGS, hours: OVERNIGHT, blockedSlots: ["2099-06-02T18:30"] };
+  const slots = slotsFor("2099-06-02", settings, []);
+  assert.equal(slots.includes("18:30"), false);
+});
+
 test("paused ordering keeps the hours info but reports closed", () => {
   const settings = { ...DEFAULT_SETTINGS, paused: true, hours: OVERNIGHT };
   const info = openInfo(settings.hours, at(2, 13));

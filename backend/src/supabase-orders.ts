@@ -102,10 +102,25 @@ export async function getOrder(id: string): Promise<Order | null> {
   return data ? toApiOrder(data as OrderRow) : null;
 }
 
-export async function listOrders(limit = 300): Promise<Order[]> {
+export async function listOrders(limit = 300, includeActive = false): Promise<Order[]> {
   const { data, error } = await db.from("orders").select("*, order_items(*)").order("created_at", { ascending: false }).limit(limit);
   if (error) throw new Error(error.message);
-  return (data ?? []).map((row) => toApiOrder(row as OrderRow));
+  if (!includeActive) return (data ?? []).map((row) => toApiOrder(row as OrderRow));
+  const merged = new Map((data ?? []).map((row) => [row.id, row]));
+  let cursor: string | undefined;
+  for (;;) {
+    let query = db.from("orders").select("*, order_items(*)")
+      .in("status", ["placed", "accepted", "preparing", "ready"])
+      .or(`payment_status.in.(paid,refunded),and(payment_status.eq.pending,created_at.gte.${new Date(Date.now() - 3 * 60 * 60_000).toISOString()})`)
+      .order("id", { ascending: true }).limit(500);
+    if (cursor) query = query.gt("id", cursor);
+    const { data: active, error: activeError } = await query;
+    if (activeError) throw new Error(activeError.message);
+    for (const row of active ?? []) merged.set(row.id, row);
+    if (!active || active.length < 500) break;
+    cursor = active[active.length - 1].id;
+  }
+  return [...merged.values()].map((row) => toApiOrder(row as OrderRow));
 }
 
 export async function listCustomerOrders(customerId: string, limit = 50): Promise<Order[]> {

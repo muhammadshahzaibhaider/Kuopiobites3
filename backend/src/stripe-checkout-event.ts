@@ -69,7 +69,7 @@ export async function applyStripeCheckoutEvent(
 export type StripeTransport = Pick<Stripe, "webhooks" | "checkout">;
 export async function receiveStripeCheckoutWebhook(
   raw: unknown, signature: string | string[] | undefined, secret: string,
-  deps: { stripe: StripeTransport | null; process: CheckoutDependencies["process"] },
+  deps: { stripe: StripeTransport | null; process: CheckoutDependencies["process"]; refund?: (event: Stripe.Event) => Promise<void> },
 ): Promise<{ status: number; body: { data?: CheckoutResult; error?: string } }> {
   if (!deps.stripe || !secret) return { status: 503, body: { error: "payment.webhookUnavailable" } };
   if (typeof signature !== "string" || !Buffer.isBuffer(raw))
@@ -79,6 +79,11 @@ export async function receiveStripeCheckoutWebhook(
     event = deps.stripe.webhooks.constructEvent(raw, signature, secret);
   } catch {
     return { status: 400, body: { error: "payment.invalidSignature" } };
+  }
+  if (["refund.created", "refund.updated", "refund.failed"].includes(event.type)) {
+    if (!deps.refund) return { status: 503, body: { error: "payment.refundUnavailable" } };
+    await deps.refund(event);
+    return { status: 200, body: { data: { received: true } } };
   }
   const data = await applyStripeCheckoutEvent(event, {
     retrieveSession: (id) => deps.stripe!.checkout.sessions.retrieve(id),

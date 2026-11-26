@@ -165,6 +165,7 @@ export const resetPasswordSchema = z.union([
 ]);
 
 export const customerOrderSchema = z.object({
+  attemptId: z.string().uuid().optional(),
   type: z.enum(["pickup", "delivery"]),
   customer: z.object({
     name: text(120).min(1), email: z.string().email().max(160),
@@ -253,9 +254,9 @@ export const settingsSchema = z.object({
   blockedDates: z.array(date).max(500), platforms: z.object({ wolt: url.or(z.literal("")), uberEats: url.or(z.literal("")) }).strict(),
   headerLogo: z.enum(["round", "mark"]), hideUnavailable: z.boolean(), deliveryEnabled: z.boolean(),
   preorder: z.object({ enabled: z.boolean(), cutoffDay: z.number().int().min(0).max(6), cutoffTime: hhmm, slots: z.array(hhmm).max(100), capacity: z.number().int().positive().max(10000).optional(), noteEn: text(500), noteFi: text(500) }).strict(),
-  offers: z.array(offerSchema).max(200), todaysSpecials: z.array(specialItemSchema).max(200), toppingMeta: z.record(toppingMetaSchema),
-  itemImages: z.record(uploadedImgSchema), offItems: z.record(availabilityStateSchema), offCats: z.record(availabilityStateSchema),
-  offOptions: z.record(z.array(text(100)).max(100)), catMeta: z.record(catMetaSchema), catOrder: z.array(text(60)).max(200),
+  offers: z.array(offerSchema).max(200), todaysSpecials: z.array(specialItemSchema).max(200), toppingMeta: z.record(z.string(), toppingMetaSchema),
+  itemImages: z.record(z.string(), uploadedImgSchema), offItems: z.record(z.string(), availabilityStateSchema), offCats: z.record(z.string(), availabilityStateSchema),
+  offOptions: z.record(z.string(), z.array(text(100)).max(100)), catMeta: z.record(z.string(), catMetaSchema), catOrder: z.array(text(60)).max(200),
   audit: z.array(z.object({ ts: z.number().int().nonnegative(), who: text(120), msg: text(500) }).strict()).max(10000),
   announcement: z.object({ enabled: z.boolean(), text: text(500) }).strict(), pauseMessage: text(500),
   orderStreak: z.object({

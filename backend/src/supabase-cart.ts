@@ -47,24 +47,9 @@ export async function safeListCart(requestId: string, customerId: string): Promi
 export async function addCartLine(customerId: string, line: CartLine): Promise<{ qty: number } | false> {
   const item = await getItem(line.itemId);
   if (!item) return false;
-  const { data: existing, error: findError } = await db.from("cart_items")
-    .select("id, qty").eq("customer_id", customerId).eq("line_key", line.key).maybeSingle();
-  if (findError) throw new Error(findError.message);
-  const qty = Math.min(99, (existing?.qty ?? 0) + Math.max(1, line.qty));
-  if (existing) {
-    const { error } = await db.from("cart_items")
-      .update({ qty, updated_at: new Date().toISOString() }).eq("id", existing.id);
-    if (error) throw new Error(error.message);
-  } else {
-    const { error } = await db.from("cart_items").insert({
-      customer_id: customerId, line_key: line.key, item_id: line.itemId,
-      name_snap: (line.name || "").slice(0, 160) || null, variant_label: (line.variantLabel || "").slice(0, 40),
-      qty: Math.max(1, line.qty), options: line.options ?? [], note: (line.note || "").slice(0, 400) || null,
-      pizza: line.pizza ?? null, preorder: line.preorder ?? null, img: line.img ?? null, unit_price: line.unitPrice ?? null,
-    });
-    if (error && !/duplicate|23505/i.test(error.message)) throw new Error(error.message);
-  }
-  return { qty };
+  const { data, error } = await db.rpc("add_cart_line", { p_customer: customerId, p_line: line });
+  if (error) throw new Error(error.message);
+  return { qty: Number(data) };
 }
 
 /** Sets an absolute quantity; qty<=0 removes the line. Returns false if absent. */

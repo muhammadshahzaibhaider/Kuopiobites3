@@ -3,6 +3,7 @@ import { motion } from "framer-motion";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
+import { quoteIdentity } from "@/lib/quote-identity";
 import AuthForm from "@/components/AuthForm";
 import { LineThumb, QtyStepper } from "@/components/ui";
 import { cx, eur, fmtDate, vatPct } from "@/lib/format";
@@ -18,7 +19,7 @@ import { apiAccountStreak } from "@/lib/api";
 export default function OrderPage() {
   const shop = useShop();
   const router = useRouter();
-  const { cart, cartSubtotal, settings, settingsReady, user, setQty, removeLine, clearCart, startCheckout, toast, updateUser, priceCart, serverPricing } = shop;
+  const { cart, cartSubtotal, settings, settingsReady, user, setQty, removeLine, clearCart, startCheckout, toast, updateUser, priceCart, serverPricing: latestPricing, invalidatePricing } = shop;
 
   const [type, setType] = useState<"pickup" | "delivery">("pickup");
   const [address, setAddress] = useState("");
@@ -56,6 +57,7 @@ export default function OrderPage() {
   const unavailable = cart.filter((l) => isItemOff(settings, l.itemId));
   const preErr = validatePreorder(settings, cart, scheduled);
   const disc = computeDiscount(settings, cart, cartSubtotal, lang, code);
+  const serverPricing = latestPricing?.requestKey === quoteIdentity(cart, type, code, address, lang) ? latestPricing : null;
   const serverDiscount = serverPricing?.discount;
   const activeDiscount = serverDiscount ?? disc;
   const deliveryFee = serverPricing?.deliveryFee ?? (type === "delivery" && !activeDiscount.freeDelivery ? settings.deliveryFee : 0);
@@ -85,9 +87,10 @@ export default function OrderPage() {
   }, [type, user?.addresses, address]);
 
   useEffect(() => {
+    invalidatePricing();
     const timer = window.setTimeout(() => { void priceCart(type, code || undefined, address || undefined, lang); }, 350);
     return () => window.clearTimeout(timer);
-  }, [cart, type, code, address, lang, priceCart]);
+  }, [cart, type, code, address, lang, priceCart, invalidatePricing]);
 
   const kuopioPostcode = /\b70\s?\d{3}\b/.test(address);
   const postalOk = type !== "delivery" || kuopioPostcode;
@@ -131,6 +134,7 @@ export default function OrderPage() {
     }
     if (!user) return;
     setPaying(true);
+    try {
     if (type === "delivery" && !user.addresses.includes(address)) {
       await updateUser({ addresses: [...user.addresses, address] });
     }
@@ -138,7 +142,6 @@ export default function OrderPage() {
     if (digits.length >= 9 && phone.trim() !== (user.phone ?? "").trim()) {
       await updateUser({ phone: phone.trim() });
     }
-    try {
       const checkout = await startCheckout({
         type,
         customer: { name: user.name, email: user.email, phone: phone || user.phone || "" },

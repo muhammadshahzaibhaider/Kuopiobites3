@@ -49,17 +49,17 @@ export function normalizeStreakState(raw: unknown): StreakState {
   const count = Math.max(0, Math.min(20, Math.round(Number(value.count) || 0)));
   return {
     count,
-    rewardReady: Boolean(value.rewardReady) || count >= STREAK_TARGET,
+    rewardReady: typeof value.rewardReady === "boolean" ? value.rewardReady : count >= STREAK_TARGET,
     lastOrderId: typeof value.lastOrderId === "string" ? value.lastOrderId : undefined,
     pendingRedeemOrderId: typeof value.pendingRedeemOrderId === "string" ? value.pendingRedeemOrderId : undefined,
   };
 }
 
 /** Paid order: skip duplicates; a redeeming order starts the next cycle at 1. */
-export function applyPaidOrder(state: StreakState, orderId: string, target: number): StreakState {
+export function applyPaidOrder(state: StreakState, orderId: string, target: number, qualifies = true): StreakState {
   if (state.lastOrderId === orderId) return state;
   if (state.pendingRedeemOrderId === orderId) {
-    return { count: 1, rewardReady: false, lastOrderId: orderId };
+    return { count: qualifies ? 1 : 0, rewardReady: false, lastOrderId: orderId };
   }
   if (state.rewardReady) return { ...state, lastOrderId: orderId };
   const count = Math.min(target, state.count + 1);
@@ -68,6 +68,9 @@ export function applyPaidOrder(state: StreakState, orderId: string, target: numb
 
 export function markPendingRedeem(state: StreakState, orderId: string): StreakState {
   if (!state.rewardReady) return state;
+  if (state.pendingRedeemOrderId && state.pendingRedeemOrderId !== orderId) {
+    throw new Error("streak.reserved");
+  }
   return { ...state, pendingRedeemOrderId: orderId };
 }
 

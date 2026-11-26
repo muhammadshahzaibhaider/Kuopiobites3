@@ -41,10 +41,15 @@ export default function ReservationFlow() {
     e.preventDefault();
     if (!time) return;
     setBusy(true);
-    const r = await addReservation({ date, time, party, name: f.name, phone: f.phone, email: f.email, note: f.note });
-    setBusy(false);
-    setConfirmed({ id: r.id, date, time, party });
-    toast(t("res.done"));
+    try {
+      const r = await addReservation({ date, time, party, name: f.name, phone: f.phone, email: f.email, note: f.note });
+      setConfirmed({ id: r.id, date, time, party });
+      toast(t("res.done"));
+    } catch (error) {
+      toast(error instanceof Error ? error.message : t("res.fail") ?? "Reservation could not be saved", "err");
+    } finally {
+      setBusy(false);
+    }
   };
 
   if (confirmed)
