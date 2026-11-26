@@ -276,7 +276,34 @@ type SpecialRow = {
   active_from: string | null; active_to: string | null;
 };
 
-export async function saveSettings(settings: Settings, client: SupabaseClient = db): Promise<void> {
+type SettingsChange = { table: string; action: string; payload?: unknown; id?: unknown };
+/** Build minimal mutations using current rows, then commit them in one database transaction. */
+export async function saveSettings(settings: Settings, client: Pick<SupabaseClient, "from" | "rpc"> = db): Promise<void> {
+  const changes: SettingsChange[] = [];
+  const planningClient = {
+    from(table: string) {
+      const stage = (action: string, payload?: unknown) => {
+        const change: SettingsChange = { table, action, payload };
+        const result = {
+          eq(column: string, id: unknown) {
+            if (column !== "id") throw new Error("settings.invalidFilter");
+            change.id = id; return result;
+          },
+          then(resolve: (value: { error: null }) => unknown) { changes.push(change); return Promise.resolve(resolve({ error: null })); },
+        };
+        return result;
+      };
+      return { select: (columns: string) => client.from(table).select(columns),
+        upsert: (payload: unknown) => stage("upsert", payload),
+        update: (payload: unknown) => stage("update", payload), delete: () => stage("delete") };
+    },
+  };
+  await planSettings(settings, planningClient as unknown as Pick<SupabaseClient, "from">);
+  const { error } = await client.rpc("apply_settings_changes", { p_changes: changes });
+  if (error) throw new Error(error.message.startsWith("settings.persist.") ? error.message : "settings.persist.transaction");
+}
+
+async function planSettings(settings: Settings, client: Pick<SupabaseClient, "from">): Promise<void> {
   /* Storage must not accumulate "off" labels for toppings that no longer exist:
      re-adding a topping later should bring it back available, not still off. */
   const sellableOffToppings = (settings.offOptions.topping ?? []).filter((label) => settings.toppings.includes(label));
@@ -300,15 +327,6 @@ export async function saveSettings(settings: Settings, client: SupabaseClient = 
     toppingList: settings.toppings,
     orderStreak: settings.orderStreak,
   };
-  const previousExtra = await client.from("shop_settings").select("extra").eq("id", true).maybeSingle();
-  if (previousExtra.error) throw new Error(`persist:shop_settings_extra:${previousExtra.error.message}`);
-  const prevExtra = (previousExtra.data?.extra as Record<string, unknown> | undefined) ?? {};
-  if (prevExtra.orderStreaks && typeof prevExtra.orderStreaks === "object") {
-    (extra as Record<string, unknown>).orderStreaks = prevExtra.orderStreaks;
-  }
-  if (Array.isArray(prevExtra.orderStreakClaims)) {
-    (extra as Record<string, unknown>).orderStreakClaims = prevExtra.orderStreakClaims;
-  }
   await check(client.from("shop_settings").upsert({
     id: true,
     paused: settings.paused,
@@ -453,7 +471,6 @@ export async function saveSettings(settings: Settings, client: SupabaseClient = 
       starts_at: offer.start ?? null,
       expires_at: offer.end ?? null,
       usage_limit: offer.maxUses ?? null,
-      used_count: storedOffers.get(offer.id)?.used_count ?? 0,
       title_fi: offer.titleFi,
       title_en: offer.titleEn,
       description_fi: offer.descFi ?? null,
@@ -476,7 +493,6 @@ export async function saveSettings(settings: Settings, client: SupabaseClient = 
       sameDay(stored.starts_at, row.starts_at) &&
       sameDay(stored.expires_at, row.expires_at) &&
       sameNumber(stored.usage_limit, row.usage_limit) &&
-      sameNumber(stored.used_count, row.used_count) &&
       stored.title_fi === row.title_fi &&
       stored.title_en === row.title_en &&
       sameText(stored.description_fi, row.description_fi) &&
@@ -543,14 +559,14 @@ export async function readUserStreak(userId: string): Promise<StreakState> {
   return normalizeStreakState(map[userId]);
 }
 
-export async function writeUserStreak(userId: string, state: StreakState): Promise<void> {
+export async function writeUserStreak(userId: string, state: StreakState, expected: StreakState): Promise<void> {
   const { data, error } = await db.from("shop_settings").select("extra").eq("id", true).single();
   if (error) throw error;
-  const extra = { ...((data?.extra as Record<string, unknown> | undefined) ?? {}) };
-  const map = { ...((extra.orderStreaks as Record<string, unknown> | undefined) ?? {}) };
-  map[userId] = state;
-  extra.orderStreaks = map;
-  const { error: writeError } = await db.from("shop_settings").update({ extra }).eq("id", true);
+  const map = ((data.extra as Record<string, unknown>).orderStreaks ?? {}) as Record<string, unknown>;
+  if (JSON.stringify(normalizeStreakState(map[userId])) !== JSON.stringify(expected)) throw new Error("streak.concurrentUpdate");
+  const { error: writeError } = await db.rpc("compare_private_settings", {
+    p_key: "orderStreaks", p_expected: data.extra.orderStreaks ?? null, p_value: { ...map, [userId]: state },
+  });
   if (writeError) throw writeError;
 }
 
@@ -560,11 +576,13 @@ export async function readWalkInClaims(): Promise<WalkInClaim[]> {
   return normalizeWalkInClaims((data?.extra as Record<string, unknown> | undefined)?.orderStreakClaims);
 }
 
-export async function writeWalkInClaims(claims: WalkInClaim[]): Promise<void> {
+export async function writeWalkInClaims(claims: WalkInClaim[], expected: WalkInClaim[]): Promise<void> {
   const { data, error } = await db.from("shop_settings").select("extra").eq("id", true).single();
   if (error) throw error;
-  const extra = { ...((data?.extra as Record<string, unknown> | undefined) ?? {}) };
-  extra.orderStreakClaims = claims.slice(-200);
-  const { error: writeError } = await db.from("shop_settings").update({ extra }).eq("id", true);
+  if (JSON.stringify(normalizeWalkInClaims(data.extra.orderStreakClaims)) !== JSON.stringify(expected))
+    throw new Error("streak.concurrentUpdate");
+  const { error: writeError } = await db.rpc("compare_private_settings", {
+    p_key: "orderStreakClaims", p_expected: data.extra.orderStreakClaims ?? null, p_value: claims.slice(-200),
+  });
   if (writeError) throw writeError;
 }

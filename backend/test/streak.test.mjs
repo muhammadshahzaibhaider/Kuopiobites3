@@ -45,3 +45,9 @@ test("free amount is one unit of the configured reward item", () => {
   assert.equal(streakFreeAmount([{ itemId: "pizza-1", unitPrice: 12.5, qty: 2 }], "pizza-1"), 12.5);
   assert.equal(streakFreeAmount([{ itemId: "burger", unitPrice: 9, qty: 1 }], "pizza-1"), 0);
 });
+
+
+test("an explicit not-ready reward state survives normalization above seven stamps", async () => {
+ const { normalizeStreakState } = await import("../src/streak.ts");
+ assert.equal(normalizeStreakState({ count: 8, rewardReady: false }).rewardReady, false);
+});

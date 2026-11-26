@@ -7,12 +7,16 @@ export type CheckoutSnapshot = {
   code?: string;
   redeemStreak?: boolean;
   total: number;
+  customer?: { name: string; email: string; phone: string };
+  note?: string;
   lines: Array<{
     itemId: string;
     variantLabel?: string;
     qty: number;
     options?: string[];
-    unitPrice: number;
+    unitPrice?: number;
+    pizza?: unknown;
+    preorder?: unknown;
     note?: string;
   }>;
 };
@@ -21,7 +25,9 @@ export type CheckoutSnapshot = {
 export function checkoutFingerprint(input: CheckoutSnapshot): string {
   const payload = JSON.stringify({
     type: input.type,
-    address: (input.address ?? "").trim().toLowerCase(),
+    address: input.type === "delivery" ? (input.address ?? "").trim() : "",
+    customer: input.customer ?? null,
+    note: input.note ?? "",
     scheduled: input.scheduled ?? null,
     code: (input.code ?? "").trim().toLowerCase(),
     redeem: Boolean(input.redeemStreak),
@@ -31,8 +37,10 @@ export function checkoutFingerprint(input: CheckoutSnapshot): string {
       line.variantLabel ?? "",
       line.qty,
       [...(line.options ?? [])].sort(),
-      Number(line.unitPrice),
+      Number(line.unitPrice ?? 0),
       line.note ?? "",
+      line.pizza ?? null,
+      line.preorder ?? null,
     ]),
   });
   return createHash("sha256").update(payload).digest("hex");

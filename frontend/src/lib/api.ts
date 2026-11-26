@@ -9,7 +9,7 @@ import type {
 } from "./types";
 
 /* ── bootstrap / public reads ──────────────────────────────────────────── */
-export const fetchSettings = () => api<Settings>("/api/settings");
+export const fetchSettings = (staff = false) => api<Settings>("/api/settings", { staff });
 export const fetchItems = () => api<MenuItem[]>("/api/items");
 export const fetchCategories = () => api<Category[]>("/api/categories");
 export const fetchTranslations = () => api<Record<string, Record<string, string>>>("/api/translations");
@@ -117,8 +117,31 @@ export type CheckoutInput = {
   lang?: "en" | "fi"; code?: string; redeemStreak?: boolean;
 };
 export const apiCreateOrder = (o: CheckoutInput) => api<Order>("/api/orders", { method: "POST", body: o });
-export const apiCreateCheckoutSession = (o: CheckoutInput) =>
-  api<{ mode: "stripe" | "demo"; url?: string; sessionId?: string; orderId?: string; order?: Order }>("/api/checkout/session", { method: "POST", body: o });
+let currentCheckoutAttempt: { signature: string; id: string; orderId?: string } | null = null;
+export const apiCreateCheckoutSession = async (o: CheckoutInput) => {
+  // Persist the action before sending. A timeout, reload or lost response reuses its identity.
+  const signature = JSON.stringify({ ...o, total: 0, address: o.type === "delivery" ? o.address : "" });
+  let attempt = currentCheckoutAttempt;
+  try { attempt = JSON.parse(sessionStorage.getItem("kb.checkoutAttempt") ?? "null"); } catch { /* unavailable storage */ }
+  if (!attempt || attempt.signature !== signature) attempt = { signature, id: crypto.randomUUID() };
+  currentCheckoutAttempt = attempt;
+  try { sessionStorage.setItem("kb.checkoutAttempt", JSON.stringify(attempt)); } catch { /* same-page retries still use storage when available */ }
+  try {
+    const result = await api<{ mode: "stripe" | "demo"; url?: string; sessionId?: string; orderId?: string; order?: Order }>("/api/checkout/session", { method: "POST", body: { ...o, attemptId: attempt.id } });
+    if (result.orderId) { currentCheckoutAttempt = { ...attempt, orderId: result.orderId }; try { sessionStorage.setItem("kb.checkoutAttempt", JSON.stringify(currentCheckoutAttempt)); } catch {} }
+    if (result.order) { currentCheckoutAttempt = null; try { sessionStorage.removeItem("kb.checkoutAttempt"); } catch {} }
+    return result;
+  } catch (error) {
+    if (error instanceof Error && error.message === "payment.attemptExpired") { currentCheckoutAttempt = null; try { sessionStorage.removeItem("kb.checkoutAttempt"); } catch {} }
+    throw error;
+  }
+};
+export function completeCheckoutAttempt(orderId: string): void {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem("kb.checkoutAttempt") ?? "null");
+    if (saved?.orderId === orderId) { sessionStorage.removeItem("kb.checkoutAttempt"); currentCheckoutAttempt = null; }
+  } catch { if (currentCheckoutAttempt?.orderId === orderId) currentCheckoutAttempt = null; }
+}
 export const apiListOrders = () => api<Order[]>("/api/orders", { staff: true });
 export const apiGetOrder = (id: string) => api<Order>(`/api/orders/${id}`);
 export const apiPatchOrderStatus = (id: string, status: OrderStatus) =>

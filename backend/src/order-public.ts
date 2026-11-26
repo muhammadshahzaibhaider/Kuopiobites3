@@ -24,6 +24,7 @@ export function publicTrackOrder(order: Order) {
     vat: order.vat,
     scheduled: order.scheduled,
     paymentStatus: order.paymentStatus === "refunded" ? "refunded" : "paid",
+    refunded: order.paymentStatus === "refunded",
     customer: { name: "", email: "", phone: "" },
   };
 }

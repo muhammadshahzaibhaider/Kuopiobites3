@@ -5,6 +5,7 @@
  * and routes every mutation through the typed API client. No business logic here:
  * prices/availability/pre-order rules execute in /backend (src/logic.ts).
  */
+import { quoteIdentity } from "./quote-identity";
 import React, {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from "react";
@@ -77,8 +78,10 @@ interface ShopCtx {
   cartCount: number;
   cartSubtotal: number;
   pulse: number;
+  invalidatePricing: () => void;
   priceCart: (type: "pickup" | "delivery", code?: string, address?: string, lang?: Lang) => Promise<void>;
   serverPricing: {
+    requestKey: string;
     total: number; subtotal: number; deliveryFee: number; vat: number;
     deliveryDistanceKm?: number; weightKg?: number;
     discount?: { title: string; amount: number; offerId?: string; freeDelivery?: boolean };
@@ -172,7 +175,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const cartMutGen = useRef(0);
   const priceGen = useRef(0);
   const quoteInputs = useRef({ type: "pickup" as "pickup" | "delivery", code: "", address: "", lang: "en" });
-  const cartSig = `${quoteInputs.current.type}|${quoteInputs.current.address}|${quoteInputs.current.code}|${quoteInputs.current.lang}|${cart.map((line) => `${line.key}:${line.qty}`).join("|")}`;
+  const cartSig = quoteIdentity(cart, quoteInputs.current.type, quoteInputs.current.code, quoteInputs.current.address, quoteInputs.current.lang);
   const serverPricing = quoted && quoted.cartSig === cartSig ? quoted : null;
   const allItems = BASE_ITEMS; // live array, hydrated in place from the backend
   const allCats = BASE_CATS;
@@ -247,7 +250,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     try {
       /* Public pages skip staff session + ticket lists — those burned Hobby CPU/CDN. */
       const [s, publicItems, cats, tr, session, staffSession] = await Promise.all([
-        api.fetchSettings(), api.fetchItems(), api.fetchCategories(), api.fetchTranslations(),
+        api.fetchSettings(onAdmin), api.fetchItems(), api.fetchCategories(), api.fetchTranslations(),
         api.apiSession(),
         onAdmin ? api.apiStaffSession() : Promise.resolve({ user: null, role: null as string | null }),
       ]);
@@ -308,7 +311,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       const now = Date.now();
       if (now - last < 180_000) return;
       last = now;
-      api.fetchSettings().then(setSettings).catch(() => { /* keep the last good copy */ });
+      api.fetchSettings(onAdmin).then(setSettings).catch(() => { /* keep the last good copy */ });
     };
     document.addEventListener("visibilitychange", sync);
     window.addEventListener("focus", sync);
@@ -316,7 +319,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       document.removeEventListener("visibilitychange", sync);
       window.removeEventListener("focus", sync);
     };
-  }, []);
+  }, [onAdmin]);
 
   /* ── auth: identity is maintained by HttpOnly cookies, never localStorage ── */
   const register: ShopCtx["register"] = async (d) => {
@@ -457,16 +460,18 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const cartCount = cart.reduce((a, l) => a + l.qty, 0);
   const cartSubtotal = cart.reduce((a, l) => a + l.qty * l.unitPrice, 0);
 
+  const invalidatePricing = useCallback(() => { ++priceGen.current; setQuoted(null); }, []);
+
   const priceCart = useCallback<ShopCtx["priceCart"]>(async (type, code, address, lang = "en") => {
     quoteInputs.current = { type, code: code ?? "", address: address ?? "", lang: lang ?? "en" };
     const snapshot = cart;
-    const sig = `${type}|${address ?? ""}|${code ?? ""}|${lang ?? "en"}|${snapshot.map((line) => `${line.key}:${line.qty}`).join("|")}`;
+    const sig = quoteIdentity(snapshot, type, code, address, lang);
     const gen = ++priceGen.current;
+    setQuoted(null);
     if (!snapshot.length) { setQuoted(null); return; }
     try {
       /* The quote is lenient: it always answers 200 and reports unsellable
-         rows per line instead of failing the whole cart. Never drop the last
-         quote before this one lands — a null flash made totals lag and jump. */
+         rows per line instead of failing the whole cart. Only publish a result for the current request; checkout independently reprices. */
       const p = await api.apiPriceCart(snapshot, type, lang, code, address);
       if (gen !== priceGen.current) return;
       const lineErrors: Record<string, string> = {};
@@ -479,7 +484,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
         total: p.total, subtotal: p.subtotal, deliveryFee: p.deliveryFee, vat: p.vat,
         deliveryDistanceKm: p.deliveryDistanceKm, weightKg: p.weightKg, discount: p.discount,
         lineDiscounts: p.lineDiscounts ?? {}, invalidCount: p.invalidCount, lineErrors,
-        cartSig: sig,
+        cartSig: sig, requestKey: sig,
       });
       setCart((prev) => {
         if (gen !== priceGen.current) return prev;
@@ -774,7 +779,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     openLoginGate: () => setLoginGate(true),
     closeLoginGate: () => setLoginGate(false),
     cartOpen, setCartOpen, cartCount, cartSubtotal,
-    pulse, priceCart, serverPricing, cartIssuesDismissed, dismissCartIssues,
+    pulse, priceCart, serverPricing, invalidatePricing, cartIssuesDismissed, dismissCartIssues,
     orders, startCheckout, placeOrder, setOrderStatus, setOrderReadyTime, refundOrder, orderStatus,
     reservations, addReservation, cancelReservation, setReservationStatus,
     toasts, toast, logAudit, refresh, refreshKitchen,

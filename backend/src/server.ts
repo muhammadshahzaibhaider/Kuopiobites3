@@ -3,13 +3,13 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import { z } from "zod";
-import { randomBytes, createHash } from "node:crypto";
+import { randomBytes, createHash, randomUUID } from "node:crypto";
 import Stripe from "stripe";
 import { CFG } from "./config";
 import { authClient, codeFlowAuthClient, db as supabaseDb, logActivity } from "./supabase";
 import { getItem, listCategories, listItems, toDatabaseItem } from "./supabase-menu";
 import { getOrder, listCustomerOrders, listOrders } from "./supabase-orders";
-import { readUserStreak, readWalkInClaims, saveSettings, writeUserStreak, writeWalkInClaims } from "./supabase-settings";
+import { readUserStreak, readWalkInClaims, saveSettings, writeUserStreak } from "./supabase-settings";
 import { sanitizeToppingGroups } from "./lib/v3";
 import {
   clearSessionCookies, currentAuth, customerRow, ensureCsrfCookie, ensureCustomerRow, issueCustomerSession, issueStaffSession,
@@ -17,9 +17,9 @@ import {
   type Role, type TokenPayload,
 } from "./auth";
 import { effectiveItems, loadSettings, orderStatus, priceCart, priceLines, round2, validateOrder } from "./logic";
-import { applyPaidOrder, clearPendingRedeem, markPendingRedeem, pendingWalkInClaim, qualifiesForStreakStamp, streakFreeAmount } from "./streak";
+import { applyPaidOrder, pendingWalkInClaim, qualifiesForStreakStamp, streakFreeAmount } from "./streak";
 import { openInfo, slotsFor } from "./lib/hours";
-import { checkoutFingerprint, sameCheckoutAttempt } from "./checkout-attempt";
+import { checkoutFingerprint } from "./checkout-attempt";
 import type { CartLine, MenuItem, Order, Reservation, Settings, User } from "./lib/types";
 import {
   accountPatchSchema, cartLineSchema, cartMergeSchema, cartQtySchema, categoryCreateSchema, categoryPatchSchema, confirmEmailSchema,
@@ -31,9 +31,11 @@ import {
 } from "./schemas";
 import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
 import { buildAnalyticsReport } from "./analytics";
+import { requestOrderRefund, reconcileRefundEvent } from "./order-refund";
+import { recoverCheckoutRetry } from "./checkout-retry";
 import { changePaidOrderStatus, reconcileOrderPayment } from "./order-payment";
 import { publicTrackOrder } from "./order-public";
-import { receiveStripeCheckoutWebhook, type CheckoutCommand } from "./stripe-checkout-event";
+import { receiveStripeCheckoutWebhook, applyStripeCheckoutEvent, type CheckoutCommand } from "./stripe-checkout-event";
 import { addFavorite, listFavorites, mergeFavorites, removeFavorite, safeListFavorites } from "./supabase-favorites";
 import { addCartLine, clearCart, listCart, mergeCartLines, removeCartLine, safeListCart, setCartLineQty } from "./supabase-cart";
 
@@ -155,7 +157,7 @@ const wrap =
         safeLogError((req as any).requestId || "unknown", new Error(`validation failed: ${error.issues.map((issue) => issue.path.join(".")).join(",")}`));
         return fail(res, 400, "validation.failed");
       }
-      const message = error instanceof Error ? error.message : "internal";
+      const message = error && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : "internal";
       if (["auth.emailUnavailable", "payment.unavailable", "payment.required", "payment.cartSnapshotFailed", "payment.sessionBindingFailed", "payment.checkoutCleanupFailed", "payment.processingFailed"].includes(message))
         return fail(res, 503, message);
       if (message === "order.notFound") return fail(res, 404, message);
@@ -237,9 +239,13 @@ app.get("/api/items/:id", wrap(async (req, res) => {
     ok(res, publicItem(item, settings));
   }));
 
-  app.get("/api/settings", wrap(async (_req, res) => {
+  app.get("/api/settings", wrap(async (req, res) => {
     const { audit: _audit, ...publicSettings } = await loadSettings();
-    ok(res, publicSettings);
+    res.setHeader("Cache-Control", "no-store");
+    res.vary("Cookie"); res.vary("X-Session-Scope");
+    const auth = currentAuth(req);
+    const staff = auth?.scope === "staff" && await staffById(auth.sub);
+    ok(res, staff ? publicSettings : { ...publicSettings, offers: publicSettings.offers.filter((o) => o.active && !o.code) });
   }));
 
   app.get("/api/translations", wrap(async (_req, res) => {
@@ -509,16 +515,21 @@ function helsinkiIso(date: string, time: string): string {
   return new Date(utcGuess - (localAsUtc - utcGuess)).toISOString();
 }
 
-function nextDate(date: string): string {
-  const value = new Date(`${date}T00:00:00Z`);
-  value.setUTCDate(value.getUTCDate() + 1);
-  return value.toISOString().slice(0, 10);
-}
-
-async function createPendingOrder(req: Request, body: z.infer<typeof customerOrderSchema>, opts: { reuse?: boolean } = {}): Promise<{ order: Order; settings: Settings; reused?: boolean }> {
+async function createPendingOrder(req: Request, body: z.infer<typeof customerOrderSchema>): Promise<{ order: Order; settings: Settings; reused?: boolean }> {
   const auth = currentAuth(req);
   const customer = authUser(req);
   if (!auth || !customer) throw new Error("auth.required");
+  const attempt = body.attemptId ?? randomUUID();
+  const requestHash = checkoutFingerprint({ ...body, total: 0 });
+  const { data: previous, error: lookupError } = await supabaseDb.from("orders")
+    .select("id, checkout_request_hash").eq("customer_id", auth.sub).eq("checkout_attempt_id", attempt).maybeSingle();
+  if (lookupError) throw lookupError;
+  if (previous) {
+    if (previous.checkout_request_hash !== requestHash) throw new Error("payment.attemptMismatch");
+    const existing = await getOrder(previous.id);
+    if (!existing) throw new Error("order.notFound");
+    return { order: existing, settings: await loadSettings(), reused: true };
+  }
   validateDeliveryAddress(body.type, body.address);
   const settings = await loadSettings();
   const priced = await validateOrder(settings, { type: body.type, lines: body.lines as CartLine[], scheduled: body.scheduled, lang: body.lang, code: body.code, address: body.address });
@@ -528,7 +539,6 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
     const streak = await readUserStreak(auth.sub);
     const free = streakCfg.enabled && streak.rewardReady ? streakFreeAmount(priced.lines, streakCfg.rewardItemId) : 0;
     if (!streakCfg.enabled || !streak.rewardReady || free <= 0) throw new Error("streak.notReady");
-    if (streak.pendingRedeemOrderId) throw new Error("streak.reserved");
     const nextTotal = round2(priced.total - free);
     if (nextTotal <= 0) throw new Error("streak.needOtherItems");
     priced.total = nextTotal;
@@ -540,52 +550,10 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
     };
     redeemStreak = true;
   }
-  if (body.scheduled && settings.preorder.capacity) {
-    const start = helsinkiIso(body.scheduled.date, "00:00");
-    const end = helsinkiIso(nextDate(body.scheduled.date), "00:00");
-    const { data, error } = await supabaseDb.from("orders").select("order_items(quantity, is_preorder), status")
-      .gte("scheduled_for", start).lt("scheduled_for", end).in("payment_status", ["pending", "paid"]).neq("status", "cancelled");
-    if (error) throw error;
-    const reserved = (data ?? []).reduce((sum, row) => sum + (row.order_items ?? [])
-      .filter((line) => line.is_preorder).reduce((qty, line) => qty + line.quantity, 0), 0);
-    const requested = (body.lines as CartLine[]).filter((line) => Boolean(line.preorder)).reduce((qty, line) => qty + line.qty, 0);
-    if (reserved + requested > settings.preorder.capacity) throw new Error("pre.errCapacity");
-  }
   if (!body.scheduled && !openInfo(settings.hours).open) throw new Error("order.closed");
   if (body.type === "delivery" && priced.total < settings.minOrder) throw new Error("order.minOrder");
   if (priced.total <= 0) throw new Error("payment.amountInvalid");
 
-  const snapshot = {
-    type: body.type,
-    address: body.address,
-    scheduled: body.scheduled,
-    code: body.code,
-    redeemStreak,
-    total: priced.total,
-    lines: priced.lines,
-  };
-  if (opts.reuse !== false) {
-  const { data: pendingRows, error: pendingError } = await supabaseDb.from("orders")
-    .select("id")
-    .eq("customer_id", auth.sub).eq("payment_status", "pending").neq("status", "cancelled")
-    .order("created_at", { ascending: false }).limit(8);
-  if (pendingError) throw pendingError;
-  for (const row of pendingRows ?? []) {
-    const existing = await getOrder(row.id);
-    if (!existing) continue;
-    if (!sameCheckoutAttempt(snapshot, {
-      type: existing.type,
-      address: existing.address,
-      scheduled: existing.scheduled,
-      code: body.code,
-      redeemStreak,
-      total: existing.total,
-      lines: existing.lines,
-    })) continue;
-    return { order: existing, settings, reused: true as const };
-  }
-  }
-  void checkoutFingerprint(snapshot);
   const createdAt = Date.now();
   const readyBase = body.scheduled
     ? Date.parse(helsinkiIso(body.scheduled.date, body.scheduled.time))
@@ -598,7 +566,8 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
     lines: priced.lines, subtotal: priced.subtotal, deliveryFee: priced.deliveryFee, discount: priced.discount,
     total: priced.total, vat: priced.vat, scheduled: body.scheduled, paymentStatus: "pending", userId: auth.sub,
   } as Order;
-  const { error } = await supabaseDb.rpc("create_order", {
+  const { data: reservation, error } = await supabaseDb.rpc("create_checkout_order", {
+    p_attempt: attempt, p_hash: requestHash, p_redeem: redeemStreak, p_capacity: settings.preorder.capacity ?? null,
     p_order: {
       id: order.id,
       customer_id: auth.sub,
@@ -621,6 +590,7 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
       estimated_ready_at: estimatedReadyAt,
     },
     p_items: priced.lines.map((line) => ({
+      line_key: line.key,
       menu_item_id: line.itemId,
       item_name_snapshot: line.name,
       variant_label: line.variantLabel,
@@ -637,11 +607,10 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
     if (error.message.includes("order.promoUnavailable")) throw new Error("promo.unavailable");
     throw error;
   }
-  if (redeemStreak) {
-    const streak = await readUserStreak(auth.sub);
-    await writeUserStreak(auth.sub, markPendingRedeem(streak, order.id));
-  }
-  return { order, settings };
+  const saved = await getOrder(reservation.id);
+  if (!saved) throw new Error("order.notFound");
+  return { order: saved, settings, reused: reservation.reused };
+
 }
 
 async function recordPaidStreak(order: Order): Promise<void> {
@@ -649,31 +618,17 @@ async function recordPaidStreak(order: Order): Promise<void> {
   try { await clearCart(order.userId); } catch { /* cart wipe must not block paid */ }
   const settings = await loadSettings();
   if (!settings.orderStreak.enabled) return;
-  if (!qualifiesForStreakStamp(Number(order.total))) return;
   const current = await readUserStreak(order.userId);
-  await writeUserStreak(order.userId, applyPaidOrder(current, order.id, settings.orderStreak.target));
-}
-
-async function abandonStreakRedeem(order: Order): Promise<void> {
-  if (!order.userId) return;
-  const current = await readUserStreak(order.userId);
-  await writeUserStreak(order.userId, clearPendingRedeem(current, order.id));
-}
-
-async function releasePromoReservation(order: Order): Promise<void> {
-  if (!order.discount?.offerId) return;
-  const { data, error } = await supabaseDb.from("promotions").select("used_count").eq("id", order.discount.offerId).maybeSingle();
-  if (error) throw error;
-  if (data && data.used_count > 0) {
-    const { error: updateError } = await supabaseDb.from("promotions").update({ used_count: data.used_count - 1 }).eq("id", order.discount.offerId);
-    if (updateError) throw updateError;
-  }
+  const qualifies = qualifiesForStreakStamp(Number(order.total));
+  if (!qualifies && current.pendingRedeemOrderId !== order.id) return;
+  await writeUserStreak(order.userId, applyPaidOrder(current, order.id, settings.orderStreak.target, qualifies), current);
 }
 
 const stripeClient = CFG.stripeSecretKey ? new Stripe(CFG.stripeSecretKey) : null;
 
 app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req, res) => {
   const body = customerOrderSchema.parse(req.body);
+  if (stripeClient && !body.attemptId) return fail(res, 400, "payment.attemptRequired");
   if (!stripeClient) {
     if (!CFG.allowDemoPayments) return fail(res, 503, "payment.unavailable");
     const created = await createPendingOrder(req, body);
@@ -685,27 +640,28 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
     return;
   }
   const created = await createPendingOrder(req, body);
-  if (created.reused && created.order.checkoutSessionId && stripeClient) {
+  if (created.reused && created.order.checkoutSessionId) {
     const existingSession = await stripeClient.checkout.sessions.retrieve(created.order.checkoutSessionId);
-    if (existingSession.status === "open" && existingSession.url) {
-      ok(res, { mode: "stripe", url: existingSession.url, sessionId: existingSession.id, orderId: created.order.id });
-      return;
+    if (existingSession.status === "expired" && existingSession.payment_status === "unpaid") {
+      await applyStripeCheckoutEvent({ id: `retry-expired:${existingSession.id}`, type: "checkout.session.expired", data: { object: existingSession } }, {
+        retrieveSession: async () => existingSession, process: processCheckoutCommand,
+      });
     }
-    // Expired/consumed Stripe session: mint a new pending order instead of reusing the Stripe idempotency key.
-    const retry = await createPendingOrder(req, body, { reuse: false });
-    Object.assign(created, retry);
+    await recoverCheckoutRetry(created.order, existingSession, {
+      reconcile: (order) => reconcileOrderPayment(order, {
+        retrieveSession: async () => existingSession, process: processCheckoutCommand,
+      }),
+      get: getOrder,
+      respond: (data) => ok(res, data),
+    });
+    return;
   }
+  if (created.order.paymentStatus !== "pending" || created.order.statusOverride === "cancelled")
+    throw new Error("payment.attemptFinished");
+  // Never reissue an uncertain external creation after Stripe's idempotency retention window.
+  if (Date.now() - created.order.createdAt > 23 * 60 * 60_000) throw new Error("payment.recoveryRequired");
   let externalSessionRequested = false;
   try {
-    // Capture only charged, unchanged cart rows before the customer leaves for Stripe.
-    const lineKeys = created.order.lines.map((line) => line.key).filter(Boolean);
-    const { data: cartRows, error: cartError } = lineKeys.length
-      ? await supabaseDb.from("cart_items").select("id, line_key, qty, updated_at")
-        .eq("customer_id", created.order.userId).in("line_key", lineKeys)
-      : { data: [], error: null };
-    if (cartError) throw new Error("payment.cartSnapshotFailed");
-    const cartSnapshot = (cartRows ?? []).filter((row) =>
-      created.order.lines.some((line) => line.key === row.line_key && line.qty === row.qty));
     externalSessionRequested = true;
     const session = await stripeClient.checkout.sessions.create({
       mode: "payment",
@@ -721,11 +677,11 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
       metadata: { order_id: created.order.id, amount_eur: created.order.total.toFixed(2) },
       success_url: `${CFG.publicWebUrl}/track?id=${created.order.id}&payment=success`,
       cancel_url: `${CFG.publicWebUrl}/order?payment=cancelled`,
-      expires_at: Math.floor(Date.now() / 1000) + 30 * 60,
+      expires_at: Math.floor(created.order.createdAt / 1000) + 30 * 60,
     }, { idempotencyKey: `checkout:${created.order.id}` });
     const { data, error } = await supabaseDb.from("orders").update({
       payment_ref: session.id, checkout_session_id: session.id,
-      checkout_cart_snapshot: cartSnapshot, checkout_redeems_reward: Boolean(body.redeemStreak),
+
     }).eq("id", created.order.id).eq("payment_status", "pending").select("id");
     if (error || !data?.length) throw new Error("payment.sessionBindingFailed");
     ok(res, { mode: "stripe", url: session.url, sessionId: session.id, orderId: created.order.id });
@@ -763,7 +719,7 @@ function withStatus(order: Order) {
 }
 
 app.get("/api/orders", requireStaff("kitchen"), wrap(async (_req, res) => {
-  const orders = await listOrders(300);
+  const orders = await listOrders(300, true);
   const pendingWindowMs = 3 * 60 * 60 * 1000;
   const now = Date.now();
   ok(res, orders
@@ -803,9 +759,9 @@ app.patch("/api/orders/:id/status", requireStaff("kitchen"), wrap(async (req, re
       },
       process: processCheckoutCommand,
     }),
-    update: async (orderId, status) => {
+    update: async (orderId, status, expected) => {
       const { data, error } = await supabaseDb.from("orders").update({ status })
-        .eq("id", orderId).eq("payment_status", "paid").select("id");
+        .eq("id", orderId).eq("payment_status", "paid").eq("status", expected).select("id");
       if (error) throw error;
       return Boolean(data?.length);
     },
@@ -839,13 +795,27 @@ app.post("/api/orders/:id/refund", requireStaff("manager"), wrap(async (req, res
     order.refunded = true; order.paymentStatus = "refunded"; order.statusOverride = "completed";
   } else {
     if (!stripeClient || !order.paymentId) return fail(res, 503, "payment.unavailable");
-    const refund = await stripeClient.refunds.create({ payment_intent: order.paymentId }, { idempotencyKey: `refund-${id}` });
+    const refund = await requestOrderRefund(order, {
+      reserve: async () => {
+        const { error } = await supabaseDb.from("order_refunds").upsert({ order_id: id }, { onConflict: "order_id", ignoreDuplicates: true });
+        if (error) throw error;
+        const result = await supabaseDb.from("order_refunds").select("refund_id, created_at").eq("order_id", id).single();
+        if (result.error) throw result.error;
+        return result.data;
+      },
+      retrieve: (refundId) => stripeClient!.refunds.retrieve(refundId),
+      list: () => stripeClient!.refunds.list({ payment_intent: order.paymentId!, limit: 100 }),
+      create: () => stripeClient!.refunds.create({ payment_intent: order.paymentId!, metadata: { order_id: id } }, { idempotencyKey: `refund-${id}` }),
+      record: (refund) => recordRefund(id, refund),
+    });
     if (refund.status === "failed" || refund.status === "canceled") return fail(res, 502, "payment.refundFailed");
     if (refund.status !== "succeeded") return fail(res, 409, "payment.refundPending");
     order.refunded = true; order.paymentStatus = "refunded"; order.statusOverride = "completed";
   }
-  const { error } = await supabaseDb.from("orders").update({ payment_status: "refunded", status: "completed" }).eq("id", id);
-  if (error) throw error;
+  if (order.paymentId === undefined && CFG.allowDemoPayments) {
+    const { error } = await supabaseDb.from("orders").update({ payment_status: "refunded", status: "completed" }).eq("id", id).eq("payment_status", "paid");
+    if (error) throw error;
+  }
   const staff = authStaff(req);
   logActivity(staff.username, staff.role, `order ${id} refunded`);
   ok(res, order);
@@ -858,10 +828,35 @@ async function processCheckoutCommand(command: CheckoutCommand) {
   return data;
 }
 
+async function recordRefund(orderId: string, refund: Stripe.Refund): Promise<void> {
+  const intent = typeof refund.payment_intent === "string" ? refund.payment_intent : refund.payment_intent?.id;
+  const { error } = await supabaseDb.rpc("record_order_refund", {
+    p_order_id: orderId, p_refund_id: refund.id, p_status: refund.status,
+    p_intent: intent, p_amount: refund.amount, p_currency: refund.currency,
+  });
+  if (error) throw error;
+}
+
 async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
   const result = await receiveStripeCheckoutWebhook(req.body, req.headers["stripe-signature"], CFG.stripeWebhookSecret, {
     stripe: stripeClient,
     process: processCheckoutCommand,
+    refund: async (event) => {
+      const refund = await stripeClient!.refunds.retrieve((event.data.object as Stripe.Refund).id);
+      await reconcileRefundEvent(refund, {
+        findOrder: async (intent) => {
+          const { data, error } = await supabaseDb.from("orders").select("id").eq("payment_ref", intent).maybeSingle();
+          if (error) throw error;
+          return data ? getOrder(data.id) : null;
+        },
+        sessions: async (intent) => (await stripeClient!.checkout.sessions.list({ payment_intent: intent, limit: 100 })).data,
+        knownOrder: getOrder,
+        recover: (order) => reconcileOrderPayment(order, {
+          retrieveSession: (sessionId) => stripeClient!.checkout.sessions.retrieve(sessionId), process: processCheckoutCommand,
+        }),
+        record: recordRefund,
+      });
+    },
   });
   res.status(result.status).json(result.body);
 }
@@ -879,7 +874,7 @@ app.post("/api/reservations", resvLimiter, wrap(async (req, res) => {
     .select("date, time, status, party_size").eq("date", body.date);
   if (dayError) throw dayError;
   const offered = slotsFor(body.date, settings, (dayReservations ?? []).map((row) => ({
-    id: "", date: row.date, time: row.time, party: row.party_size, name: "", phone: "", status: row.status,
+    id: "", createdAt: 0, date: row.date, time: row.time.slice(0, 5), party: row.party_size, name: "", phone: "", status: row.status,
   })));
   if (!offered.includes(body.time)) return fail(res, 400, "resv.unavailable");
   const reservation: Reservation = { ...body, id: uid("R"), createdAt: Date.now(), status: "pending" };
@@ -1084,7 +1079,8 @@ app.post("/api/account/streak/claim", requireCustomer, wrap(async (req, res) => 
     createdAt: Date.now(),
     status: "pending" as const,
   };
-  await writeWalkInClaims([...claims, claim]);
+  const { error } = await supabaseDb.rpc("mutate_walkin_claim", { p_claim: claim, p_id: null, p_action: "create" });
+  if (error) throw error;
   ok(res, { id: claim.id, status: claim.status }, 201);
 }));
 
@@ -1095,20 +1091,9 @@ app.get("/api/admin/streak-claims", requireStaff("kitchen"), wrap(async (_req, r
 app.post("/api/admin/streak-claims/:id", requireStaff("kitchen"), wrap(async (req, res) => {
   const id = paramId.parse(req.params.id);
   const { action } = walkInClaimActionSchema.parse(req.body);
-  const claims = await readWalkInClaims();
-  const claim = claims.find((row) => row.id === id);
-  if (!claim) throw new Error("streak.claimNotFound");
-  if (claim.status !== "pending") throw new Error("streak.claimSettled");
-  if (action === "approve") {
-    const settings = await loadSettings();
-    const current = await readUserStreak(claim.userId);
-    await writeUserStreak(claim.userId, applyPaidOrder(current, `walkin:${claim.id}`, settings.orderStreak.target));
-    claim.status = "approved";
-  } else {
-    claim.status = "rejected";
-  }
-  await writeWalkInClaims(claims.map((row) => row.id === id ? claim : row));
-  ok(res, claim);
+  const { data, error } = await supabaseDb.rpc("mutate_walkin_claim", { p_claim: null, p_id: id, p_action: action });
+  if (error) throw error;
+  ok(res, data);
 }));
 
 app.get("/api/account/orders", requireCustomer, wrap(async (req, res) => {
@@ -1125,6 +1110,8 @@ app.get("/api/account/export", requireCustomer, wrap(async (req, res) => {
 
 app.delete("/api/account", requireCustomer, wrap(async (req, res) => {
   const auth = currentAuth(req)!;
+  const { error: eraseError } = await supabaseDb.rpc("erase_customer", { p_customer_id: auth.sub });
+  if (eraseError) throw eraseError;
   const { error } = await supabaseDb.auth.admin.deleteUser(auth.sub);
   if (error) throw error;
   clearSessionCookies(res, { keepCsrf: true });

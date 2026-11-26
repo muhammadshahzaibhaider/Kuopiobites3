@@ -7,7 +7,7 @@ import { RESTAURANT } from "@/lib/menu";
 import { useLang } from "@/lib/i18n";
 import { orderLineDetails } from "@/lib/cart-lines";
 import { useShop, useTick } from "@/lib/store";
-import { apiGetOrder } from "@/lib/api";
+import { apiGetOrder, completeCheckoutAttempt } from "@/lib/api";
 import type { Order, OrderStatus } from "@/lib/types";
 
 const STEPS: { id: OrderStatus; icon: string }[] = [
@@ -28,16 +28,22 @@ export default function TrackView({ id }: { id: string }) {
 
   useEffect(() => {
     let active = true;
+    let latestRequest = 0;
     const load = async () => {
+      const request = ++latestRequest;
       try {
         const latest = await apiGetOrder(id);
-        if (active) setRemoteOrder(latest);
+        if (active && request === latestRequest) {
+          setRemoteOrder(latest);
+          if (["paid", "demo_paid", "refunded"].includes(String(latest.paymentStatus))) completeCheckoutAttempt(id);
+        }
       } catch {
         // An order already present in the authenticated account store is a safe fallback.
       } finally {
-        if (active) setLoading(false);
+        if (active && request === latestRequest) setLoading(false);
       }
     };
+    setRemoteOrder(null);
     setLoading(true);
     void load();
     const tick = () => {
@@ -54,7 +60,7 @@ export default function TrackView({ id }: { id: string }) {
   }, [id]);
 
   const local = orders.find((o) => o.id === id);
-  const order = remoteOrder ?? local;
+  const order = remoteOrder?.id === id ? remoteOrder : local;
   if (!order && loading) return <div className="container-x pt-32 text-center text-sm font-bold text-cherry/60">Loading your order…</div>;
   if (!order)
     return (

@@ -18,7 +18,7 @@ test("a changed quantity or address is a different attempt", () => {
   assert.equal(sameCheckoutAttempt({ ...cart, type: "delivery", address: "A" }, { ...cart, type: "delivery", address: "B" }), false);
 });
 
-test("concurrent cart adds never drop an increment under the 99 cap", () => {
+test("quantity helper caps sequential additions at 99 (database concurrency is tested separately)", () => {
   let qty = 0;
   qty = nextCartQty(qty, 1);
   qty = nextCartQty(qty, 1);

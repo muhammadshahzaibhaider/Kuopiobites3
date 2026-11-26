@@ -3,9 +3,7 @@ on:
   pull_request:
     paths:
       - 'backend/**'
-      - 'frontend/src/admin/accept-order*'
-      - 'frontend/src/admin/order-alert.tsx'
-      - 'frontend/src/admin/views-orders.tsx'
+      - 'frontend/**'
       - 'supabase/migrations/**'
       - '.github/workflows/payment-integrity.yml'
 permissions:
@@ -62,3 +60,32 @@ jobs:
       - name: Acceptance estimate regression tests
         working-directory: frontend
         run: node --experimental-strip-types --test src/admin/accept-order.test.mjs
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Clean maintained frontend install
+        working-directory: frontend
+        run: npm ci --ignore-scripts
+      - name: Frontend regression tests
+        working-directory: frontend
+        run: node --experimental-strip-types --test src/admin/accept-order.test.mjs src/admin/notify-ring.test.mjs src/lib/quote-identity.test.mjs
+      - name: Production build and TypeScript
+        working-directory: frontend
+        run: npm run build
+      - name: Install browser for audio integration
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - name: Browser audio and CSP regression
+        working-directory: frontend
+        run: npm run test:ring:browser

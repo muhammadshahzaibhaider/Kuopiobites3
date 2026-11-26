@@ -78,8 +78,25 @@ function makeDb(seed, hooks = {}) {
     };
     return api;
   };
+  let transactions = 0;
+  const transaction = async (_name, { p_changes }) => {
+    transactions++;
+    const snapshot = structuredClone(tables);
+    for (const change of p_changes) {
+      let operation = builder(change.table)[change.action](change.payload);
+      if (change.id !== undefined) operation = operation.eq("id", change.id);
+      const result = await operation;
+      if (result.error) {
+        for (const key of Object.keys(tables)) tables[key] = snapshot[key];
+        const label = { todays_special: "special", promotions: "promotion", toppings: "topping" }[change.table] ?? change.table;
+        return { error: { message: `settings.persist.${label}` } };
+      }
+    }
+    return { error: null };
+  };
   return {
-    db: { from: (table) => builder(table) },
+    db: { from: (table) => builder(table), rpc: transaction },
+    transactions: () => transactions,
     calls,
     writes: () => calls.filter((call) => call.op !== "select"),
     state,
@@ -218,15 +235,14 @@ test("a rejected special write keeps the stable persist error code", async () =>
   await assert.rejects(() => saveSettings(next, mock.db), /^Error: settings\.persist\.special$/);
 });
 
-test("independent writes use a bounded pool instead of one round trip per row", async () => {
+test("all changed settings rows are submitted as one transaction", async () => {
   const items = Array.from({ length: 40 }, (_, index) => ({ ...ITEM, id: `item-${index}` }));
   const mock = makeDb({ ...seed(), menu_items: items }, { delay: 5 });
   const next = fixture();
   next.offItems = Object.fromEntries(items.map((item) => [item.id, { off: true }]));
   await saveSettings(next, mock.db);
   assert.equal(mock.writes().filter((call) => call.table === "menu_items").length, 40);
-  assert.ok(mock.state.maxInFlight > 1, "writes should overlap");
-  assert.ok(mock.state.maxInFlight <= 8, `pool must stay bounded, saw ${mock.state.maxInFlight}`);
+  assert.equal(mock.transactions(), 1);
 });
 
 test("delivery rules ride along in the shop_settings extra snapshot", async () => {
@@ -249,4 +265,24 @@ test("clearing every delivery rule persists an empty snapshot instead of droppin
   await saveSettings(next, mock.db);
   const upsert = mock.writes().find((call) => call.table === "shop_settings" && call.op === "upsert");
   assert.deepEqual(upsert.payload.extra.deliveryRules, []);
+});
+
+
+test("stale promotion configuration cannot reset a concurrently incremented usage count", async () => {
+  let mock;
+  mock = makeDb(seed(), { fail: query => {
+    if (query.table === "promotions" && query.op === "upsert") mock.tables.promotions[0].used_count = 1;
+    return false;
+  } });
+  const next = fixture(); next.offers[0] = { ...next.offers[0], value: 15, uses: 0 };
+  await saveSettings(next, mock.db);
+  assert.equal(mock.tables.promotions[0].used_count, 1);
+  assert.equal("used_count" in mock.writes().find(q => q.table === "promotions").payload, false);
+});
+
+test("failure in a later settings write rolls back the shop configuration too", async () => {
+  const mock = makeDb(seed(), { fail: q => q.table === "todays_special" && q.op === "upsert" });
+  const next = fixture(); next.paused = true; next.todaysSpecials[0].active = false;
+  await assert.rejects(() => saveSettings(next, mock.db), /settings.persist.special/);
+  assert.equal(mock.tables.shop_settings[0].paused, undefined);
 });

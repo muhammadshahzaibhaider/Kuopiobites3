@@ -29,7 +29,7 @@ export async function reconcileOrderPayment(order: Order, deps: CheckoutDependen
 export async function changePaidOrderStatus(id: string, status: OrderStatus, deps: {
   get: (id: string) => Promise<Order | null>;
   reconcile: (order: Order) => Promise<void>;
-  update: (id: string, status: OrderStatus) => Promise<boolean>;
+  update: (id: string, status: OrderStatus, expected: OrderStatus) => Promise<boolean>;
 }): Promise<Order> {
   let order = await deps.get(id);
   if (!order) throw new Error("order.notFound");
@@ -42,7 +42,7 @@ export async function changePaidOrderStatus(id: string, status: OrderStatus, dep
   const current = (order.statusOverride ?? order.status ?? "placed") as OrderStatus;
   if (!canTransition(current, status)) throw new Error("order.badTransition");
   // The database update must also guard paid status, closing the read/refund race.
-  if (!await deps.update(id, status)) throw new Error("payment.notPaid");
+  if (!await deps.update(id, status, current)) throw new Error("payment.notPaid");
   const saved = await deps.get(id);
   if (!saved) throw new Error("order.notFound");
   return saved;
