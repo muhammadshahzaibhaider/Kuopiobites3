@@ -1,4 +1,18 @@
 import type { Order, OrderStatus } from "./lib/types";
+
+const TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  placed: ["accepted", "cancelled"],
+  accepted: ["preparing", "cancelled"],
+  preparing: ["ready", "cancelled"],
+  ready: ["completed"],
+  completed: [],
+  cancelled: [],
+};
+
+export function canTransition(from: OrderStatus, to: OrderStatus): boolean {
+  if (from === to) return true;
+  return (TRANSITIONS[from] ?? []).includes(to);
+}
 import { applyStripeCheckoutEvent, type CheckoutDependencies } from "./stripe-checkout-event";
 
 /** Recovery is another caller of the webhook's canonical Stripe/SQL path.
@@ -25,6 +39,8 @@ export async function changePaidOrderStatus(id: string, status: OrderStatus, dep
   }
   if (!order || (order.paymentStatus !== "paid" && order.paymentStatus !== "demo_paid"))
     throw new Error("payment.notPaid");
+  const current = (order.statusOverride ?? order.status ?? "placed") as OrderStatus;
+  if (!canTransition(current, status)) throw new Error("order.badTransition");
   // The database update must also guard paid status, closing the read/refund race.
   if (!await deps.update(id, status)) throw new Error("payment.notPaid");
   const saved = await deps.get(id);

@@ -301,6 +301,7 @@ export async function saveSettings(settings: Settings, client: SupabaseClient = 
     orderStreak: settings.orderStreak,
   };
   const previousExtra = await client.from("shop_settings").select("extra").eq("id", true).maybeSingle();
+  if (previousExtra.error) throw new Error(`persist:shop_settings_extra:${previousExtra.error.message}`);
   const prevExtra = (previousExtra.data?.extra as Record<string, unknown> | undefined) ?? {};
   if (prevExtra.orderStreaks && typeof prevExtra.orderStreaks === "object") {
     (extra as Record<string, unknown>).orderStreaks = prevExtra.orderStreaks;
@@ -452,7 +453,7 @@ export async function saveSettings(settings: Settings, client: SupabaseClient = 
       starts_at: offer.start ?? null,
       expires_at: offer.end ?? null,
       usage_limit: offer.maxUses ?? null,
-      used_count: offer.uses ?? 0,
+      used_count: storedOffers.get(offer.id)?.used_count ?? 0,
       title_fi: offer.titleFi,
       title_en: offer.titleEn,
       description_fi: offer.descFi ?? null,

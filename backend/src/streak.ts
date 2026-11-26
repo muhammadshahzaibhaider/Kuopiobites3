@@ -68,6 +68,9 @@ export function applyPaidOrder(state: StreakState, orderId: string, target: numb
 
 export function markPendingRedeem(state: StreakState, orderId: string): StreakState {
   if (!state.rewardReady) return state;
+  if (state.pendingRedeemOrderId && state.pendingRedeemOrderId !== orderId) {
+    throw new Error("streak.reserved");
+  }
   return { ...state, pendingRedeemOrderId: orderId };
 }
 
