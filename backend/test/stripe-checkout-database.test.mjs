@@ -366,3 +366,32 @@ dbTest('configured targets above seven do not unlock rewards prematurely',()=>{
  query("update public.shop_settings set extra="+quote({orderStreak:{enabled:true,target:10},orderStreaks:{[user]:{count:7,rewardReady:false}}})+"::jsonb");
  const o=order();processEvent(cmd(o));assert.equal(streak().count,8);assert.equal(streak().rewardReady,false);
 });
+
+
+dbTest('expiry waits for the shared settings lock before taking promotion locks',async()=>{
+ query("insert into public.promotions(id,used_count,usage_limit) values('promo',1,3)");
+ const o=order({offer_id:'promo'});
+ const child=spawn("psql",[url,"-X","-qAt","-v","ON_ERROR_STOP=1"],{stdio:["pipe","pipe","pipe"]});
+ let output='';
+ const done=new Promise((resolve,reject)=>child.on('close',code=>code===0?resolve():reject(Error('settings lock session failed'))));
+ const locked=new Promise(resolve=>child.stdout.on('data',buf=>{output+=buf;if(output.includes('SETTINGS_LOCKED'))resolve()}));
+ child.stdin.write("begin; select id from public.shop_settings where id=true for update; select 'SETTINGS_LOCKED';\n");
+ await locked;
+ let pending;
+ try {
+  pending=processAsync(cmd(o,{p_event_type:'checkout.session.expired',p_payment_status:'unpaid',p_session_status:'expired'}));
+  let waiting=false;
+  for(let i=0;i<100;i++) {
+   waiting=query("select count(*) from pg_stat_activity where wait_event_type='Lock' and query like '%process_stripe_checkout_event%' and query like "+quote('%'+o.id+'%'))!=='0';
+   if(waiting)break;
+   await new Promise(resolve=>setTimeout(resolve,20));
+  }
+  assert.equal(waiting,true,'callback must be contending on the held settings row');
+  // Before the lock-order fix, expiry already held this promotion while waiting,
+  // making a settings-then-promotion checkout/config save deadlock against it.
+  assert.equal(query("begin; select id from public.promotions where id='promo' for update nowait; rollback;"),'promo');
+ } finally {
+  child.stdin.end('commit;\n');await done;if(pending)await pending;
+ }
+ assert.equal(row(o).status,'cancelled');
+});

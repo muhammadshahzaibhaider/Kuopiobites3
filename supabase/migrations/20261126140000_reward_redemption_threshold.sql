@@ -27,6 +27,10 @@ begin
  if not v_failure and p_event_type not in ('checkout.session.completed','checkout.session.async_payment_succeeded') then
    return jsonb_build_object('received',true,'ignored','unhandledEvent');
  end if;
+ -- Checkout/configuration also lock settings before order/promotion rows. Keep the
+ -- same order for success and expiry, preventing callback/checkout lock inversion.
+ -- Absence is checked inside cleanup so the verified paid fact can still persist.
+ perform 1 from public.shop_settings where id = true for update;
  select * into o from public.orders where id = p_order_id for update;
  if not found then return jsonb_build_object('received',true,'ignored','orderNotFound'); end if;
  -- A completed failure receipt is not proof that a later canonical payment
