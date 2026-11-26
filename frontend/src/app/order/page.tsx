@@ -131,6 +131,7 @@ export default function OrderPage() {
     }
     if (!user) return;
     setPaying(true);
+    try {
     if (type === "delivery" && !user.addresses.includes(address)) {
       await updateUser({ addresses: [...user.addresses, address] });
     }
@@ -138,7 +139,6 @@ export default function OrderPage() {
     if (digits.length >= 9 && phone.trim() !== (user.phone ?? "").trim()) {
       await updateUser({ phone: phone.trim() });
     }
-    try {
       const checkout = await startCheckout({
         type,
         customer: { name: user.name, email: user.email, phone: phone || user.phone || "" },

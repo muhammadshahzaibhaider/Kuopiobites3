@@ -53,7 +53,8 @@ export default function TrackView({ id }: { id: string }) {
     };
   }, [id]);
 
-  const order = orders.find((o) => o.id === id) ?? remoteOrder;
+  const local = orders.find((o) => o.id === id);
+  const order = remoteOrder ?? local;
   if (!order && loading) return <div className="container-x pt-32 text-center text-sm font-bold text-cherry/60">Loading your order…</div>;
   if (!order)
     return (
@@ -84,8 +85,11 @@ export default function TrackView({ id }: { id: string }) {
           )}
         </h1>
         <p className="mt-1 text-sm font-bold text-cherry/60">
-          Placed {fmtTime(order.createdAt)} · {order.type === "delivery" ? `Delivery to ${order.address}` : `Pickup at ${RESTAURANT.address}`}
+          Placed {fmtTime(order.createdAt)} · {order.type === "delivery" ? (order.address ? `Delivery to ${order.address}` : "Delivery") : `Pickup at ${RESTAURANT.address}`}
         </p>
+        {status === "cancelled" && (
+          <p className="mt-3 rounded-2xl border border-brick/30 bg-brick/10 px-4 py-3 text-sm font-black text-brick">This order was cancelled.</p>
+        )}
       </motion.div>
 
       {order.estimatedReadyAt && orderStatus(order) !== "completed" && (

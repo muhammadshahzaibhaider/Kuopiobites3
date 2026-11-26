@@ -194,8 +194,8 @@ export function slotsFor(
   );
   const blocked = new Set(
     settings.blockedSlots
-      .filter((b) => b.startsWith(dateStr + "|"))
-      .map((b) => b.split("|")[1])
+      .filter((b) => b.startsWith(`${dateStr}|`) || b.startsWith(`${dateStr}T`))
+      .map((b) => (b.includes("|") ? b.split("|")[1] : b.slice(dateStr.length + 1)))
   );
   const slots: string[] = [];
   const open = toMin(entry.open);
