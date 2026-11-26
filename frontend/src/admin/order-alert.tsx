@@ -6,6 +6,7 @@ import { cx, eur, fmtTime } from "@/lib/format";
 import { useShop } from "@/lib/store";
 import type { Order } from "@/lib/types";
 import { useModalA11y } from "@/components/useModalA11y";
+import { acceptOrderWithEstimate } from "./accept-order";
 import { Ic } from "./icons";
 
 /* Full-screen "new order" takeover. It sits above every other admin surface
@@ -40,17 +41,13 @@ export default function NewOrderAlert({
   const paid = order.paymentStatus === "paid" || order.paymentStatus === "demo_paid";
 
   const accept = async () => {
-    if (!paid) {
-      toast("Payment is not confirmed yet — keep this ticket open", "err");
-      return;
-    }
     setBusy(true);
     try {
-      await setOrderReadyTime(order.id, minutes);
-      const ok = await setOrderStatus(order.id, "accepted");
-      if (!ok) return;
-      toast(`Order ${order.id} accepted · ready in ${minutes} min`);
-      onResolved();
+      await acceptOrderWithEstimate({
+        accept: () => setOrderStatus(order.id, "accepted"),
+        onAccepted: () => { toast(`Order ${order.id} accepted`); onResolved(); },
+        saveEstimate: () => setOrderReadyTime(order.id, minutes),
+      });
     } finally {
       setBusy(false);
     }
@@ -218,10 +215,10 @@ export default function NewOrderAlert({
                 </button>
                 <button
                   onClick={() => void accept()}
-                  disabled={busy || !paid}
+                  disabled={busy}
                   className="inline-flex min-h-[40px] items-center gap-2 rounded-lg bg-[#2e7d32] px-4 text-sm font-black text-cream shadow-card transition hover:bg-[#256428] disabled:opacity-60"
                 >
-                  <Ic n="check" size={15} /> {busy ? "Saving…" : paid ? `Accept · ${minutes} min` : "Waiting for payment"}
+                  <Ic n="check" size={15} /> {busy ? "Saving…" : `Accept · ${minutes} min`}
                 </button>
               </span>
             </>

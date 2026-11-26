@@ -30,7 +30,8 @@ import {
 } from "./schemas";
 import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
 import { buildAnalyticsReport } from "./analytics";
-import { receiveStripeCheckoutWebhook } from "./stripe-checkout-event";
+import { changePaidOrderStatus, reconcileOrderPayment } from "./order-payment";
+import { receiveStripeCheckoutWebhook, type CheckoutCommand } from "./stripe-checkout-event";
 import { addFavorite, listFavorites, mergeFavorites, removeFavorite, safeListFavorites } from "./supabase-favorites";
 import { addCartLine, clearCart, listCart, mergeCartLines, removeCartLine, safeListCart, setCartLineQty } from "./supabase-cart";
 
@@ -153,8 +154,9 @@ const wrap =
         return fail(res, 400, "validation.failed");
       }
       const message = error instanceof Error ? error.message : "internal";
-      if (["auth.emailUnavailable", "payment.unavailable", "payment.required", "payment.cartSnapshotFailed", "payment.sessionBindingFailed", "payment.checkoutCleanupFailed"].includes(message))
+      if (["auth.emailUnavailable", "payment.unavailable", "payment.required", "payment.cartSnapshotFailed", "payment.sessionBindingFailed", "payment.checkoutCleanupFailed", "payment.processingFailed"].includes(message))
         return fail(res, 503, message);
+      if (message === "order.notFound") return fail(res, 404, message);
       if (businessError.test(message)) return fail(res, 400, message);
       next(error);
     }
@@ -747,14 +749,22 @@ app.get("/api/orders/:id", wrap(async (req, res) => {
 app.patch("/api/orders/:id/status", requireStaff("kitchen"), wrap(async (req, res) => {
   const id = paramId.parse(req.params.id);
   const b = statusSchema.parse(req.body);
-  const order = await getOrder(id);
-  if (!order) return fail(res, 404, "order.notFound");
-  if (order.paymentStatus !== "paid" && order.paymentStatus !== "demo_paid") return fail(res, 400, "payment.notPaid");
-  const { error } = await supabaseDb.from("orders").update({ status: b.status }).eq("id", id);
-  if (error) throw error;
-  const saved = await getOrder(id);
-  const next = saved ?? { ...order, statusOverride: b.status };
-  next.statusOverride = b.status === "placed" ? undefined : b.status;
+  const next = await changePaidOrderStatus(id, b.status, {
+    get: getOrder,
+    reconcile: (order) => reconcileOrderPayment(order, {
+      retrieveSession: async (sessionId) => {
+        if (!stripeClient) throw new Error("payment.unavailable");
+        return stripeClient.checkout.sessions.retrieve(sessionId);
+      },
+      process: processCheckoutCommand,
+    }),
+    update: async (orderId, status) => {
+      const { data, error } = await supabaseDb.from("orders").update({ status })
+        .eq("id", orderId).eq("payment_status", "paid").select("id");
+      if (error) throw error;
+      return Boolean(data?.length);
+    },
+  });
   const staff = authStaff(req);
   logActivity(staff.username, staff.role, `order ${id} -> ${b.status}`);
   ok(res, withStatus(next));
@@ -795,14 +805,16 @@ app.post("/api/orders/:id/refund", requireStaff("manager"), wrap(async (req, res
 }));
 
 /* ── Stripe webhook: HMAC verification, idempotence, amount re-check ───── */
+async function processCheckoutCommand(command: CheckoutCommand) {
+  const { data, error } = await supabaseDb.rpc("process_stripe_checkout_event", command);
+  if (error || !data) throw new Error("payment.processingFailed");
+  return data;
+}
+
 async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
   const result = await receiveStripeCheckoutWebhook(req.body, req.headers["stripe-signature"], CFG.stripeWebhookSecret, {
     stripe: stripeClient,
-    process: async (command) => {
-      const { data, error } = await supabaseDb.rpc("process_stripe_checkout_event", command);
-      if (error || !data) throw new Error("payment.processingFailed");
-      return data;
-    },
+    process: processCheckoutCommand,
   });
   res.status(result.status).json(result.body);
 }

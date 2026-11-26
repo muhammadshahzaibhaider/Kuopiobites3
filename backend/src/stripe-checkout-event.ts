@@ -15,7 +15,7 @@ export type CheckoutCommand = {
   p_payment_intent_id: string | null; p_amount_total: number | null;
   p_currency: string | null; p_payment_status: string; p_session_status: string;
 };
-export type CheckoutResult = { received: true; ignored?: string; duplicate?: boolean; paidSaved?: boolean };
+export type CheckoutResult = { received: true; ignored?: string; duplicate?: boolean; paidSaved?: boolean; effectsPending?: boolean };
 export type CheckoutDependencies = {
   retrieveSession: (id: string) => Promise<Session>;
   process: (command: CheckoutCommand) => Promise<CheckoutResult>;
@@ -30,7 +30,7 @@ const metadataOrder = (value: unknown): string | null => {
 };
 
 export async function applyStripeCheckoutEvent(
-  event: Pick<Stripe.Event, "id" | "type" | "data">,
+  event: { id: string; type: string; data: { object: unknown } },
   deps: CheckoutDependencies,
 ): Promise<CheckoutResult> {
   if (!CHECKOUT_EVENTS.has(event.type)) return { received: true, ignored: "unhandledEvent" };
@@ -84,5 +84,7 @@ export async function receiveStripeCheckoutWebhook(
     retrieveSession: (id) => deps.stripe!.checkout.sessions.retrieve(id),
     process: deps.process,
   });
+  // The RPC committed verified payment, but cleanup still needs Stripe retries.
+  if (data.effectsPending) return { status: 503, body: { error: "payment.effectsPending" } };
   return { status: 200, body: { data } };
 }

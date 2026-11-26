@@ -117,3 +117,12 @@ test("missing configuration or parsed body is rejected without processing", asyn
   const parsed = await receiveStripeCheckoutWebhook({}, "x", secret, { stripe: sdk, process: async () => { throw new Error("must not run"); } });
   assert.equal(parsed.status, 400);
 });
+
+test("BUG-002 cleanup pending keeps webhook retriable after payment was saved",async()=>{
+ const raw=JSON.stringify(event());
+ const r=await receiveStripeCheckoutWebhook(Buffer.from(raw),signature(raw),secret,{
+  stripe:{webhooks:sdk.webhooks,checkout:{sessions:{retrieve:async()=>session()}}},
+  process:async()=>({received:true,paidSaved:true,effectsPending:true}),
+ });
+ assert.equal(r.status,503);assert.equal(r.body.error,"payment.effectsPending");
+});

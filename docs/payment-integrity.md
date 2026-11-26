@@ -1,27 +1,44 @@
-# PR 61: Stripe Checkout integrity
+# BUG-002: Stripe payment to kitchen acceptance
 
-## Scope and evidence
-The previous helper used a Checkout Session identifier that disappeared after payment_ref changed from cs_ to pi_. It also separated payment/cancellation writes from reward, promotion and cart cleanup, and recorded webhook receipts before processing completed. The old mocked tests did not exercise the persisted paid-row shape or database rollback.
+## Evidence and scope
+Inspected `main` at 4345256 and PR #61 at 8ebdb25. The production-intended application path is `POST /api/checkout/session` → Stripe Checkout → signed `POST /api/webhooks/stripe` → `orders.payment_status` → staff `PATCH /api/orders/:id/status`. `backend/src/server.ts` registers the raw-body webhook before JSON parsing. There is one Stripe-session processor, `applyStripeCheckoutEvent` → service-role `process_stripe_checkout_event`; staff recovery calls that same processor. No alternate client-side paid assertion is trusted.
 
-This change preserves checkout_session_id, verifies Stripe signatures with the official SDK, retrieves the canonical session before acting, and processes state, cleanup and completed receipts in one service-role-only PostgreSQL transaction. Exact amount/currency/session/order matches remain mandatory. Refunded orders cannot return to paid. Existing checkout totals and customer responses are preserved; cart cleanup uses a captured snapshot and retains new/edited rows. No frontend, kitchen, pricing or ringtone files are changed.
+These are repository findings. The active Render commit, Stripe account endpoint/subscriptions and hosted database migration state have not been verified in this run. Render discovery had no selected workspace. No production data, refund, cancellation, migration, merge or deploy was performed.
 
-## Verification
-The GitHub Actions workflow runs the backend suite, actual PostgreSQL transaction/concurrency tests and TypeScript compilation. The database tests reset only an explicitly enabled localhost kuopio_test database. They use a focused schema fixture with the relevant production columns/constraints, not a full hosted Supabase environment. Tests cover duplicates, concurrent success/refund, interrupted receipt insertion after side effects, cancellation rollback, stale events, session mismatch, legacy references and safe cart cleanup. Signature tests use actual SDK verification and HTTP raw-body transport.
+## Verified failure branches and resolution
+| Branch | Defect or risk | Resolution |
+| --- | --- | --- |
+| Unpaid completion | Main could continue to an unconditional paid write for an unpaid matching-amount session; async event type was also treated as proof of payment. | Retrieve the current session from Stripe. Only `payment_status=paid` may enter the paid branch. |
+| Event receipt before work | An interrupted/mismatched attempt could encounter an existing `stripe_events` ID and skip unfinished work. | Only completed receipts suppress repeats. Historical IDs without `processed_at` remain recoverable. Invalid identity/amount never creates a completed receipt. |
+| Changed payment reference | `payment_ref` changes from `cs_` to `pi_`, losing the session needed for later recovery. | Preserve independent `checkout_session_id`, including trusted legacy `cs_` backfill. |
+| Payment validation | Main tolerated amount discrepancies for paid events. | Require exact integer cents equal to `round(orders.total*100)`, EUR, matching stored `cs_` identity, canonical metadata order ID and PaymentIntent. Real mismatches remain unpaid and require investigation. |
+| Cleanup failure | Earlier PR #61 rolled back payment when settings, promotion, cart or receipt work failed. | Persist validated paid state under the order lock. A nested savepoint rolls back auxiliary effects and their receipt on failure, records `stripe_effects_error`, and leaves paid durable. The webhook returns 503 for retries. |
+| Missing webhook | Status PATCH previously trusted only the stale DB flag and returned `payment.notPaid`. | For pending orders, staff status PATCH retrieves the server-stored Checkout Session and uses the shared processor, then rereads payment. Unpaid, mismatched or unbound sessions cannot pass. |
+| Ready-time request | Acceptance was sequenced after the estimate request. Returned failure happened to be caught by the store, but a rejection or hanging estimate still gated acceptance. | Persist accepted status and resolve the takeover before calling the optional estimate update. Never advertise the estimate as saved when it fails. |
+| Expiry after payment | Main deleted order rows on failure events without guarding paid state. | Retrieve canonical Stripe state; SQL refuses unpaid expiry changes to paid/refunded rows. Cancelled unpaid rows/items are retained. Late confirmed payment reopens only a webhook-cancelled pending row; cleanup retries cannot reopen a staff-declined paid order. |
+| Concurrent refund/status | A paid read followed by an unconditional status write could change a refunded row. | The status write also predicates on `payment_status=paid` and checks affected rows. |
+| Checkout creation/binding failure | Deleting an order after an uncertain external request could lose the only payment correlation. | Retain uncertain attempts; return the hosted URL only after binding succeeds. Creation uses a per-order Stripe idempotency key. |
 
-CI is necessary but does not prove production correctness. This document must be read alongside the latest PR check results.
+## Recovery semantics
+A valid matching payment is independent of reward/cart/promotion availability. Side effects and the completed receipt remain atomic and idempotent, with pending cleanup visible as `stripe_paid_processed=false` and `stripe_effects_error IS NOT NULL`. Investigate and retry those sessions after fixing the cause; no second reward credit or deletion of changed/new cart lines is allowed. Failure to commit the core database update (database outage, missing schema, constraint/permission failure) still requires a retry; no implementation can guarantee durable storage while the database is unavailable.
 
-## Deployment prerequisites — not completed by this PR
-1. Independently review the code and SQL; retain the PR as draft until release gates pass.
-2. Provision an isolated Supabase/staging backend with Stripe test credentials. Apply supabase/migrations/20261126062645_stripe_checkout_integrity.sql there before deploying the backend. The migration was generated with Supabase CLI 3.4.0. No production migration is executed by CI.
-3. Exercise actual signed Stripe test-mode checkout, asynchronous success/failure, expiry, duplicate delivery and backend restart. Verify persisted payment, reward, promotion, cart and kitchen states for each order. Run an extended order sequence rather than declaring success after two or three orders.
-4. Reconcile historical paid/cancelled orders and unfinished side effects separately. Migration flags prevent unsafe automatic replay of historical paid rewards/cart cleanup; they cannot establish whether previous code completed those effects.
-5. For production cutover, the owner must approve a maintenance window and database backup. Pause checkout creation while migrating and changing backend versions; drain/reconcile existing sessions. Old code does not populate the new durable fields. Confirm active Vercel/Render commits and Stripe webhook subscriptions before reopening checkout.
-6. Monitor webhook non-2xx, retry backlog, paid orders absent from the kitchen and promotion reconciliation errors. Alerting/hosted monitoring configuration remains a separate operational task.
+A reused promotion cap can leave cleanup pending, but never hides the confirmed payment from the kitchen. Do not increase a promotion cap automatically. Non-webhook settings writers can still race with one another; a full reward-ledger migration is outside BUG-002.
 
-## Explicit limits and recovery
-- Checkout Session creation and database binding cross two systems. A Stripe session created before a failed/ambiguous network response or failed database binding requires reconciliation against Stripe metadata. Unbound orders cannot be marked paid from an untrusted session ID. This PR retains order/line records instead of deleting them; it does not implement a distributed checkout outbox.
-- If a cancelled promotion reservation has been reused up to its usage limit before contradictory late payment, the transaction raises payment.promotionReconciliationRequired. An operator must reconcile the paid order and promotion; no silent cap overrun occurs.
-- Webhook transactions serialize reward updates with each other. Other existing settings/reward writers use read-modify-write requests and can still conflict; staging must include concurrent checkout/settings testing. A complete reward-ledger migration is outside this change.
-- Browser ringtone autoplay and order acceptance regressions are separate work (PR 60); this PR does not claim to fix or verify them.
-- An additive schema can remain in place when reverting the backend. Reverting application code reintroduces its old behavior; pause checkout and reconcile events before rollback. Do not drop migration columns while the new backend is active.
-- Do not merge/deploy based solely on these automated tests. Actual Stripe delivery, the full hosted schema/RLS, release migration and independent review remain release gates.
+A missing webhook can be recovered by staff attempting acceptance from the existing orders list. This is a staff-triggered recovery, not a background Stripe poller. The backend validates payment even when the frontend still displays pending. Public unauthenticated GET requests cannot trigger reconciliation. Historical orders deleted by old code or lacking both trusted session and matching legacy intent need separate operator reconciliation; do not infer payment from a customer screenshot or redirect URL.
+
+## Verification and release gates
+The payment-integrity workflow runs backend regression tests against disposable PostgreSQL, backend compilation, and frontend acceptance sequencing tests. Tests include exact/mismatched amounts, unpaid async signals, signatures/raw HTTP, expiry after paid, duplicate and concurrent delivery, failed receipts, reward/cart rollback, legacy receipts, missing-webhook recovery through the same application processor and SQL function, unavailable settings, reused promotion caps, concurrent refund, and ready-time failure. A focused schema fixture is not the full hosted Supabase schema or a real Stripe test-mode checkout.
+
+Before production release:
+1. Independent code/SQL review and isolated Supabase staging validation are required. Apply `supabase/migrations/20261126062645_stripe_checkout_integrity.sql`, then `supabase/migrations/20261126071000_bug002_payment_acceptance.sql` before the backend. The original migration is unchanged; staging that already applied it needs only the second migration.
+2. Exercise Stripe test-mode checkout → persisted paid → kitchen accepted with real authentication. Include missing/delayed webhook, async payment, expiry, backend restart, estimate failure, duplicate delivery and extended repeated orders.
+3. Confirm active frontend/backend commits, migration state, signing secret and webhook subscriptions. Check historical affected orders individually and resolve paid-but-cancelled cases without automatically issuing refunds or changing business decisions.
+4. Obtain the owner's final deployment approval. Use backup/cutover checks and monitor webhook failures and pending effects. Reverting the backend reintroduces old behavior; retain additive columns and pause/reconcile checkout during rollback.
+
+Menu, delivery pause and ringtone implementation are outside this change.
+
+## Local validation (26 November 2026)
+- Backend: 120 passed, 0 failed, 0 skipped against native PostgreSQL 17.7. Environment lacks system psql; a temporary pg-wire CLI adapter executed the unchanged SQL test commands against the real server. GitHub CI uses normal psql/PostgreSQL service containers.
+- Frontend acceptance: 2 passed; backend and frontend TypeScript compilation passed.
+- Frontend's existing package/lock mismatch prevented npm ci. Local typechecking used npm install --package-lock=false --ignore-scripts without repository dependency changes. This pre-existing reproducibility issue remains a release risk; it is outside BUG-002.
+- The separate follow-up migration preserves the earlier draft migration. CI must pass on the final commit after publishing.

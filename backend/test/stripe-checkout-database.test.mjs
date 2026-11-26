@@ -26,6 +26,7 @@ before(() => {
  assert.equal(process.env.ALLOW_TEST_DATABASE_RESET,"1","Local reset must be explicitly enabled");
  query(readFileSync(new URL("./fixtures/stripe-checkout-schema.sql",import.meta.url),"utf8"));
  query(readFileSync(new URL("../../supabase/migrations/20261126062645_stripe_checkout_integrity.sql",import.meta.url),"utf8"));
+ query(readFileSync(new URL("../../supabase/migrations/20261126071000_bug002_payment_acceptance.sql",import.meta.url),"utf8"));
  legacy = JSON.parse(query("select jsonb_agg(to_jsonb(o)) from public.orders o"));
 });
 beforeEach(() => {
@@ -105,9 +106,9 @@ dbTest("paid/refunded rows survive failure events and wrong-session expiry canno
  const o=order();processEvent(cmd(o,{p_event_type:"checkout.session.expired",p_payment_status:"unpaid",p_session_status:"expired",p_session_id:"cs_wrong"}));
  assert.equal(row(o).status,"placed");
 });
-dbTest("failure after paid effects rolls back everything; retry completes once", () => {
+dbTest("receipt failure preserves paid status, rolls back cleanup, then retries once", () => {
  const o=order();const e=cmd(o);failReceipt();
- try {assert.throws(()=>processEvent(e),/injected/);assert.equal(row(o).payment_status,"pending");assert.deepEqual(streak(),{});assert.equal(count("stripe_events"),0);}
+ try {assert.equal(processEvent(e).effectsPending,true);assert.equal(row(o).payment_status,"paid");assert.deepEqual(streak(),{});assert.equal(count("stripe_events"),0);assert.match(row(o).stripe_effects_error,/injected/);}
  finally {resumeReceipt();}
  processEvent(e);assert.equal(row(o).payment_status,"paid");assert.equal(streak().count,1);
  assert.equal(processEvent(e).duplicate,true);assert.equal(streak().count,1);
@@ -176,7 +177,54 @@ dbTest("cart deletion rolls back with failed receipt and is retried safely", () 
  const cartId=randomUUID(),time="2026-11-25T10:00:00Z";
  const o=order({checkout_cart_snapshot:[{id:cartId,qty:1,updated_at:time}]});
  query("insert into public.cart_items(id,customer_id,line_key,qty,updated_at) values("+[cartId,user,"charged",1,time].map(quote).join(",")+")");
- failReceipt();try {assert.throws(()=>processEvent(cmd(o)),/injected/);assert.equal(count("cart_items"),1);}
+ failReceipt();try {assert.equal(processEvent(cmd(o)).effectsPending,true);assert.equal(row(o).payment_status,"paid");assert.equal(count("cart_items"),1);}
  finally {resumeReceipt();}
  processEvent(cmd(o));assert.equal(count("cart_items"),0);
+});
+
+// BUG-002: use the same application recovery path and SQL transaction as status PATCH.
+dbTest("BUG-002 missing webhook recovers canonical paid session and accepts despite cleanup failure", async () => {
+ const {changePaidOrderStatus,reconcileOrderPayment}=await import("../src/order-payment.ts");
+ const {toApiOrder}=await import("../src/supabase-orders.ts");
+ const o=order();
+ const get=async()=>toApiOrder({...row(o),order_items:[]});
+ const canonical={id:o.checkout_session_id,metadata:{order_id:o.id},amount_total:1000,currency:"eur",payment_status:"paid",status:"complete",payment_intent:"pi_"+o.id};
+ query("delete from public.shop_settings");
+ const accepted=await changePaidOrderStatus(o.id,"accepted",{
+  get,
+  reconcile:order=>reconcileOrderPayment(order,{retrieveSession:async()=>canonical,process:async command=>processEvent(command)}),
+  update:async(id,status)=>query("update public.orders set status="+quote(status)+" where id="+quote(id)+" and payment_status='paid' returning id")===id,
+ });
+ assert.equal(accepted.paymentStatus,"paid");assert.equal(accepted.statusOverride,"accepted");
+ assert.equal(row(o).stripe_paid_processed,false);assert.match(row(o).stripe_effects_error,/settingsUnavailable/);
+ // Late unpaid expiry cannot cancel or delete this accepted ticket.
+ processEvent(cmd(o,{p_event_type:"checkout.session.expired",p_payment_status:"unpaid",p_session_status:"expired"}));
+ assert.equal(row(o).status,"accepted");assert.equal(count("order_items"),1);
+ query("insert into public.shop_settings(id,extra) values(true,'{}')");
+ processEvent(cmd(o));assert.equal(row(o).status,"accepted");assert.equal(row(o).stripe_effects_error,null);
+});
+dbTest("BUG-002 mismatched amount plus legacy duplicate receipt recovers on corrected retry",()=>{
+ const o=order(),e=cmd(o);
+ query("insert into public.stripe_events(event_id) values("+quote(e.p_event_id)+")");
+ assert.equal(processEvent({...e,p_amount_total:999}).ignored,"invalidPayment");
+ assert.equal(row(o).payment_status,"pending");
+ assert.equal(processEvent(e).paidSaved,true);assert.equal(row(o).payment_status,"paid");
+});
+dbTest("BUG-002 reused promotion cap cannot roll back late paid confirmation",()=>{
+ query("insert into public.promotions(id,used_count,usage_limit) values('promo',1,1)");
+ const o=order({offer_id:"promo",status:"cancelled",stripe_cancel_processed:true});
+ const e=cmd(o);
+ assert.equal(processEvent(e).effectsPending,true);assert.equal(row(o).payment_status,"paid");assert.equal(row(o).status,"placed");
+ query("update public.orders set status='accepted' where id="+quote(o.id));
+ processEvent(e);assert.equal(row(o).status,"accepted");
+ query("update public.promotions set usage_limit=2 where id='promo'");
+ processEvent(e);assert.equal(row(o).stripe_paid_processed,true);assert.equal(streak().count,1);
+});
+
+dbTest("BUG-002 completed expiry receipt cannot suppress later canonical payment on same event",()=>{
+ const o=order(),e=cmd(o,{p_event_type:"checkout.session.expired",p_payment_status:"unpaid",p_session_status:"expired"});
+ processEvent(e);assert.equal(row(o).status,"cancelled");
+ assert.equal(processEvent({...e,p_payment_status:"paid",p_session_status:"complete"}).paidSaved,true);
+ assert.equal(row(o).payment_status,"paid");assert.equal(row(o).status,"placed");assert.equal(streak().count,1);
+ assert.equal(processEvent({...e,p_payment_status:"paid",p_session_status:"complete"}).duplicate,true);
 });
