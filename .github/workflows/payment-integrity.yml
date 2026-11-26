@@ -1,0 +1,61 @@
+name: Payment integrity
+on:
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'supabase/migrations/**'
+      - '.github/workflows/payment-integrity.yml'
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: local-ci-only
+          POSTGRES_DB: kuopio_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d kuopio_test"
+          --health-interval 5s --health-timeout 5s --health-retries 12
+    env:
+      TEST_DATABASE_URL: postgresql://postgres:local-ci-only@127.0.0.1:5432/kuopio_test
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Prepare migration scaffold
+        shell: bash
+        run: |
+          if ! compgen -G 'supabase/migrations/*_stripe_checkout_integrity.sql' >/dev/null; then
+            npx --yes supabase@3.4.0 --help >/dev/null
+            npx --yes supabase@3.4.0 migration --help >/dev/null
+            npx --yes supabase@3.4.0 migration new --help >/dev/null
+            npx --yes supabase@3.4.0 migration new stripe_checkout_integrity
+            for migration_path in supabase/migrations/*_stripe_checkout_integrity.sql; do
+              echo "MIGRATION_PATH=$migration_path"
+            done
+          fi
+      - name: Install locked backend dependencies
+        working-directory: backend
+        run: npm ci --ignore-scripts
+      - name: Backend regression suite
+        working-directory: backend
+        run: npm test
+      - name: Database transaction regression suite
+        working-directory: backend
+        shell: bash
+        run: |
+          if test -f test/stripe-checkout-database.test.mjs; then
+            node --import tsx --test test/stripe-checkout-database.test.mjs
+          fi
