@@ -1,11 +1,9 @@
 "use client";
+import type { OrderStatus } from "../lib/types";
 
-/* Kitchen ring: HTMLAudioElement (looping WAV) is the primary path.
-   Web Audio oscillators used to fail silently because:
-   1) Sign-in awaits the network, so the user-gesture is gone before AudioContext starts.
-   2) A context created after that await stays "suspended" and playToneAt never runs.
-   3) Ring stop used createdAt+5min, so a ticket older than 5 minutes never sounded.
-   Unlock must run in the same click/keydown tick (before any await). */
+/* Keep one HTMLAudioElement for priming, previews and the looping kitchen ring.
+   Playback must start inside a user gesture when autoplay is blocked. Async
+   results belong to one attempt: a late prime must never pause a newer ring. */
 
 export const RING_TONES = [
   { id: "classic", label: "Classic ding" },
@@ -23,14 +21,30 @@ export function isRingToneId(value: string): value is RingToneId {
 
 export const NEW_ORDER_RING_MS = 5 * 60 * 1000;
 
-type AudioWindow = Window & { webkitAudioContext?: typeof AudioContext };
-
 const wavCache = new Map<RingToneId, string>();
 let player: HTMLAudioElement | null = null;
 let ringTimer: ReturnType<typeof setTimeout> | null = null;
 let ringUntil = 0;
 let activeTone: RingToneId = "classic";
 let unlocked = false;
+let playVersion = 0;
+let pendingPlay: Promise<void> | null = null;
+export type AudioState = "locked" | "ready" | "blocked";
+let audioState: AudioState = "locked";
+const audioListeners = new Set<() => void>();
+
+export const getAudioState = (): AudioState => audioState;
+export function subscribeAudioState(listener: () => void): () => void {
+  audioListeners.add(listener);
+  return () => { audioListeners.delete(listener); };
+}
+
+function setAudioState(next: AudioState): void {
+  unlocked = next === "ready";
+  if (next === audioState) return;
+  audioState = next;
+  audioListeners.forEach((listener) => listener());
+}
 
 function toneSpec(tone: RingToneId): { f: number; t0: number; t1: number }[] {
   if (tone === "kitchen") return [{ f: 980, t0: 0, t1: 0.22 }, { f: 980, t0: 0.22, t1: 0.44 }, { f: 1318, t0: 0.44, t1: 0.72 }];
@@ -77,44 +91,50 @@ function getPlayer(): HTMLAudioElement | null {
   return player;
 }
 
-function primeWebAudio(): void {
-  if (typeof window === "undefined") return;
-  const Ctor = window.AudioContext ?? (window as AudioWindow).webkitAudioContext;
-  if (!Ctor) return;
-  try {
-    const c = new Ctor();
-    const g = c.createGain();
-    g.gain.value = 0.0001;
-    const o = c.createOscillator();
-    o.connect(g).connect(c.destination);
-    o.start();
-    o.stop(c.currentTime + 0.05);
-    void c.resume();
-  } catch { /* ignore */ }
+function setTone(a: HTMLAudioElement): void {
+  if (a.dataset.tone === activeTone && a.src) return;
+  a.src = wavFor(activeTone);
+  a.dataset.tone = activeTone;
+}
+
+function playAudio(a: HTMLAudioElement, onStarted?: () => void): void {
+  const version = ++playVersion;
+  // Call play synchronously, while the trusted gesture is still active.
+  pendingPlay = a.play().then(() => {
+    if (version !== playVersion) return;
+    pendingPlay = null;
+    setAudioState("ready");
+    onStarted?.();
+  }).catch(() => {
+    if (version !== playVersion) return;
+    pendingPlay = null;
+    setAudioState("blocked");
+  });
 }
 
 /** Call from a click/keydown handler BEFORE any await. */
 export function unlockAudio(): void {
   if (typeof window === "undefined") return;
+  if (ringUntil > Date.now()) {
+    ensurePlaying();
+    return;
+  }
+  if (unlocked || pendingPlay) return;
   const a = getPlayer();
   if (!a) return;
-  a.src = wavFor(activeTone);
-  a.loop = true;
+  setTone(a);
+  a.loop = false;
   a.volume = 0.001;
-  const p = a.play();
-  if (p && typeof p.then === "function") {
-    void p.then(() => {
-      a.pause();
-      a.currentTime = 0;
-      a.volume = 1;
-      unlocked = true;
-    }).catch(() => { /* still locked until a real gesture */ });
-  }
-  primeWebAudio();
+  playAudio(a, () => {
+    a.pause();
+    a.currentTime = 0;
+    a.volume = 1;
+  });
 }
 
 export async function unlockAudioAsync(): Promise<void> {
   unlockAudio();
+  await pendingPlay;
 }
 
 function stopTimer(): void {
@@ -125,6 +145,8 @@ function stopTimer(): void {
 }
 
 export function stopNewOrderRing(): void {
+  ++playVersion;
+  pendingPlay = null;
   stopTimer();
   ringUntil = 0;
   const a = player;
@@ -138,14 +160,10 @@ export function stopNewOrderRing(): void {
 function ensurePlaying(): void {
   const a = getPlayer();
   if (!a) return;
-  const url = wavFor(activeTone);
-  if (!a.src || a.dataset.tone !== activeTone) {
-    a.src = url;
-    a.dataset.tone = activeTone;
-  }
+  setTone(a);
   a.loop = true;
   a.volume = 1;
-  void a.play().then(() => { unlocked = true; }).catch(() => { unlocked = false; });
+  playAudio(a);
 }
 
 export function startNewOrderRing(untilTs: number, tone: RingToneId = "classic"): void {
@@ -164,13 +182,17 @@ export function startNewOrderRing(untilTs: number, tone: RingToneId = "classic")
 
 export function playNewOrderChime(tone: RingToneId = "classic"): void {
   activeTone = tone;
+  if (ringUntil > Date.now()) {
+    ensurePlaying();
+    return;
+  }
   const a = getPlayer();
   if (!a) return;
+  setTone(a);
   a.loop = false;
-  a.src = wavFor(tone);
   a.volume = 1;
   a.currentTime = 0;
-  void a.play().then(() => { unlocked = true; }).catch(() => { unlocked = false; });
+  playAudio(a);
 }
 
 export function playTestChime(tone: RingToneId = "classic"): void {
@@ -184,4 +206,25 @@ export function isAudioUnlocked(): boolean {
 /** Ring window starts when this tab first sees the ticket, not from createdAt. */
 export function ringUntilFor(now: number, firstSeenAt: number, windowMs = NEW_ORDER_RING_MS): number {
   return firstSeenAt + windowMs > now ? firstSeenAt + windowMs : 0;
+}
+
+type RingOrder = { id: string; status?: OrderStatus; statusOverride?: OrderStatus; refunded?: boolean };
+
+export function isOpenOrderTicket(order: RingOrder): boolean {
+  return (order.statusOverride ?? order.status ?? "placed") === "placed" && !order.refunded;
+}
+
+/** Payment confirmation is deliberately independent from notification eligibility. */
+export function ringUntilForOrders(orders: readonly RingOrder[], firstSeenAt: Map<string, number>, now: number): number {
+  const live = orders.filter(isOpenOrderTicket);
+  const ids = new Set(live.map((order) => order.id));
+  for (const id of firstSeenAt.keys()) {
+    if (!ids.has(id)) firstSeenAt.delete(id);
+  }
+  let until = 0;
+  for (const order of live) {
+    if (!firstSeenAt.has(order.id)) firstSeenAt.set(order.id, now);
+    until = Math.max(until, ringUntilFor(now, firstSeenAt.get(order.id)!));
+  }
+  return until;
 }

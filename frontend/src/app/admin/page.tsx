@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { cx } from "@/lib/format";
 import { useLang } from "@/lib/i18n";
@@ -7,7 +7,7 @@ import { useShop, useTick } from "@/lib/store";
 import { Ic } from "@/admin/icons";
 import { Pill, useLocal } from "@/admin/ui";
 import NewOrderAlert from "@/admin/order-alert";
-import { NEW_ORDER_RING_MS, RING_TONES, isRingToneId, playTestChime, startNewOrderRing, stopNewOrderRing, unlockAudio, type RingToneId } from "@/admin/notify";
+import { RING_TONES, getAudioState, subscribeAudioState, isOpenOrderTicket, ringUntilForOrders, isRingToneId, playTestChime, startNewOrderRing, stopNewOrderRing, unlockAudio, type RingToneId } from "@/admin/notify";
 import type { Order } from "@/lib/types";
 import { DashboardView, OrdersView, DiningView } from "@/admin/views-orders";
 import { MenuCategoriesView, MenuItemsView, ToppingsMasterView, SpecialsView } from "@/admin/views-menu";
@@ -201,6 +201,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   const [quickCreate, setQuickCreate] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [soundOn, setSoundOn] = useState(() => (typeof window === "undefined" ? true : localStorage.getItem("kb_admin_sound") !== "0"));
+  const audioState = useSyncExternalStore(subscribeAudioState, getAudioState, () => "locked" as const);
   const [ringTone, setRingTone] = useState<RingToneId>(() => {
     if (typeof window === "undefined") return "classic";
     const stored = localStorage.getItem("kb_admin_ring_tone") ?? "";
@@ -214,7 +215,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   useTick(4000);
 
   const isPaid = (o: Order) => o.paymentStatus === "paid" || o.paymentStatus === "demo_paid";
-  const isOpenTicket = (o: Order) => orderStatus(o) === "placed" && !o.refunded;
+  const isOpenTicket = isOpenOrderTicket;
   const placed = orders.filter((o) => isOpenTicket(o) && isPaid(o));
 
   /* Poll tickets only — a full catalogue refresh every 15s burned Hobby CPU/CDN. */
@@ -233,15 +234,10 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
   /* Browser audio needs a user gesture in the same tick as play(). */
   useEffect(() => {
     const kick = () => {
-      unlockAudio();
       if (!soundOn) return;
-      const live = orders.filter(isOpenTicket);
-      if (!live.length) return;
+      unlockAudio();
       const now = Date.now();
-      const until = Math.max(...live.map((o) => {
-        const seen = firstSeenAt.current.get(o.id) ?? now;
-        return seen + NEW_ORDER_RING_MS;
-      }));
+      const until = ringUntilForOrders(orders, firstSeenAt.current, now);
       if (until > now) startNewOrderRing(until, ringTone);
     };
     window.addEventListener("pointerdown", kick);
@@ -259,13 +255,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
     const live = orders.filter(isOpenTicket).sort((a, b) => a.createdAt - b.createdAt);
     const livePaid = live.filter(isPaid);
     const now = Date.now();
-    const liveIds = new Set(live.map((o) => o.id));
-    for (const id of [...firstSeenAt.current.keys()]) {
-      if (!liveIds.has(id)) firstSeenAt.current.delete(id);
-    }
-    for (const o of live) {
-      if (!firstSeenAt.current.has(o.id)) firstSeenAt.current.set(o.id, now);
-    }
+    const until = ringUntilForOrders(orders, firstSeenAt.current, now);
     if (seenOrders.current === null) {
       seenOrders.current = new Set(live.map((o) => o.id));
       if (livePaid.length) setAlertQueue(livePaid);
@@ -288,7 +278,6 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
       stopNewOrderRing();
       return;
     }
-    const until = Math.max(...live.map((o) => (firstSeenAt.current.get(o.id) ?? now) + NEW_ORDER_RING_MS));
     if (until > now) startNewOrderRing(until, ringTone);
     else stopNewOrderRing();
   }, [orders, orderStatus, soundOn, ringTone]);
@@ -299,13 +288,13 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
     const next = !soundOn;
     setSoundOn(next);
     localStorage.setItem("kb_admin_sound", next ? "1" : "0");
-    if (next) { unlockAudio(); playTestChime(ringTone); }
+    if (next) playTestChime(ringTone);
+    else stopNewOrderRing();
   };
 
   const pickTone = (id: RingToneId) => {
     setRingTone(id);
     localStorage.setItem("kb_admin_ring_tone", id);
-    unlockAudio();
     playTestChime(id);
   };
 
@@ -577,6 +566,15 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
           </AnimatePresence>
         </main>
       </div>
+
+      {soundOn && audioState !== "ready" && (
+        <div role="status" className="fixed bottom-3 left-3 right-3 z-[110] flex flex-wrap items-center justify-center gap-2 rounded-xl border border-gold bg-cream px-4 py-3 text-xs font-bold text-cherry shadow-lift sm:left-auto sm:max-w-md">
+          <span>{audioState === "blocked" ? "Order sound could not play. Enable sound and check your browser's sound setting." : "Enable sound to hear new orders."}</span>
+          <button onClick={() => playTestChime(ringTone)} className="rounded-lg bg-gold px-3 py-2 font-black text-cherry-dark">
+            Enable order sound
+          </button>
+        </div>
+      )}
 
       {alertQueue[0] && (
         <NewOrderAlert
