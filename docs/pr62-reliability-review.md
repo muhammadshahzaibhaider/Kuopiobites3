@@ -57,3 +57,10 @@ The previous source audit (KB-A01–A20) and independent PR review (R62-01–R62
 - Rollback must preserve payment/refund facts and order history. Prefer rolling back application deployments while retaining additive schema/security guards. Do not drop financial records, replay side effects blindly, or remove a migration with live dependencies. Restoring an old backend requires independent compatibility checks with the stronger status trigger.
 
 No finite test suite guarantees zero future defects. This candidate closes reproduced application defects and adds regression coverage; production readiness remains contingent on the listed independent review, environment checks and business acceptance.
+
+
+## Browser test fixture correction after first CI run
+
+At `f738333`, GitHub backend/database tests, frontend unit tests, TypeScript and production build passed. Chromium ran all five tones successfully and confirmed that a denied media CSP is reported. The no-gesture case then timed out: it invoked playback with Playwright `page.evaluate`, whose Chromium implementation sends `Runtime.callFunctionOn` with `userGesture: true`.
+
+The fixture now starts that case directly in the page module during navigation, records that no user activation existed, verifies blocked playback, and then tests recovery through a trusted click. Application ringtone code is unchanged by this correction. The amended CI run must pass before release; the original failed check has not been reclassified as a pass. Actual restaurant-device audio and live workflows remain acceptance requirements.

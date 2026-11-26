@@ -26,6 +26,11 @@ const html = `<!doctype html><title>Isolated order audio regression</title>
   };
   document.querySelector('#preview').onclick = () => notify.playTestChime(window.tone || 'classic');
   document.querySelector('#stop').onclick = () => notify.stopNewOrderRing();
+  // Execute before automation evaluations: Playwright evaluation grants userGesture in Chromium.
+  if (location.pathname === '/autoplay') {
+    window.autoplayInitiallyActivated = navigator.userActivation.hasBeenActive;
+    notify.startNewOrderRing(Date.now() + 30_000);
+  }
 </script>`;
 const server = createServer((req, res) => {
   if (req.url === "/notify.js") {
@@ -89,9 +94,9 @@ try {
   await blocked.close();
   console.log("PASS: CSP failure is reported instead of claiming sound is ready");
 
-  const autoplay = await newPage();
-  await autoplay.evaluate(() => notify.startNewOrderRing(Date.now() + 30_000));
+  const autoplay = await newPage("/autoplay");
   await autoplay.waitForFunction(() => notify.getAudioState() === "blocked");
+  assert.equal(await autoplay.evaluate(() => window.autoplayInitiallyActivated), false);
   await autoplay.locator("#ring").click();
   await playing(autoplay);
   await autoplay.close();
