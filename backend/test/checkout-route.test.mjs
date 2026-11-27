@@ -117,3 +117,15 @@ test("staff logout expires staff cookies while keeping an independent customer s
   assert.match(cookies, /kb_staff_refresh=;/);
   assert.doesNotMatch(cookies, /kb_customer_refresh=;|kb_remember=;/);
 });
+
+test("return polling cannot consume the order-creation rate limit", async () => {
+  seedReturn(); payment = "unpaid";
+  for (let i = 0; i < 30; i++) assert.equal((await confirm("cs_original")).response.status, 202);
+  status = "open";
+  assert.equal((await request()).response.status, 200);
+});
+test("reward redemption computes included VAT from the amount actually charged", () => {
+  const { includedVat } = require("../src/logic.ts");
+  assert.equal(includedVat(12.5, 0.135), 1.49);
+  assert.equal(includedVat(0, 0.135), 0);
+});

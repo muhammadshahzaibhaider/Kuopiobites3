@@ -181,6 +181,8 @@ const tooManyJson = (req: Request, res: Response) => {
 const authLimiter = rateLimit({ windowMs: CFG.rate.authWindowMs, limit: CFG.rate.authMax, standardHeaders: "draft-7", legacyHeaders: false, handler: tooManyJson });
 const loginLimiter = rateLimit({ windowMs: CFG.rate.loginWindowMs, limit: CFG.rate.loginMax, standardHeaders: "draft-7", legacyHeaders: false, handler: tooManyJson });
 const orderLimiter = rateLimit({ windowMs: CFG.rate.orderWindowMs, limit: CFG.rate.orderMax, standardHeaders: "draft-7", legacyHeaders: false });
+// Return-page retries must not consume the customer’s new-order allowance.
+const returnLimiter = rateLimit({ windowMs: CFG.rate.orderWindowMs, limit: CFG.rate.orderMax * 4, standardHeaders: "draft-7", legacyHeaders: false });
 const resvLimiter = rateLimit({ windowMs: CFG.rate.reservationWindowMs, limit: CFG.rate.reservationMax, standardHeaders: "draft-7", legacyHeaders: false });
 const uploadLimiter = rateLimit({ windowMs: CFG.rate.uploadWindowMs, limit: CFG.rate.uploadMax, standardHeaders: "draft-7", legacyHeaders: false });
 const newsletterLimiter = rateLimit({ windowMs: CFG.rate.newsletterWindowMs, limit: CFG.rate.newsletterMax, standardHeaders: "draft-7", legacyHeaders: false });
@@ -721,7 +723,7 @@ app.get("/api/orders/:id", wrap(async (req, res) => {
 }));
 
 // A Stripe return may arrive before its webhook or without a session cookie.
-app.post("/api/orders/:id/confirm-return", orderLimiter, wrap(async (req, res) => {
+app.post("/api/orders/:id/confirm-return", returnLimiter, wrap(async (req, res) => {
   const id = paramId.parse(req.params.id);
   const { sessionId } = z.object({ sessionId: z.string().startsWith("cs_").max(255).optional() }).strict().parse(req.body);
   const auth = currentAuth(req);

@@ -1,10 +1,10 @@
-import {test} from "node:test";
+import {test} from "playwright/test";
 import assert from "node:assert/strict";
 import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
-import { offerCards } from "../../frontend/src/lib/offer-cards.ts";
-import { SOCIAL_LINKS, RESTAURANT } from "../../frontend/src/lib/menu.ts";
-import { DEFAULT_SETTINGS } from "../src/lib/hours.ts";
+import { offerCards } from "../src/lib/offer-cards.ts";
+import { SOCIAL_LINKS, RESTAURANT } from "../src/lib/menu.ts";
+import { DEFAULT_SETTINGS } from "../../backend/src/lib/hours.ts";
 
 const item = (id, price, fields={}) => ({ id, name:id, cat:"kebab", prices:[{label:"",value:price}], ...fields });
 test("BUG-009/015 cards price only eligible sellable dishes and omit expired offers", () => {

@@ -92,12 +92,20 @@ try {
   await page.getByRole("button", {name:/Resume delivery/}).waitFor();
   assert.deepEqual(settingsPatch, { previous:{deliveryEnabled:true}, changes:{deliveryEnabled:false} });
   assert.equal(settings.paused, false);
+  await page.getByRole("navigation", {name:"Admin sections"}).hover();
+  const search = page.getByRole("textbox", { name:"Search sections" });
+  await search.fill("refund");
+  assert.match(await page.getByRole("navigation", {name:"Admin sections"}).innerText(), /refund/i);
+  await search.fill("");
   await page.getByRole("button", { name: "Account", exact:true }).click();
   await page.getByRole("button", { name:/Log out|Sign out/i }).click();
   await page.getByRole("button", { name:"Sign in to admin" }).waitFor();
   assert.equal(signouts,1);
   await page.reload();
   await page.getByRole("button", {name:"Sign in to admin"}).waitFor();
+  await page.goto(origin + "/order");
+  await page.getByText("Delivery is paused — pickup only for now.", {exact:true}).waitFor();
+  assert.equal(await page.getByRole("button", {name:/🛵/}).count(), 0);
   assert.deepEqual(pageErrors, []);
   console.log("PASS: delivery-only toggle, persisted staff sign-out and stale-tab gate");
 } finally {

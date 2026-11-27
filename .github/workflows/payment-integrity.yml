@@ -81,6 +81,9 @@ jobs:
       - name: Frontend regression tests
         working-directory: frontend
         run: node --experimental-strip-types --test src/admin/*.test.mjs src/lib/*.test.mjs
+      - name: Catalogue, social links and deployment root regressions
+        working-directory: frontend
+        run: npx playwright test scripts/catalogue.spec.mjs --workers=1
       - name: Production build and TypeScript
         working-directory: frontend
         run: npm run build
