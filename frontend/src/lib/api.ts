@@ -1,3 +1,5 @@
+import { beginCheckout, bindCheckout, finishCheckout } from "./checkout-attempt";
+export { completeCheckoutAttempt } from "./checkout-attempt";
 /**
  * REAL API CLIENT (post-split). Every function maps 1:1 to the contract in
  * /backend/API.md. No business logic, no secrets, no localStorage data stores —
@@ -117,33 +119,24 @@ export type CheckoutInput = {
   lang?: "en" | "fi"; code?: string; redeemStreak?: boolean;
 };
 export const apiCreateOrder = (o: CheckoutInput) => api<Order>("/api/orders", { method: "POST", body: o });
-let currentCheckoutAttempt: { signature: string; id: string; orderId?: string } | null = null;
 export const apiCreateCheckoutSession = async (o: CheckoutInput) => {
-  // Persist the action before sending. A timeout, reload or lost response reuses its identity.
   const signature = JSON.stringify({ ...o, total: 0, address: o.type === "delivery" ? o.address : "" });
-  let attempt = currentCheckoutAttempt;
-  try { attempt = JSON.parse(sessionStorage.getItem("kb.checkoutAttempt") ?? "null"); } catch { /* unavailable storage */ }
-  if (!attempt || attempt.signature !== signature) attempt = { signature, id: crypto.randomUUID() };
-  currentCheckoutAttempt = attempt;
-  try { sessionStorage.setItem("kb.checkoutAttempt", JSON.stringify(attempt)); } catch { /* same-page retries still use storage when available */ }
+  const attemptId = await beginCheckout(signature);
   try {
-    const result = await api<{ mode: "stripe" | "demo"; url?: string; sessionId?: string; orderId?: string; order?: Order }>("/api/checkout/session", { method: "POST", body: { ...o, attemptId: attempt.id } });
-    if (result.orderId) { currentCheckoutAttempt = { ...attempt, orderId: result.orderId }; try { sessionStorage.setItem("kb.checkoutAttempt", JSON.stringify(currentCheckoutAttempt)); } catch {} }
-    if (result.order) { currentCheckoutAttempt = null; try { sessionStorage.removeItem("kb.checkoutAttempt"); } catch {} }
+    const result = await api<{ mode: "stripe" | "demo"; url?: string; sessionId?: string; orderId?: string; order?: Order }>(
+      "/api/checkout/session", { method: "POST", body: { ...o, attemptId } });
+    if (result.order) finishCheckout(attemptId);
+    else if (result.orderId) bindCheckout(attemptId, result.orderId);
     return result;
   } catch (error) {
-    if (error instanceof Error && error.message === "payment.attemptExpired") { currentCheckoutAttempt = null; try { sessionStorage.removeItem("kb.checkoutAttempt"); } catch {} }
+    if (error instanceof Error && error.message === "payment.attemptExpired") finishCheckout(attemptId);
     throw error;
   }
 };
-export function completeCheckoutAttempt(orderId: string): void {
-  try {
-    const saved = JSON.parse(sessionStorage.getItem("kb.checkoutAttempt") ?? "null");
-    if (saved?.orderId === orderId) { sessionStorage.removeItem("kb.checkoutAttempt"); currentCheckoutAttempt = null; }
-  } catch { if (currentCheckoutAttempt?.orderId === orderId) currentCheckoutAttempt = null; }
-}
 export const apiListOrders = () => api<Order[]>("/api/orders", { staff: true });
 export const apiGetOrder = (id: string) => api<Order>(`/api/orders/${id}`);
+export const apiConfirmCheckoutReturn = (id: string, sessionId?: string) =>
+  api<Order | { pending: true }>(`/api/orders/${encodeURIComponent(id)}/confirm-return`, { method: "POST", body: { sessionId } });
 export const apiPatchOrderStatus = (id: string, status: OrderStatus) =>
   api<Order>(`/api/orders/${id}/status`, { method: "PATCH", body: { status }, staff: true });
 export const apiPatchOrderReadyTime = (id: string, minutes: number | null) =>
@@ -163,7 +156,13 @@ export const apiDeleteReservation = (id: string) =>
 /* ── admin mutations ───────────────────────────────────────────────────── */
 /* A whole-settings snapshot can legitimately take a few seconds on a
    cross-region link; the default 15 s transport timeout used to abort it. */
-export const apiSaveSettings = (s: Settings) => api<Settings>("/api/settings", { method: "PUT", body: s, staff: true, timeoutMs: 45_000 });
+export const apiSaveSettings = (base: Settings, next: Settings) => {
+  const fields = (Object.keys(next) as (keyof Settings)[]).filter((key) =>
+    key !== "audit" && JSON.stringify(base[key]) !== JSON.stringify(next[key]));
+  const previous = Object.fromEntries(fields.map((key) => [key, base[key]]));
+  const changes = Object.fromEntries(fields.map((key) => [key, next[key]]));
+  return api<Settings>("/api/settings", { method: "PUT", body: { changes, previous }, staff: true, timeoutMs: 45_000 });
+};
 export const apiSaveSpecial = (body: { special?: unknown; todaysSpecials?: unknown }) =>
   api<unknown>("/api/todays-special", { method: "PUT", body, staff: true, timeoutMs: 45_000 });
 /** Seed-only flags stay client-side; a strict PUT used to 400 on them. */

@@ -334,7 +334,7 @@ export function itemInOfferScope(o: Pick<Offer, "scope">, m: MenuItem): boolean 
   return false;
 }
 
-function itemOfferEligible(o: Offer, m: MenuItem): boolean {
+export function itemOfferEligible(o: Offer, m: MenuItem): boolean {
   if (o.code) return false; // only after the customer types the code
   if (o.scope.deliveryOnly) return false;
   if (o.scope.minDistanceKm !== undefined || o.scope.maxDistanceKm !== undefined) return false;

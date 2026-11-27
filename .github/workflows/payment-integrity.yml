@@ -5,6 +5,7 @@ on:
       - 'backend/**'
       - 'frontend/**'
       - 'supabase/migrations/**'
+      - 'next.config.mjs'
       - '.github/workflows/payment-integrity.yml'
 permissions:
   contents: read
@@ -79,7 +80,10 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Frontend regression tests
         working-directory: frontend
-        run: node --experimental-strip-types --test src/admin/accept-order.test.mjs src/admin/notify-ring.test.mjs src/lib/quote-identity.test.mjs
+        run: node --experimental-strip-types --test src/admin/*.test.mjs src/lib/*.test.mjs
+      - name: Catalogue, social links and deployment root regressions
+        working-directory: frontend
+        run: npx playwright test scripts/catalogue.spec.mjs --workers=1
       - name: Production build and TypeScript
         working-directory: frontend
         run: npm run build
@@ -89,3 +93,6 @@ jobs:
       - name: Browser audio and CSP regression
         working-directory: frontend
         run: npm run test:ring:browser
+      - name: Browser checkout return and kitchen workflows
+        working-directory: frontend
+        run: node --experimental-strip-types scripts/test-order-workflows.mjs

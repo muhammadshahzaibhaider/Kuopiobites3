@@ -8,7 +8,7 @@
  * customer the offer is not usable right now.
  */
 import type { Lang, MenuItem, Settings } from "./types";
-import { activeOffers, applyOfferToPrice, offerBadge, offerCategoryIds } from "./v3";
+import { activeOffers, applyOfferToPrice, offerBadge, offerCategoryIds, itemOfferEligible, isItemOff, isCatOff } from "./v3";
 
 export interface OfferCard {
   id: string;
@@ -52,11 +52,8 @@ export function offerCards(
     const desc = lang === "fi" ? o.descFi ?? o.descEn : o.descEn ?? o.descFi;
     /* A concrete price makes an offer believable: the cheapest dish in its
        scope with the discount already applied. */
-    const scoped = o.scope.whole
-      ? menu
-      : cats.length
-        ? menu.filter((entry) => cats.includes(entry.cat))
-        : menu.filter((entry) => (o.scope.itemIds ?? []).includes(entry.id));
+    const scoped = menu.filter((entry) => entry.prices.length && !entry.archived
+      && !isItemOff(settings, entry.id) && !isCatOff(settings, entry.cat) && itemOfferEligible(o, entry));
     const cheapest = scoped.reduce<number | undefined>((lowest, entry) => {
       const value = Math.min(...entry.prices.map((price) => price.value));
       return lowest === undefined || value < lowest ? value : lowest;

@@ -54,7 +54,6 @@ async function csrfHeader(): Promise<string> {
 async function request<T>(path: string, init: RequestInit, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-  let response: Response;
   try {
     const method = (init.method ?? "GET").toUpperCase();
     const publicGet = method === "GET" && (
@@ -62,21 +61,26 @@ async function request<T>(path: string, init: RequestInit, timeoutMs = REQUEST_T
       || path === "/api/categories"
       || path === "/api/translations"
     );
-    response = await fetch(apiBase() + path, {
+    const response = await fetch(apiBase() + path, {
       credentials: "include",
       cache: publicGet ? "default" : "no-store",
       ...init,
       signal: controller.signal,
     });
+    // A proxy can send headers and then stall. Keep the timeout active until the JSON is read.
+    const json = await response.json().catch((error: unknown) => {
+      if (controller.signal.aborted) throw error;
+      return null;
+    }) as { data?: T; error?: string } | null;
+    if (!response.ok) throw new ApiErrorWithStatus(json?.error || `http ${response.status}`, response.status);
+    if (!json || !Object.hasOwn(json, "data")) throw new ApiError("net.invalidResponse");
+    return json.data as T;
   } catch (error) {
-    /* Offline, DNS, proxy-down and timeout all surface as friendly codes. */
-    throw new ApiError(error instanceof DOMException && error.name === "AbortError" ? "net.timeout" : "net.offline");
+    if (error instanceof ApiError) throw error;
+    throw new ApiError(controller.signal.aborted ? "net.timeout" : "net.offline");
   } finally {
     clearTimeout(timer);
   }
-  const json = await response.json().catch(() => ({})) as { data?: T; error?: string };
-  if (!response.ok) throw new ApiErrorWithStatus(json.error || `http ${response.status}`, response.status);
-  return json.data as T;
 }
 
 class ApiErrorWithStatus extends ApiError {

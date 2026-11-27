@@ -20,6 +20,9 @@ export function publicTrackOrder(order: Order) {
     })),
     subtotal: order.subtotal,
     deliveryFee: order.deliveryFee,
+    ...(order.discount?.amount ? { discount: {
+      amount: order.discount.amount, freeDelivery: !!order.discount.freeDelivery, title: "Discount",
+    } } : {}),
     total: order.total,
     vat: order.vat,
     scheduled: order.scheduled,

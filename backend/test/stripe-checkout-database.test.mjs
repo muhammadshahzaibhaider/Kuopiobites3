@@ -53,6 +53,20 @@ before(() => {
  assert.equal(created.id,fullOrder.id);
  assert.equal(query("select quantity from public.order_items where order_id='KB-full-schema'"),'2');
  assert.equal(query("select jsonb_array_length(checkout_cart_snapshot) from public.orders where id='KB-full-schema'"),'1');
+ // Exercise the dashboard write and full-save conflict guard with actual triggers and grants.
+ query("update public.shop_settings set extra=extra || '{\"orderStreaks\":{\"fixture\":{\"count\":3}},\"orderStreakClaims\":[]}'::jsonb where id");
+ const originalVersion = query("select updated_at from public.shop_settings where id");
+ const shopBefore = JSON.parse(query("select to_jsonb(s) - 'updated_at' from public.shop_settings s where id"));
+ query("set role service_role; select public.set_delivery_enabled(false)");
+ const shopAfter = JSON.parse(query("select to_jsonb(s) - 'updated_at' from public.shop_settings s where id"));
+ assert.deepEqual(shopAfter, {...shopBefore, extra: {...shopBefore.extra, deliveryEnabled:false}});
+ assert.throws(()=>query("set role service_role; select public.apply_settings_changes_checked('[]',"+quote(originalVersion)+"::timestamptz)"), /settings.concurrentUpdate/);
+ const version = query("select updated_at from public.shop_settings where id");
+ query("set role service_role; select public.apply_settings_changes_checked('[]',"+quote(version)+"::timestamptz)");
+ for (const role of ["anon","authenticated"]) {
+   assert.equal(query("select has_function_privilege("+quote(role)+",'public.set_delivery_enabled(boolean)','EXECUTE')"),"f");
+   assert.equal(query("select has_function_privilege("+quote(role)+",'public.apply_settings_changes_checked(jsonb,timestamptz)','EXECUTE')"),"f");
+ }
  // Minimal payment-specific fixture tests historical upgrade/backfill and fault injection separately.
  query(readFileSync(new URL("./fixtures/stripe-checkout-schema.sql",import.meta.url),"utf8"));
  const base=readFileSync(new URL("../../supabase/migrations/20261005000000_kuopio_bites_schema.sql",import.meta.url),"utf8");

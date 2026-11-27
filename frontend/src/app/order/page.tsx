@@ -19,7 +19,7 @@ import { apiAccountStreak } from "@/lib/api";
 export default function OrderPage() {
   const shop = useShop();
   const router = useRouter();
-  const { cart, cartSubtotal, settings, settingsReady, user, setQty, removeLine, clearCart, startCheckout, toast, updateUser, priceCart, serverPricing: latestPricing, invalidatePricing } = shop;
+  const { cart, cartSubtotal, settings, settingsReady, user, setQty, removeLine, syncCart, startCheckout, toast, updateUser, priceCart, serverPricing: latestPricing, invalidatePricing } = shop;
 
   const [type, setType] = useState<"pickup" | "delivery">("pickup");
   const [address, setAddress] = useState("");
@@ -164,7 +164,7 @@ export default function OrderPage() {
         return;
       }
       if (!checkout.order) throw new Error("payment.unavailable");
-      clearCart();
+      syncCart();
       toast(t("order.placed"));
       router.push(`/track/${checkout.order.id}`);
     } catch (e) {

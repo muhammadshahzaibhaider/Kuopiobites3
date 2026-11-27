@@ -9,6 +9,7 @@ import { quoteIdentity } from "./quote-identity";
 import React, {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from "react";
+import { kitchenRead } from "../admin/kitchen-feed";
 import { usePathname } from "next/navigation";
 import * as api from "./api";
 import { DEFAULT_SETTINGS } from "./hours";
@@ -68,6 +69,7 @@ interface ShopCtx {
   setQty: (key: string, qty: number) => void;
   removeLine: (key: string) => void;
   clearCart: () => void;
+  syncCart: () => void;
   /* Guests never mutate cart/favorites: they get a login prompt instead. The
      pending action is replayed automatically once they sign in. */
   loginGate: boolean;
@@ -172,6 +174,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const [favorites, setFavorites] = useState<string[]>([]);
   const [quoted, setQuoted] = useState<(NonNullable<ShopCtx["serverPricing"]> & { cartSig: string }) | null>(null);
   const [cartIssuesDismissed, setCartIssuesDismissed] = useState(false);
+  const sessionGeneration = useRef(0);
   const cartMutGen = useRef(0);
   const priceGen = useRef(0);
   const quoteInputs = useRef({ type: "pickup" as "pickup" | "delivery", code: "", address: "", lang: "en" });
@@ -196,10 +199,12 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
      guest started (e.g. an Add-to-Cart that was gated behind login). Failures
      here never break the session itself — each load degrades to empty. */
   const hydrateUser = useCallback(async (u: User) => {
+    const generation = sessionGeneration.current;
     const [favoriteIds, cartLines] = await Promise.all([
       api.apiListFavorites().catch(() => [] as string[]),
       api.apiListCart().catch(() => [] as CartLine[]),
     ]);
+    if (generation !== sessionGeneration.current) return;
     let favs = favoriteIds;
     /* Never trust persisted cart rows: drop structurally broken ones once. */
     let cartLinesOut = sanitizeCartLines(cartLines);
@@ -219,6 +224,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       localStorage.removeItem(GUEST_FAVORITES_KEY);
       localStorage.removeItem(LEGACY_CART_KEY);
     } catch { /* noop */ }
+    if (generation !== sessionGeneration.current) return;
     setUser({ ...u, favorites: favs });
     setFavorites(favs);
     setCart(cartLinesOut);
@@ -230,6 +236,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
         try {
           const line: CartLine = { ...pending.line, key: lineKeyOf(pending.line) };
           cartLinesOut = sanitizeCartLines(await api.apiAddCartLine(line));
+          if (generation !== sessionGeneration.current) return;
           setCart(cartLinesOut);
           setPulse((p) => p + 1);
           setTimeout(() => toast("Added to cart ✔"), 0);
@@ -237,6 +244,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       } else if (pending.kind === "favorite" && !favs.includes(pending.itemId)) {
         try {
           const updated = await api.apiAddFavorite(pending.itemId);
+          if (generation !== sessionGeneration.current) return;
           setFavorites(updated.favorites);
           setUser((prev) => (prev ? { ...prev, favorites: updated.favorites } : prev));
           setTimeout(() => toast("Added to favorites"), 0);
@@ -245,20 +253,35 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     }
   }, [toast]);
 
+  const orderFeed = useMemo(() => kitchenRead(api.apiListOrders, setOrders), []);
+  const reservationFeed = useMemo(() => kitchenRead(api.apiListReservations, setReservations), []);
+  const refreshKitchen = useCallback(async () => {
+    await Promise.all([orderFeed.refresh(), reservationFeed.refresh()]);
+  }, [orderFeed, reservationFeed]);
+  useEffect(() => () => {
+    ++sessionGeneration.current;
+    orderFeed.invalidate();
+    reservationFeed.invalidate();
+  }, [onAdmin, orderFeed, reservationFeed]);
+
   /* ── boot: hydrate everything from the backend ── */
   const refresh = useCallback(async () => {
+    const generation = sessionGeneration.current;
     try {
       /* Public pages skip staff session + ticket lists — those burned Hobby CPU/CDN. */
       const [s, publicItems, cats, tr, session, staffSession] = await Promise.all([
-        api.fetchSettings(onAdmin), api.fetchItems(), api.fetchCategories(), api.fetchTranslations(),
+        api.fetchSettings(onAdmin), api.fetchItems(), api.fetchCategories(), api.fetchTranslations().catch(() => ({})),
         api.apiSession(),
         onAdmin ? api.apiStaffSession() : Promise.resolve({ user: null, role: null as string | null }),
       ]);
+      if (generation !== sessionGeneration.current) return;
       setSettings(s);
-      const items = staffSession.role === "manager"
+      setSettingsReady(true);
+      const items = staffSession.role === "manager" || staffSession.role === "owner"
         ? await api.apiAdminItems(true).catch(() => publicItems)
         : publicItems;
-      hydrateMenu(items, cats);
+      if (generation !== sessionGeneration.current) return;
+      hydrateMenu(publicItems, cats);
       hydrateTranslations(tr);
       const sessionUser = (session.user ?? null) as User | null;
       if (sessionUser) {
@@ -268,16 +291,17 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
         setFavorites([]);
         setCart([]);
       }
+      if (generation !== sessionGeneration.current) return;
       setStaffRole(staffSession.role);
       setAdminItems(items);
       if (staffSession.role) {
-        const [o, r] = await Promise.all([api.apiListOrders(), api.apiListReservations()]);
-        setOrders(o); setReservations(r);
+        await refreshKitchen();
+        if (generation !== sessionGeneration.current) return;
         api.apiCustomers().then((cs) =>
-          setUsers(cs.map((c) => ({ ...c, marketing: !!c.marketing, addresses: [], createdAt: c.created_at, orderCount: c.orderCount, lifetimeSpend: c.lifetimeSpend } as unknown as User)))
+          generation === sessionGeneration.current && setUsers(cs.map((c) => ({ ...c, marketing: !!c.marketing, addresses: [], createdAt: c.created_at, orderCount: c.orderCount, lifetimeSpend: c.lifetimeSpend } as unknown as User)))
         ).catch(() => {}); // kitchen role has no customer reads
       } else if (session.user) {
-        api.apiAccountOrders().then(setOrders).catch(() => {});
+        api.apiAccountOrders().then((rows) => { if (generation === sessionGeneration.current) setOrders(rows); }).catch(() => {});
       } else {
         setOrders([]);
       }
@@ -285,22 +309,10 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       // offline first-paint fallback (bundled data) stays in place
       console.warn("backend unreachable, using bundled fallback", e);
     } finally {
-      setSettingsReady(true);
       setAuthChecked(true);
     }
-  }, [hydrateUser, onAdmin]);
+  }, [hydrateUser, onAdmin, refreshKitchen]);
   useEffect(() => { void refresh(); }, [refresh]);
-
-  const kitchenGen = useRef(0);
-  const refreshKitchen = useCallback(async () => {
-    const gen = ++kitchenGen.current;
-    try {
-      const [o, r] = await Promise.all([api.apiListOrders(), api.apiListReservations()]);
-      if (gen !== kitchenGen.current) return;
-      setOrders(o);
-      setReservations(r);
-    } catch { /* keep last tickets */ }
-  }, []);
 
   /* Settings are edited from another tab (/admin). Re-read them when this tab
      becomes visible again — throttled, so tab-flipping stays cheap. */
@@ -311,7 +323,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       const now = Date.now();
       if (now - last < 180_000) return;
       last = now;
-      api.fetchSettings(onAdmin).then(setSettings).catch(() => { /* keep the last good copy */ });
+      api.fetchSettings(onAdmin).then((value) => { setSettings(value); setSettingsReady(true); }).catch(() => { /* keep the last good copy */ });
     };
     document.addEventListener("visibilitychange", sync);
     window.addEventListener("focus", sync);
@@ -340,15 +352,18 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   };
   const login: ShopCtx["login"] = async (email, pass, remember = true) => {
     try {
+      const generation = ++sessionGeneration.current;
       const u = await api.apiLogin(email, pass, remember);
       await hydrateUser(u as User);
-      api.apiAccountOrders().then(setOrders).catch(() => {});
+      api.apiAccountOrders().then((rows) => { if (generation === sessionGeneration.current) setOrders(rows); }).catch(() => {});
       return null;
     } catch (e) { return (e as Error).message; }
   };
   /* Signing out wipes every trace of the owner: no cart, no favorites, no
      cached private data survives into the next session on this device. */
   const logout = async () => {
+    ++sessionGeneration.current;
+    ++cartMutGen.current;
     try { await api.apiLogout(); } catch { /* backend down: still clear locally */ }
     try {
       localStorage.removeItem(GUEST_FAVORITES_KEY);
@@ -399,17 +414,35 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const adminLogin: ShopCtx["adminLogin"] = async (u, p) => {
     try {
       const role = await api.apiAdminLogin(u, p);
+      ++sessionGeneration.current;
       setStaffRole(role);
       void refresh();
       return null;
     } catch (e) { return (e as Error).message; }
   };
-  const adminLogout = () => { void api.apiAdminLogout(); setStaffRole(null); setOrders([]); };
+  const adminLogout = async () => {
+    try { await api.apiAdminLogout(); } catch {
+      toast("Sign out failed. Please try again.", "err");
+      return;
+    }
+    ++sessionGeneration.current;
+    orderFeed.invalidate();
+    reservationFeed.invalidate();
+    setStaffRole(null); setOrders([]); setReservations([]); setUsers([]);
+  };
 
   /* ── cart (server is the single source of truth for logged-in users;
         totals always re-priced by the server at checkout) ── */
   /* Re-sync from the server whenever a mutation failed or raced. */
-  const syncCart = () => { if (user) api.apiListCart().then((lines) => setCart(sanitizeCartLines(lines))).catch(() => {}); };
+  const cartOwner = user?.id;
+  const syncCart = useCallback(() => {
+    if (!cartOwner) return;
+    const generation = cartMutGen.current;
+    const session = sessionGeneration.current;
+    void api.apiListCart().then((lines) => {
+      if (generation === cartMutGen.current && session === sessionGeneration.current) setCart(sanitizeCartLines(lines));
+    }).catch(() => {});
+  }, [cartOwner]);
   const addLine: ShopCtx["addLine"] = (l) => {
     /* Guests get the login prompt; the line is replayed after they sign in. */
     if (!user) {
@@ -510,7 +543,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     try {
       if (patch.soldOut !== undefined) {
         const next = { ...settings, offItems: { ...settings.offItems, [id]: { off: patch.soldOut } } };
-        await api.apiSaveSettings(next); setSettings(next); return true;
+        setSettings(await api.apiSaveSettings(settings, next)); return true;
       }
       const m = allItems.find((x) => x.id === id);
       if (!m) return false;
@@ -664,7 +697,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     // the backend persists the same complete settings snapshot.
     setSettings(s);
     try {
-      const next = await api.apiSaveSettings(s);
+      const next = await api.apiSaveSettings(settings, s);
       setSettings(next);
       await refresh();
       return true;
@@ -677,6 +710,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
       const reason =
         code === "net.timeout" ? "request timed out — please try again"
         : code === "net.offline" ? "network unavailable — check the connection"
+        : code === "settings.concurrentUpdate" ? "settings changed while saving; review the refreshed values and try again"
         : code === "settings.persistFailed" ? "database write failed"
         : code === "settings.loadFailed" ? "database read failed"
         : code.startsWith("settings.persist.") ? `database rejected ${code.slice("settings.persist.".length)}`
@@ -708,18 +742,20 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const setOrderStatus: ShopCtx["setOrderStatus"] = async (id, s) => {
     try {
       const upd = await api.apiPatchOrderStatus(id, s);
+      orderFeed.invalidate();
       const nextStatus = upd.statusOverride ?? upd.status ?? s;
       setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd, statusOverride: nextStatus, status: nextStatus } : x)));
       return true;
     } catch (error) {
       const code = error instanceof Error ? error.message : "";
-      toast(code === "payment.notPaid" ? "Payment is not confirmed yet — wait for Stripe, then accept" : "Order status could not be updated", "err");
+      toast(code === "order.statusChanged" ? "Another kitchen action changed this order. Refresh its status." : code === "payment.notPaid" ? "Payment is not confirmed yet — wait for Stripe, then accept" : "Order status could not be updated", "err");
       return false;
     }
   };
   const setOrderReadyTime: ShopCtx["setOrderReadyTime"] = async (id, minutes) => {
     try {
       const updated = await api.apiPatchOrderReadyTime(id, minutes);
+      orderFeed.invalidate();
       setOrders((current) => current.map((order) => order.id === id ? { ...order, ...updated } : order));
       return updated;
     } catch (error) {
@@ -731,6 +767,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
   const refundOrder: ShopCtx["refundOrder"] = async (id) => {
     try {
       const upd = await api.apiRefundOrder(id);
+      orderFeed.invalidate();
       setOrders((p) => p.map((x) => (x.id === id ? { ...x, ...upd } : x)));
       return true;
     } catch {
@@ -775,7 +812,7 @@ export function ShopProvider({ children }: { children: React.ReactNode }) {
     patchItem, saveMenuItem, archiveMenuItem, moveItem, moveItemTo, addItem, removeAdded, addCat, updateCat, deleteCat, setItemText,
     effectiveMenu, categories,
     user, authChecked, users, register, login, logout, updateUser, changePassword, favorites, isFavorite, toggleFavorite, adminLogin, adminLogout, staffRole,
-    cart, addLine, setQty, removeLine, clearCart, loginGate,
+    cart, addLine, setQty, removeLine, clearCart, syncCart, loginGate,
     openLoginGate: () => setLoginGate(true),
     closeLoginGate: () => setLoginGate(false),
     cartOpen, setCartOpen, cartCount, cartSubtotal,

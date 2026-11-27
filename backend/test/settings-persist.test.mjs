@@ -1,3 +1,4 @@
+const VERSION = "2026-11-27T00:00:00Z";
 // saveSettings() persistence contract: only rows that actually changed are
 // written, independent writes run in a bounded pool, and any database error
 // still surfaces as settings.persist.<operation>.
@@ -79,7 +80,9 @@ function makeDb(seed, hooks = {}) {
     return api;
   };
   let transactions = 0;
-  const transaction = async (_name, { p_changes }) => {
+  const transaction = async (name, { p_changes, p_expected }) => {
+    assert.equal(name, "apply_settings_changes_checked");
+    assert.equal(p_expected, VERSION);
     transactions++;
     const snapshot = structuredClone(tables);
     for (const change of p_changes) {
@@ -161,7 +164,7 @@ function fixture() {
 
 test("a settings snapshot that matches the database writes nothing but shop_settings", async () => {
   const mock = makeDb(seed());
-  await saveSettings(fixture(), mock.db);
+  await saveSettings(fixture(), VERSION, mock.db);
   assert.deepEqual(mock.writes().map((call) => `${call.table}.${call.op}`), ["shop_settings.upsert"]);
 });
 
@@ -169,7 +172,7 @@ test("editing a promotion writes only the promotion row", async () => {
   const mock = makeDb(seed());
   const next = fixture();
   next.offers = [{ ...next.offers[0], value: 15 }];
-  await saveSettings(next, mock.db);
+  await saveSettings(next, VERSION, mock.db);
   const offerWrites = mock.writes().filter((call) => call.table === "promotions");
   assert.equal(offerWrites.length, 1);
   assert.equal(offerWrites[0].op, "upsert");
@@ -180,7 +183,7 @@ test("today's special price change writes only that special row", async () => {
   const mock = makeDb(seed());
   const next = fixture();
   next.todaysSpecials = [{ ...next.todaysSpecials[0], overridePrice: 2.5 }];
-  await saveSettings(next, mock.db);
+  await saveSettings(next, VERSION, mock.db);
 
   const specialWrites = mock.writes().filter((call) => call.table === "todays_special");
   assert.equal(specialWrites.length, 1);
@@ -197,7 +200,7 @@ test("duplicating and removing specials upserts the new row and deletes the remo
   next.todaysSpecials = [
     { ...next.todaysSpecials[0], id: "ts-new", itemId: "specials-3", sortOrder: 0 },
   ];
-  await saveSettings(next, mock.db);
+  await saveSettings(next, VERSION, mock.db);
   const specialWrites = mock.writes().filter((call) => call.table === "todays_special");
   assert.deepEqual(specialWrites.map((call) => call.op).sort(), ["delete", "upsert"]);
   assert.equal(specialWrites.find((call) => call.op === "delete").filters[0][1], "ts-2");
@@ -211,7 +214,7 @@ test("duplicate draft ids collapse into one upsert row, last value wins", async 
     { ...next.todaysSpecials[0], overridePrice: 2 },
     { ...next.todaysSpecials[0], overridePrice: 3 },
   ];
-  await saveSettings(next, mock.db);
+  await saveSettings(next, VERSION, mock.db);
   const upsert = mock.writes().find((call) => call.table === "todays_special" && call.op === "upsert");
   assert.equal(upsert.payload.length, 1);
   assert.equal(upsert.payload[0].discount_value, 3);
@@ -221,7 +224,7 @@ test("switching one dish off does not rewrite the rest of the menu", async () =>
   const mock = makeDb({ ...seed(), menu_items: [ITEM, { ...ITEM, id: "pizza1-12", available: true }] });
   const next = fixture();
   next.offItems = { "specials-3": { off: true } };
-  await saveSettings(next, mock.db);
+  await saveSettings(next, VERSION, mock.db);
   const itemWrites = mock.writes().filter((call) => call.table === "menu_items");
   assert.equal(itemWrites.length, 1);
   assert.equal(itemWrites[0].payload.available, false);
@@ -232,7 +235,7 @@ test("a rejected special write keeps the stable persist error code", async () =>
   const mock = makeDb(seed(), { fail: (query) => query.table === "todays_special" && query.op === "upsert" });
   const next = fixture();
   next.todaysSpecials = [{ ...next.todaysSpecials[0], active: false }];
-  await assert.rejects(() => saveSettings(next, mock.db), /^Error: settings\.persist\.special$/);
+  await assert.rejects(() => saveSettings(next, VERSION, mock.db), /^Error: settings\.persist\.special$/);
 });
 
 test("all changed settings rows are submitted as one transaction", async () => {
@@ -240,7 +243,7 @@ test("all changed settings rows are submitted as one transaction", async () => {
   const mock = makeDb({ ...seed(), menu_items: items }, { delay: 5 });
   const next = fixture();
   next.offItems = Object.fromEntries(items.map((item) => [item.id, { off: true }]));
-  await saveSettings(next, mock.db);
+  await saveSettings(next, VERSION, mock.db);
   assert.equal(mock.writes().filter((call) => call.table === "menu_items").length, 40);
   assert.equal(mock.transactions(), 1);
 });
@@ -252,7 +255,7 @@ test("delivery rules ride along in the shop_settings extra snapshot", async () =
     { id: "delivery-a", name: "Keskusta 0-3 km", fee: 2.5, active: true, minDistanceKm: 0, maxDistanceKm: 3 },
     { id: "delivery-b", name: "Heavy orders", fee: 6, active: false, minWeightKg: 15 },
   ];
-  await saveSettings(next, mock.db);
+  await saveSettings(next, VERSION, mock.db);
   const upsert = mock.writes().find((call) => call.table === "shop_settings" && call.op === "upsert");
   assert.deepEqual(upsert.payload.extra.deliveryRules, next.deliveryRules);
   assert.deepEqual(mock.writes().map((call) => call.table), ["shop_settings"]);
@@ -262,7 +265,7 @@ test("clearing every delivery rule persists an empty snapshot instead of droppin
   const mock = makeDb(seed());
   const next = fixture();
   next.deliveryRules = [];
-  await saveSettings(next, mock.db);
+  await saveSettings(next, VERSION, mock.db);
   const upsert = mock.writes().find((call) => call.table === "shop_settings" && call.op === "upsert");
   assert.deepEqual(upsert.payload.extra.deliveryRules, []);
 });
@@ -275,7 +278,7 @@ test("stale promotion configuration cannot reset a concurrently incremented usag
     return false;
   } });
   const next = fixture(); next.offers[0] = { ...next.offers[0], value: 15, uses: 0 };
-  await saveSettings(next, mock.db);
+  await saveSettings(next, VERSION, mock.db);
   assert.equal(mock.tables.promotions[0].used_count, 1);
   assert.equal("used_count" in mock.writes().find(q => q.table === "promotions").payload, false);
 });
@@ -283,6 +286,6 @@ test("stale promotion configuration cannot reset a concurrently incremented usag
 test("failure in a later settings write rolls back the shop configuration too", async () => {
   const mock = makeDb(seed(), { fail: q => q.table === "todays_special" && q.op === "upsert" });
   const next = fixture(); next.paused = true; next.todaysSpecials[0].active = false;
-  await assert.rejects(() => saveSettings(next, mock.db), /settings.persist.special/);
+  await assert.rejects(() => saveSettings(next, VERSION, mock.db), /settings.persist.special/);
   assert.equal(mock.tables.shop_settings[0].paused, undefined);
 });
