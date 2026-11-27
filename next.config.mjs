@@ -1,3 +1,7 @@
+if (process.env.VERCEL === "1") {
+  throw new Error("Set the Kuopio Bites Vercel Root Directory to frontend/. The repository root contains the retired app.");
+}
+
 /** @type {import('next').NextConfig} */
 const apiOrigin = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:4000";
 

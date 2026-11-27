@@ -21,8 +21,9 @@ test("BUG-002 recovery rejects Stripe/order identity mismatch",async()=>{
  });
 });
 test("BUG-002 refund race cannot update status after paid read",async()=>{
+ let reads=0;
  await assert.rejects(()=>changePaidOrderStatus(pending.id,"accepted",{
-  get:async()=>({...pending,paymentStatus:"paid"}),reconcile:async()=>assert.fail(),update:async()=>false,
+  get:async()=>({...pending,paymentStatus:reads++ ? "refunded" : "paid"}),reconcile:async()=>assert.fail(),update:async()=>false,
  }),/payment.notPaid/);
 });
 test("BUG-002 Stripe outage does not become false payment.notPaid or success",async()=>{
@@ -35,4 +36,18 @@ test("BUG-002 missing order and refunded order cannot change status",async()=>{
   await assert.rejects(()=>changePaidOrderStatus(pending.id,"accepted",{
    get:async()=>order,reconcile:async()=>assert.fail(),update:async()=>assert.fail(),
   }),order?/payment.notPaid/:/order.notFound/);
+});
+
+test("two kitchen accept requests converge when the first already committed", async () => {
+  let reads = 0;
+  const get = async () => ({ ...pending, paymentStatus: "paid", status: reads++ ? "accepted" : "placed" });
+  const saved = await changePaidOrderStatus(pending.id, "accepted", { get, reconcile: assert.fail, update: async () => false });
+  assert.equal(saved.status, "accepted");
+});
+
+test("a competing paid kitchen transition reports status conflict", async () => {
+  let reads = 0;
+  const get = async () => ({ ...pending, paymentStatus: "paid", status: reads++ ? "cancelled" : "placed" });
+  await assert.rejects(changePaidOrderStatus(pending.id, "accepted", { get, reconcile: assert.fail, update: async () => false }),
+    /order.statusChanged/);
 });

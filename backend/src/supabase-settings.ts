@@ -277,8 +277,15 @@ type SpecialRow = {
 };
 
 type SettingsChange = { table: string; action: string; payload?: unknown; id?: unknown };
+/** Read the row version before loading any part of the editable snapshot. */
+export async function loadEditableSettings() {
+  const { data, error } = await db.from("shop_settings").select("updated_at").eq("id", true).single();
+  if (error || !data?.updated_at) throw new Error("settings.load.version");
+  return { current: await loadSettings(), version: String(data.updated_at) };
+}
+
 /** Build minimal mutations using current rows, then commit them in one database transaction. */
-export async function saveSettings(settings: Settings, client: Pick<SupabaseClient, "from" | "rpc"> = db): Promise<void> {
+export async function saveSettings(settings: Settings, version: string, client: Pick<SupabaseClient, "from" | "rpc"> = db): Promise<void> {
   const changes: SettingsChange[] = [];
   const planningClient = {
     from(table: string) {
@@ -299,7 +306,8 @@ export async function saveSettings(settings: Settings, client: Pick<SupabaseClie
     },
   };
   await planSettings(settings, planningClient as unknown as Pick<SupabaseClient, "from">);
-  const { error } = await client.rpc("apply_settings_changes", { p_changes: changes });
+  const { error } = await client.rpc("apply_settings_changes_checked", { p_changes: changes, p_expected: version });
+  if (error?.message === "settings.concurrentUpdate") throw new Error(error.message);
   if (error) throw new Error(error.message.startsWith("settings.persist.") ? error.message : "settings.persist.transaction");
 }
 

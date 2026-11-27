@@ -50,12 +50,12 @@ export function ensureCsrfCookie(res: Response, req: Request): string {
   return token;
 }
 
-export function clearSessionCookies(res: Response, opts: { keepCsrf?: boolean } = {}): void {
-  res.append("Set-Cookie", `${CFG.customerCookieName}=; ${cookieFlags(0)}`);
+export function clearSessionCookies(res: Response, opts: { keepCsrf?: boolean; staffOnly?: boolean } = {}): void {
+  if (!opts.staffOnly) res.append("Set-Cookie", `${CFG.customerCookieName}=; ${cookieFlags(0)}`);
   res.append("Set-Cookie", `${CFG.staffCookieName}=; ${cookieFlags(0)}`);
-  res.append("Set-Cookie", `kb_customer_refresh=; ${cookieFlags(0)}`);
+  if (!opts.staffOnly) res.append("Set-Cookie", `kb_customer_refresh=; ${cookieFlags(0)}`);
   res.append("Set-Cookie", `kb_staff_refresh=; ${cookieFlags(0)}`);
-  res.append("Set-Cookie", `kb_remember=; ${cookieFlags(0)}`);
+  if (!opts.staffOnly) res.append("Set-Cookie", `kb_remember=; ${cookieFlags(0)}`);
   /* The CSRF cookie is a per-browser double-submit token, not a session secret.
      Clearing it on logout orphaned the SPA's cached token and made every later
      mutation fail with csrf.invalid until a full page reload. */

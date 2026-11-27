@@ -11,7 +11,7 @@ type Session = {
   amount_total?: unknown; currency?: unknown; payment_intent?: unknown;
 };
 export type CheckoutCommand = {
-  p_event_id: string; p_event_type: string; p_order_id: string; p_session_id: string;
+  p_event_id: string; p_event_type: string; p_order_id: string; p_session_id: string | null;
   p_payment_intent_id: string | null; p_amount_total: number | null;
   p_currency: string | null; p_payment_status: string; p_session_status: string;
 };

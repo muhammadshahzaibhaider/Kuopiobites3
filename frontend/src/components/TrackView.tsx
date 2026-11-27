@@ -1,13 +1,13 @@
 "use client";
 import { motion } from "framer-motion";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cx, eur, fmtTime, fmtDate } from "@/lib/format";
 import { RESTAURANT } from "@/lib/menu";
 import { useLang } from "@/lib/i18n";
 import { orderLineDetails } from "@/lib/cart-lines";
 import { useShop, useTick } from "@/lib/store";
-import { apiGetOrder, completeCheckoutAttempt } from "@/lib/api";
+import { apiGetOrder, apiConfirmCheckoutReturn, completeCheckoutAttempt } from "@/lib/api";
 import type { Order, OrderStatus } from "@/lib/types";
 
 const STEPS: { id: OrderStatus; icon: string }[] = [
@@ -19,49 +19,86 @@ const STEPS: { id: OrderStatus; icon: string }[] = [
 ];
 
 /** Order tracking timeline + receipt. Shared by /track/[id] and /track?id=. */
-export default function TrackView({ id }: { id: string }) {
-  const { orders, orderStatus } = useShop();
+export default function TrackView({ id, checkoutReturn = false }: { id: string; checkoutReturn?: boolean }) {
+  const { orders, orderStatus, syncCart, user } = useShop();
   const { t, lang } = useLang();
   const [remoteOrder, setRemoteOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   useTick(2000); // re-derive time-based status
 
+  const [notice, setNotice] = useState<"pending" | "offline" | "missing">("missing");
+  const syncedOrder = useRef("");
+  useEffect(() => {
+    if (remoteOrder?.id !== id || !["paid", "demo_paid", "refunded"].includes(String(remoteOrder.paymentStatus))) return;
+    completeCheckoutAttempt(id);
+    if (user && syncedOrder.current !== id) {
+      syncedOrder.current = id;
+      syncCart();
+    }
+  }, [remoteOrder, id, user, syncCart]);
+
   useEffect(() => {
     let active = true;
-    let latestRequest = 0;
+    let busy = false;
+    let confirmed = false;
+    let retries = 0;
+    let timer: number;
+    const sessionId = new URLSearchParams(window.location.hash.slice(1)).get("session_id") ?? undefined;
     const load = async () => {
-      const request = ++latestRequest;
+      if (!active || busy || document.visibilityState === "hidden") return;
+      busy = true;
+      window.clearTimeout(timer);
+      let delay = 60_000;
       try {
-        const latest = await apiGetOrder(id);
-        if (active && request === latestRequest) {
+        let latest: Order | { pending: true };
+        if (checkoutReturn && !confirmed) {
+          try { latest = await apiConfirmCheckoutReturn(id, sessionId); }
+          catch (e) {
+            if (!(e instanceof Error) || e.message !== "auth.forbidden") throw e;
+            latest = await apiGetOrder(id); // Older Stripe links may have no session proof.
+          }
+        } else latest = await apiGetOrder(id);
+        if (!active) return;
+        if ("pending" in latest || (checkoutReturn && latest.paymentStatus === "pending")) {
+          setNotice("pending");
+        } else {
+          confirmed = true;
           setRemoteOrder(latest);
-          if (["paid", "demo_paid", "refunded"].includes(String(latest.paymentStatus))) completeCheckoutAttempt(id);
         }
-      } catch {
-        // An order already present in the authenticated account store is a safe fallback.
+      } catch (e) {
+        if (!active) return;
+        const code = e instanceof Error ? e.message : "";
+        setNotice(code === "order.notFound" ? "missing" : code === "auth.forbidden" ? (checkoutReturn ? "pending" : "missing") : "offline");
       } finally {
-        if (active && request === latestRequest) setLoading(false);
+        busy = false;
+        if (active) {
+          setLoading(false);
+          if (checkoutReturn && !confirmed && retries++ < 4) delay = 5_000 * retries;
+          timer = window.setTimeout(load, delay);
+        }
       }
     };
     setRemoteOrder(null);
     setLoading(true);
     void load();
-    const tick = () => {
-      if (document.visibilityState === "hidden") return;
-      void load();
-    };
-    const timer = window.setInterval(tick, 60_000);
-    document.addEventListener("visibilitychange", tick);
+    document.addEventListener("visibilitychange", load);
+    window.addEventListener("online", load);
     return () => {
       active = false;
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", tick);
+      window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", load);
+      window.removeEventListener("online", load);
     };
-  }, [id]);
+  }, [id, checkoutReturn, user?.id]);
 
-  const local = orders.find((o) => o.id === id);
-  const order = remoteOrder?.id === id ? remoteOrder : local;
+  const local = user && (loading || notice === "offline") ? orders.find((o) => o.id === id && o.userId === user.id) : undefined;
+  const order = remoteOrder?.id === id && (!remoteOrder.userId || remoteOrder.userId === user?.id) ? remoteOrder : local;
   if (!order && loading) return <div className="container-x pt-32 text-center text-sm font-bold text-cherry/60">Loading your order…</div>;
+  if ((!order || (checkoutReturn && order.paymentStatus === "pending")) && (notice !== "missing" || checkoutReturn && order))
+    return <div role="status" className="container-x pt-32 text-center">
+      <h1 className="font-display text-3xl font-black text-cherry">{t(notice === "offline" ? "track.offline" : "track.confirming")}</h1>
+      <p className="mt-2 text-cherry/70">{id} · {t("track.retrying")}</p>
+    </div>;
   if (!order)
     return (
       <div className="container-x pt-32 text-center">

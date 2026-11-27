@@ -48,6 +48,8 @@ export interface PricedLines {
 }
 
 /** Totals over already priced lines. Shared by the strict and lenient paths. */
+export const includedVat = (total: number, rate: number): number => Math.round(total * rate / (1 + rate) * 100) / 100;
+
 async function totalsFor(
   s: Settings,
   items: MenuItem[],
@@ -65,7 +67,7 @@ async function totalsFor(
   if (disc.freeDelivery && type === "delivery") deliveryFee = 0;
   const total = Math.max(0, Math.round((subtotal - disc.amount + deliveryFee) * 100) / 100);
   // prices include VAT; vatRate is a fraction (0.135 = 13.5 %), so the VAT share is total × r / (1 + r)
-  const vat = Math.round(((total * s.vatRate) / (1 + s.vatRate)) * 100) / 100;
+  const vat = includedVat(total, s.vatRate);
   return {
     subtotal,
     weightKg,

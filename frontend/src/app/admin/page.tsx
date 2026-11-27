@@ -17,30 +17,12 @@ import { CustomersView, WalkInStreaksView, AnalyticsView, AdminStaffView, Settin
 /* credentials live ONLY in the backend (bcrypt + scoped staff JWTs) */
 
 export default function AdminPage() {
-  const [authed, setAuthed] = useState(false);
-  useEffect(() => {
-    setAuthed(sessionStorage.getItem("kb_admin") === "1");
-  }, []);
-  if (!authed)
-    return (
-      <Gate
-        onOk={() => {
-          sessionStorage.setItem("kb_admin", "1");
-          setAuthed(true);
-        }}
-      />
-    );
-  return (
-    <AdminShell
-      onLogout={() => {
-        sessionStorage.removeItem("kb_admin");
-        setAuthed(false);
-      }}
-    />
-  );
+  const { staffRole, authChecked, adminLogout } = useShop();
+  if (!authChecked) return <div role="status" className="container-x pt-32 text-center">Checking staff session…</div>;
+  return staffRole ? <AdminShell onLogout={adminLogout} /> : <Gate />;
 }
 
-function Gate({ onOk }: { onOk: () => void }) {
+function Gate() {
   const { adminLogin } = useShop();
   const [u, setU] = useState("");
   const [p, setP] = useState("");
@@ -95,7 +77,6 @@ function Gate({ onOk }: { onOk: () => void }) {
               const problem = await adminLogin(u, p); // POST /api/auth/admin-login
               setBusy(false);
               if (problem) setErr(true);
-              else onOk();
             }}
           >
             <label className="block text-[11px] font-black uppercase tracking-wide text-cherry/50">
@@ -208,7 +189,7 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
     return isRingToneId(stored) ? stored : "classic";
   });
   const [alertQueue, setAlertQueue] = useState<Order[]>([]);
-  const seenOrders = useRef<Set<string> | null>(null);
+  const deferredAlerts = useRef(new Set<string>());
   const firstSeenAt = useRef<Map<string, number>>(new Map());
   const { orders, orderStatus, refreshKitchen } = useShop();
   const { lang, setLang } = useLang();
@@ -216,13 +197,14 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
 
   const isPaid = (o: Order) => o.paymentStatus === "paid" || o.paymentStatus === "demo_paid";
   const isOpenTicket = isOpenOrderTicket;
-  const placed = orders.filter((o) => isOpenTicket(o) && isPaid(o));
+
 
   /* Poll tickets only — a full catalogue refresh every 15s burned Hobby CPU/CDN. */
   useEffect(() => {
     const tick = () => {
       void refreshKitchen();
     };
+    tick();
     const id = window.setInterval(tick, 5_000);
     document.addEventListener("visibilitychange", tick);
     return () => {
@@ -256,23 +238,11 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
     const livePaid = live.filter(isPaid);
     const now = Date.now();
     const until = ringUntilForOrders(orders, firstSeenAt.current, now);
-    if (seenOrders.current === null) {
-      seenOrders.current = new Set(live.map((o) => o.id));
-      if (livePaid.length) setAlertQueue(livePaid);
-    } else {
-      setAlertQueue((q) => {
-        const next = q.filter((a) => {
-          const current = orders.find((o) => o.id === a.id);
-          return !!current && orderStatus(current) === "placed" && !current.refunded && isPaid(current);
-        });
-        return next.length === q.length ? q : next;
-      });
-      live.forEach((o) => seenOrders.current!.add(o.id));
-      setAlertQueue((q) => {
-        const incoming = livePaid.filter((o) => !q.some((x) => x.id === o.id));
-        return incoming.length ? [...q, ...incoming] : q;
-      });
+    const openIds = new Set(live.map((o) => o.id));
+    for (const id of deferredAlerts.current) {
+      if (!openIds.has(id)) deferredAlerts.current.delete(id);
     }
+    setAlertQueue(livePaid.filter((o) => !deferredAlerts.current.has(o.id)));
     /* Ring 5 minutes from when THIS tab first saw the ticket — not createdAt. */
     if (!soundOn || !live.length) {
       stopNewOrderRing();
@@ -581,8 +551,11 @@ function AdminShell({ onLogout }: { onLogout: () => void }) {
           key={alertQueue[0].id}
           order={alertQueue[0]}
           queued={alertQueue.length - 1}
-          onResolved={() => setAlertQueue((q) => q.slice(1))}
-          onLater={() => setAlertQueue((q) => q.slice(1))}
+          onResolved={() => setAlertQueue((q) => q.filter((o) => o.id !== alertQueue[0].id))}
+          onLater={() => {
+            deferredAlerts.current.add(alertQueue[0].id);
+            setAlertQueue((q) => q.filter((o) => o.id !== alertQueue[0].id));
+          }}
         />
       )}
     </div>

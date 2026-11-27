@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { orderLineDetails } from "@/lib/cart-lines";
 import { eur } from "@/lib/format";
+import { ticketLines } from "./ticket";
 import { RESTAURANT } from "@/lib/menu";
 import { todayStrHelsinki } from "@/lib/hours";
 import { useLang } from "@/lib/i18n";
@@ -18,6 +19,7 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
   const { orders, reservations, users, orderStatus, settings, saveSettings, logAudit, toast } = useShop();
   const { t } = useLang();
   const [range, setRange] = useState<7 | 30>(7);
+  const [savingDelivery, setSavingDelivery] = useState(false);
   const [report, setReport] = useState<AnalyticsReport | null>(null);
   const deliveryOn = settings.deliveryEnabled !== false;
   const ready = useDelayedReady("dash");
@@ -109,14 +111,16 @@ export function DashboardView({ go }: { go: (v: string) => void }) {
           <GhostBtn className="w-full justify-center" onClick={() => go("menu.special")}>★ Set Today's Special</GhostBtn>
           <button
             type="button"
-            onClick={() => {
-              void (async () => {
-                const next = !deliveryOn;
+            disabled={savingDelivery}
+            onClick={async () => {
+              const next = !deliveryOn;
+              setSavingDelivery(true);
+              try {
                 if (await saveSettings({ ...settings, deliveryEnabled: next })) {
                   logAudit(`delivery ${next ? "enabled" : "paused"} from dashboard`);
                   toast(next ? "Delivery is on" : "Delivery paused — pickup only", next ? "ok" : "err");
                 }
-              })();
+              } finally { setSavingDelivery(false); }
             }}
             className={deliveryOn
               ? "min-h-[44px] w-full rounded-xl border-2 border-brick px-4 text-sm font-black text-brick hover:bg-brick hover:text-cream"
@@ -251,7 +255,7 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
       onRow={(o) => setDetail(o)}
       rowMenu={(o) => [
         { label: "View detail", icon: "eye", onClick: () => setDetail(o) },
-        { label: "Print ticket", icon: "print", onClick: () => printTicket(o, settings.vatRate) },
+        { label: "Print ticket", icon: "print", onClick: () => printTicket(o) },
         ...(!o.refunded ? [{ label: "Refund…", icon: "trash", danger: true, onClick: () => setDetail(o) }] : []),
       ]}
       empty={<EmptyState icon="orders" title="No orders here" sub={mode === "queue" ? "New orders appear instantly with a sound + badge." : "Orders will show up as customers check out."} />}
@@ -360,7 +364,7 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
                   {["placed", "accepted", "preparing", "ready", "completed"].map((s) => <option key={s} value={s}>{s}</option>)}
                 </select>
               )}
-              <GhostBtn onClick={() => printTicket(detail, settings.vatRate)}><Ic n="print" size={13} /> Print ticket</GhostBtn>
+              <GhostBtn onClick={() => printTicket(detail)}><Ic n="print" size={13} /> Print ticket</GhostBtn>
               {!detail.refunded && (
                 <button
                   onClick={async () => { if (await refundOrder(detail.id)) { logAudit(`refund ${detail.id}: ${refundReason || "no reason"}`); toast(`${detail.id} refunded`, "err"); setDetail(null); } }}
@@ -382,109 +386,14 @@ export function OrdersView({ mode }: { mode: "queue" | "history" | "refunds" }) 
   );
 }
 
-const TICKET_W = 42;
-const RULE = "-".repeat(TICKET_W);
-const DOTS = ".".repeat(TICKET_W);
-
-function ticketPad(left: string, right: string, width = TICKET_W): string {
-  const gap = Math.max(1, width - left.length - right.length);
-  return left + " ".repeat(gap) + right;
-}
-
-function center(text: string, width = TICKET_W): string {
-  const pad = Math.max(0, Math.floor((width - text.length) / 2));
-  return " ".repeat(pad) + text;
-}
-
-/** Finnish fiscal receipts use a decimal comma. */
-function fiNum(n: number): string {
-  return n.toFixed(2).replace(".", ",");
-}
-
-function helsinkiClock(ts: number): string {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Europe/Helsinki",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(new Date(ts));
-  const g = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  return `${g("year")}-${g("month")}-${g("day")} ${g("hour")}:${g("minute")}:${g("second")}`;
-}
-
-function ticketLines(o: Order, vatRate: number): string {
-  const vatPctLabel = `${(Math.round(vatRate * 1000) / 10).toFixed(1)}%`;
-  const net = Math.round((o.total - o.vat) * 100) / 100;
-  const discountPct = o.subtotal > 0 && o.discount?.amount
-    ? ((o.discount.amount / o.subtotal) * 100).toFixed(1)
-    : "";
-  const invoiceNo = String(1_000_000 + (Math.abs(o.createdAt) % 900_000)).padStart(7, "0");
-  const itemRows = o.lines.flatMap((l) => {
-    const rows = [ticketPad(`${l.qty}x ${l.name}`, `${fiNum(l.unitPrice * l.qty)} B`)];
-    for (const row of orderLineDetails(l)) rows.push(`  ${row}`);
-    return rows;
-  });
-  if (o.type === "delivery" && o.deliveryFee > 0) {
-    itemRows.push(ticketPad("1x Toimitus", `${fiNum(o.deliveryFee)} B`));
-  }
-  const payLabel = o.refunded ? "Hyvitys" : "Kortti";
-  const viite = o.paymentId || o.checkoutSessionId || o.id;
-
-  return [
-    "",
-    center(RESTAURANT.name),
-    "",
-    center(RESTAURANT.street),
-    center(`${RESTAURANT.postcode} ${RESTAURANT.city}`),
-    center(RESTAURANT.country),
-    ...(RESTAURANT.yTunnus ? [center(`Y-tunnus: ${RESTAURANT.yTunnus}`)] : []),
-    "",
-    center("Kuitti"),
-    "",
-    `Tilaus-ID: ${o.id}`,
-    `Laskun nro.: ${invoiceNo}`,
-    helsinkiClock(o.createdAt),
-    ...(o.type === "delivery"
-      ? ["Toimitus:", o.customer.name, o.customer.phone, o.address || ""]
-      : []),
-    ...(o.note ? [`Ohje: ${o.note}`] : []),
-    RULE,
-    ticketPad("Tuote", "EUR"),
-    ...itemRows,
-    DOTS,
-    ticketPad("Välisumma", fiNum(o.subtotal + (o.deliveryFee || 0))),
-    ...(o.discount?.amount
-      ? [ticketPad(`Alennus (${discountPct}%)`, `-${fiNum(o.discount.amount)}`)]
-      : []),
-    DOTS,
-    ticketPad("Yhteensä", fiNum(o.total)),
-    ticketPad(payLabel, fiNum(o.total)),
-    "",
-    "ALV-yhteenveto",
-    `B=${vatPctLabel} of ${fiNum(o.total)}: ${fiNum(o.vat)} (${fiNum(net)})`,
-    "",
-    `Kortti: ${o.paymentStatus === "demo_paid" ? "Demo" : "Verkkomaksu"}`,
-    `Summa: ${fiNum(o.total)}`,
-    `Viite:`,
-    viite,
-    "",
-    center("Kiitos vierailustasi!"),
-    "",
-  ].filter((row) => row !== undefined).join("\n");
-}
-
-function printTicket(o: Order, vatRate: number) {
+function printTicket(o: Order) {
   const w = window.open("", "_blank", "width=360,height=720");
   if (!w) return;
   /* Never interpolate customer/menu text into document.write: textContent
      prevents a stored note/name from becoming script in the print window. */
   const pre = w.document.createElement("pre");
   pre.style.cssText = "font:13px/1.35 ui-monospace,monospace;white-space:pre-wrap;margin:12px auto;max-width:42ch;text-align:left";
-  pre.textContent = ticketLines(o, vatRate);
+  pre.textContent = ticketLines(o, RESTAURANT, orderLineDetails);
   w.document.body.replaceChildren(pre);
   w.print();
 }

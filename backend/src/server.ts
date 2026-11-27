@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import express, { type NextFunction, type Request, type Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -9,14 +10,14 @@ import { CFG } from "./config";
 import { authClient, codeFlowAuthClient, db as supabaseDb, logActivity } from "./supabase";
 import { getItem, listCategories, listItems, toDatabaseItem } from "./supabase-menu";
 import { getOrder, listCustomerOrders, listOrders } from "./supabase-orders";
-import { readUserStreak, readWalkInClaims, saveSettings, writeUserStreak } from "./supabase-settings";
+import { loadEditableSettings, readUserStreak, readWalkInClaims, saveSettings, writeUserStreak } from "./supabase-settings";
 import { sanitizeToppingGroups } from "./lib/v3";
 import {
   clearSessionCookies, currentAuth, customerRow, ensureCsrfCookie, ensureCustomerRow, issueCustomerSession, issueStaffSession,
   readAuth, requireCustomer, requireStaff, staffById, staffRow, csrfCookie,
   type Role, type TokenPayload,
 } from "./auth";
-import { effectiveItems, loadSettings, orderStatus, priceCart, priceLines, round2, validateOrder } from "./logic";
+import { effectiveItems, loadSettings, orderStatus, priceCart, priceLines, includedVat, round2, validateOrder } from "./logic";
 import { applyPaidOrder, pendingWalkInClaim, qualifiesForStreakStamp, streakFreeAmount } from "./streak";
 import { openInfo, slotsFor } from "./lib/hours";
 import { checkoutFingerprint } from "./checkout-attempt";
@@ -32,6 +33,7 @@ import {
 import { csrfMatches, loginIsLocked, recordLoginFailure, clearLoginFailures, requestIp, safeLogError } from "./security";
 import { buildAnalyticsReport } from "./analytics";
 import { requestOrderRefund, reconcileRefundEvent } from "./order-refund";
+import { openCheckoutSession } from "./checkout-session";
 import { recoverCheckoutRetry } from "./checkout-retry";
 import { changePaidOrderStatus, reconcileOrderPayment } from "./order-payment";
 import { publicTrackOrder } from "./order-public";
@@ -106,37 +108,23 @@ app.post(
 );
 
 app.use(express.json({ limit: CFG.jsonBodyLimit, strict: true }));
+// Shared catalogue responses have no user-specific middleware or Set-Cookie.
+const sharedCatalog = (req: Request) => req.method === "GET" && (
+  ["/api/categories", "/api/translations", "/api/todays-special", "/api/items"].includes(req.path)
+  || /^\/api\/items\/[^/]+$/.test(req.path)
+);
 app.use((req, res, next) => {
   if (!req.path.startsWith("/api/")) return next();
-  const publicGet = req.method === "GET" && (
-    req.path === "/api/health"
-    || req.path === "/api/settings"
-    || req.path === "/api/categories"
-    || req.path === "/api/translations"
-    || req.path === "/api/items"
-    || req.path === "/api/todays-special"
-    || /^\/api\/items\/[^/]+$/.test(req.path)
-  );
-  const liveCatalog = req.method === "GET" && (
-    req.path === "/api/settings"
-    || req.path === "/api/todays-special"
-    || req.path === "/api/items"
-    || /^\/api\/items\/[^/]+$/.test(req.path)
-  );
-  res.setHeader("Cache-Control", liveCatalog
-    ? "public, max-age=15, stale-while-revalidate=60"
-    : publicGet
-      ? "public, max-age=600, stale-while-revalidate=1200"
-      : "no-store");
-  next();
-});
-app.use((req, res, next) => {
-  /* Mint at most one CSRF cookie per request: the dedicated route below
-     reuses the same token instead of appending a duplicate Set-Cookie. */
+  if (sharedCatalog(req)) {
+    const stable = req.path === "/api/categories" || req.path === "/api/translations";
+    res.setHeader("Cache-Control", stable ? "public, max-age=600, stale-while-revalidate=1200" : "public, max-age=15, stale-while-revalidate=60");
+    return next();
+  }
+  res.setHeader("Cache-Control", "no-store");
+  if (req.method === "GET" && req.path === "/api/health") return next();
   res.locals.csrfToken = ensureCsrfCookie(res, req);
-  next();
+  return readAuth(req, res, next);
 });
-app.use(readAuth);
 app.use((req, res, next) => {
   const mutating = ["POST", "PUT", "PATCH", "DELETE"].includes(req.method);
   const exempt = req.path === "/api/auth/csrf" || req.path === "/api/webhooks/stripe";
@@ -160,6 +148,8 @@ const wrap =
       const message = error && typeof error === "object" && "message" in error && typeof error.message === "string" ? error.message : "internal";
       if (["auth.emailUnavailable", "payment.unavailable", "payment.required", "payment.cartSnapshotFailed", "payment.sessionBindingFailed", "payment.checkoutCleanupFailed", "payment.processingFailed"].includes(message))
         return fail(res, 503, message);
+      if (message === "settings.concurrentUpdate") return fail(res, 409, message);
+      if (message === "order.statusChanged") return fail(res, 409, message);
       if (message === "order.notFound") return fail(res, 404, message);
       if (businessError.test(message)) return fail(res, 400, message);
       next(error);
@@ -453,7 +443,7 @@ app.post("/api/auth/logout", wrap(async (req, res) => {
      the SPA's cached double-submit token (every later mutation failed). */
   const token = (req as any).accessToken as string | null;
   if (token) await supabaseDb.auth.admin.signOut(token, "local").catch(() => {});
-  clearSessionCookies(res, { keepCsrf: true });
+  clearSessionCookies(res, { keepCsrf: true, staffOnly: req.get("X-Session-Scope") === "staff" });
   ok(res, { ok: true });
 }));
 
@@ -542,6 +532,7 @@ async function createPendingOrder(req: Request, body: z.infer<typeof customerOrd
     const nextTotal = round2(priced.total - free);
     if (nextTotal <= 0) throw new Error("streak.needOtherItems");
     priced.total = nextTotal;
+    priced.vat = includedVat(nextTotal, settings.vatRate);
     priced.discount = {
       title: body.lang === "fi" ? streakCfg.rewardNameFi : streakCfg.rewardNameEn,
       amount: round2((priced.discount?.amount ?? 0) + free),
@@ -640,65 +631,47 @@ app.post("/api/checkout/session", orderLimiter, requireCustomer, wrap(async (req
     return;
   }
   const created = await createPendingOrder(req, body);
-  if (created.reused && created.order.checkoutSessionId) {
-    const existingSession = await stripeClient.checkout.sessions.retrieve(created.order.checkoutSessionId);
-    if (existingSession.status === "expired" && existingSession.payment_status === "unpaid") {
-      await applyStripeCheckoutEvent({ id: `retry-expired:${existingSession.id}`, type: "checkout.session.expired", data: { object: existingSession } }, {
-        retrieveSession: async () => existingSession, process: processCheckoutCommand,
-      });
-    }
-    await recoverCheckoutRetry(created.order, existingSession, {
-      reconcile: (order) => reconcileOrderPayment(order, {
-        retrieveSession: async () => existingSession, process: processCheckoutCommand,
-      }),
-      get: getOrder,
-      respond: (data) => ok(res, data),
-    });
-    return;
-  }
-  if (created.order.paymentStatus !== "pending" || created.order.statusOverride === "cancelled")
-    throw new Error("payment.attemptFinished");
-  // Never reissue an uncertain external creation after Stripe's idempotency retention window.
-  if (Date.now() - created.order.createdAt > 23 * 60 * 60_000) throw new Error("payment.recoveryRequired");
-  let externalSessionRequested = false;
-  try {
-    externalSessionRequested = true;
-    const session = await stripeClient.checkout.sessions.create({
-      mode: "payment",
-      line_items: [{
-        price_data: {
-          currency: "eur",
-          product_data: { name: `Kuopio Bites order ${created.order.id}` },
-          unit_amount: Math.round(created.order.total * 100),
-        },
-        quantity: 1,
-      }],
-      customer_email: created.order.customer.email,
-      metadata: { order_id: created.order.id, amount_eur: created.order.total.toFixed(2) },
-      success_url: `${CFG.publicWebUrl}/track?id=${created.order.id}&payment=success`,
-      cancel_url: `${CFG.publicWebUrl}/order?payment=cancelled`,
-      expires_at: Math.floor(created.order.createdAt / 1000) + 30 * 60,
-    }, { idempotencyKey: `checkout:${created.order.id}` });
-    const { data, error } = await supabaseDb.from("orders").update({
-      payment_ref: session.id, checkout_session_id: session.id,
-
-    }).eq("id", created.order.id).eq("payment_status", "pending").select("id");
-    if (error || !data?.length) throw new Error("payment.sessionBindingFailed");
-    ok(res, { mode: "stripe", url: session.url, sessionId: session.id, orderId: created.order.id });
-  } catch (error) {
-    // A transport error may hide a successfully created Stripe session.
-    // Preserve uncertain external attempts for reconciliation; never delete their orders.
-    if (!externalSessionRequested) {
-      const { error: cancelError } = await supabaseDb.rpc("process_stripe_checkout_event", {
-        p_event_id: `checkout-create-failed-${created.order.id}`,
-        p_event_type: "checkout.creation_failed", p_order_id: created.order.id,
+  const order = created.order;
+  let session: Stripe.Checkout.Session;
+  if (order.checkoutSessionId) {
+    session = await stripeClient.checkout.sessions.retrieve(order.checkoutSessionId);
+  } else {
+    if (order.paymentStatus !== "pending" || order.statusOverride === "cancelled")
+      throw new Error(order.statusOverride === "cancelled" && order.paymentStatus === "pending" ? "payment.attemptExpired" : "payment.attemptFinished");
+    if (Date.now() - order.createdAt > 23 * 60 * 60_000) throw new Error("payment.recoveryRequired");
+    try {
+      session = await openCheckoutSession(order, CFG.publicWebUrl, !!created.reused,
+        (params, options) => stripeClient.checkout.sessions.create(params, options));
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== "payment.creationExpired") throw error;
+      const cleanup = await processCheckoutCommand({
+        p_event_id: `checkout-create-failed-${order.id}`, p_event_type: "checkout.creation_failed", p_order_id: order.id,
         p_session_id: null, p_payment_intent_id: null, p_amount_total: null,
         p_currency: null, p_payment_status: "unpaid", p_session_status: "creation_failed",
       });
-      if (cancelError) throw new Error("payment.checkoutCleanupFailed");
+      if (cleanup.ignored) throw new Error("payment.recoveryRequired");
+      throw new Error("payment.attemptExpired");
     }
-    throw error;
+    const { data, error } = await supabaseDb.from("orders").update({
+      payment_ref: session.id, checkout_session_id: session.id,
+    }).eq("id", order.id).eq("payment_status", "pending").eq("status", "placed")
+      .is("checkout_session_id", null).select("id");
+    if (error) throw new Error("payment.sessionBindingFailed");
+    if (!data?.length && (await getOrder(order.id))?.checkoutSessionId !== session.id)
+      throw new Error("payment.sessionBindingFailed");
+    order.checkoutSessionId = session.id;
+    // An idempotent create replays its original response, even if the customer has since paid.
+    if (created.reused) session = await stripeClient.checkout.sessions.retrieve(session.id);
   }
+  if (session.status === "expired" && session.payment_status === "unpaid") {
+    await applyStripeCheckoutEvent({ id: `retry-expired:${session.id}`, type: "checkout.session.expired", data: { object: session } }, {
+      retrieveSession: async () => session, process: processCheckoutCommand,
+    });
+  }
+  await recoverCheckoutRetry(order, session, {
+    reconcile: (pending) => reconcileOrderPayment(pending, { retrieveSession: async () => session, process: processCheckoutCommand }),
+    get: getOrder, respond: (data) => ok(res, data),
+  });
 }));
 
 /* Direct order creation is retained only for an explicitly local demo. A real
@@ -745,6 +718,25 @@ app.get("/api/orders/:id", wrap(async (req, res) => {
   if (!isOwner && !isStaff && !paidTrack) return fail(res, 403, "auth.forbidden");
   if (!isOwner && !isStaff) return ok(res, publicTrackOrder(order));
   ok(res, withStatus(order));
+}));
+
+// A Stripe return may arrive before its webhook or without a session cookie.
+app.post("/api/orders/:id/confirm-return", orderLimiter, wrap(async (req, res) => {
+  const id = paramId.parse(req.params.id);
+  const { sessionId } = z.object({ sessionId: z.string().startsWith("cs_").max(255).optional() }).strict().parse(req.body);
+  const auth = currentAuth(req);
+  const order = await getOrder(id);
+  const owner = !!order && auth?.scope === "customer" && auth.sub === order.userId;
+  if (!order || !(owner || (sessionId && sessionId === order.checkoutSessionId)))
+    return fail(res, 403, "auth.forbidden");
+  if (order.paymentStatus === "pending") {
+    if (!stripeClient) return fail(res, 503, "payment.unavailable");
+    await reconcileOrderPayment(order, { retrieveSession: (sid) => stripeClient.checkout.sessions.retrieve(sid), process: processCheckoutCommand });
+  }
+  const saved = order.paymentStatus === "pending" ? await getOrder(id) : order;
+  if (!saved) return fail(res, 404, "order.notFound");
+  if (saved.paymentStatus === "pending") return ok(res, { pending: true }, 202);
+  return ok(res, owner ? withStatus(saved) : publicTrackOrder(saved));
 }));
 
 app.patch("/api/orders/:id/status", requireStaff("kitchen"), wrap(async (req, res) => {
@@ -858,6 +850,11 @@ async function handleStripeWebhook(req: Request, res: Response): Promise<void> {
       });
     },
   });
+  const ignored = result.body.data?.ignored;
+  if (result.status >= 500 || (ignored && !["unpaidSession", "unhandledEvent", "alreadyFinal"].includes(ignored))) {
+    console.warn(JSON.stringify({ event: "stripe.webhookNeedsReview", requestId: res.getHeader("X-Request-ID"),
+      reason: result.body.error ?? ignored }));
+  }
   res.status(result.status).json(result.body);
 }
 
@@ -1206,11 +1203,32 @@ app.patch("/api/items/reorder", requireStaff("manager"), wrap(async (req, res) =
 app.put("/api/settings", requireStaff("manager"), wrap(async (req, res) => {
   let next: Settings;
   try {
-    const current = await loadSettings();
-    next = settingsSchema.parse({ ...current, ...req.body, audit: current.audit }) as Settings;
-    await saveSettings(next);
+    if (req.body?.changes && Object.keys(req.body.changes).length === 1 && Object.hasOwn(req.body.changes, "deliveryEnabled")) {
+      const field = z.object({ deliveryEnabled: z.boolean() }).strict();
+      const patch = z.object({ changes: field, previous: field }).strict().parse(req.body);
+      const { error } = await supabaseDb.rpc("set_delivery_enabled", { p_enabled: patch.changes.deliveryEnabled });
+      if (error) throw new Error("settings.persist.delivery");
+      const staff = authStaff(req);
+      logActivity(staff.username, staff.role, patch.changes.deliveryEnabled ? "delivery enabled" : "delivery paused");
+      return ok(res, await loadSettings());
+    }
+    const { current, version } = await loadEditableSettings();
+    let changes = req.body;
+    // Older clients submit a full settings object. Current clients name only the
+    // fields they edited and the field values shown before their edit.
+    if (req.body && "changes" in req.body) {
+      const editable = settingsSchema.omit({ audit: true }).partial();
+      const patch = z.object({ changes: editable, previous: editable }).strict().parse(req.body);
+      const fields = Object.keys(patch.changes) as (keyof typeof patch.changes)[];
+      if (fields.some((field) => !Object.hasOwn(patch.previous, field) || !isDeepStrictEqual(JSON.parse(JSON.stringify(patch.previous[field])), JSON.parse(JSON.stringify(current[field]) ?? "null"))))
+        return fail(res, 409, "settings.concurrentUpdate");
+      changes = patch.changes;
+    }
+    next = settingsSchema.parse({ ...current, ...changes, audit: current.audit }) as Settings;
+    await saveSettings(next, version);
   } catch (error) {
     if (error instanceof Error && error.message.startsWith("settings.")) {
+      if (error.message === "settings.concurrentUpdate") return fail(res, 409, error.message);
       safeLogError((req as any).requestId || "unknown", error);
       return fail(res, 503, error.message.startsWith("settings.persist.") ? "settings.persistFailed" : "settings.loadFailed");
     }
@@ -1220,38 +1238,38 @@ app.put("/api/settings", requireStaff("manager"), wrap(async (req, res) => {
 }));
 
 app.put("/api/todays-special", requireStaff("manager"), wrap(async (req, res) => {
-  const patch = specialPatchSchema.parse(req.body); const current = await loadSettings();
+  const patch = specialPatchSchema.parse(req.body); const { current, version } = await loadEditableSettings();
   const next = settingsSchema.parse({ ...current, special: patch.special ?? current.special, todaysSpecials: patch.todaysSpecials ?? current.todaysSpecials }) as Settings;
-  await saveSettings(next);
+  await saveSettings(next, version);
   const staff = authStaff(req); logActivity(staff.username, staff.role, "today's special updated");
   ok(res, { special: next.special, todaysSpecials: next.todaysSpecials });
 }));
 
 app.get("/api/promotions", wrap(async (_req, res) => {
-  const offers = (await loadSettings()).offers.filter((offer) => offer.active).map(({ code: _code, ...offer }) => offer);
+  const offers = (await loadSettings()).offers.filter((offer) => offer.active && !offer.code).map(({ code: _code, ...offer }) => offer);
   ok(res, offers);
 }));
 app.post("/api/promotions", requireStaff("manager"), wrap(async (req, res) => {
-  const current = await loadSettings();
+  const { current, version } = await loadEditableSettings();
   const patch = promotionPatchSchema.parse(req.body);
   const offer = { ...patch, id: uid("of") };
   /* Only the offer body is schema-checked. Re-parsing the entire settings
      snapshot 400ed pause/delete when unrelated rows (empty image alts) were invalid. */
-  await saveSettings({ ...current, offers: [...current.offers, offer] });
+  await saveSettings({ ...current, offers: [...current.offers, offer] }, version);
   const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion + ${offer.id}`); ok(res, offer, 201);
 }));
 app.put("/api/promotions/:id", requireStaff("manager"), wrap(async (req, res) => {
-  const id = paramId.parse(req.params.id); const current = await loadSettings();
+  const id = paramId.parse(req.params.id); const { current, version } = await loadEditableSettings();
   const patch = promotionPatchSchema.parse(req.body);
   if (!current.offers.some((offer) => offer.id === id)) return fail(res, 404, "promo.notFound");
   const offers = current.offers.map((offer) => offer.id === id ? { ...patch, id, uses: offer.uses } : offer);
-  await saveSettings({ ...current, offers });
+  await saveSettings({ ...current, offers }, version);
   const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion ~ ${id}`); ok(res, offers.find((offer) => offer.id === id));
 }));
 app.delete("/api/promotions/:id", requireStaff("manager"), wrap(async (req, res) => {
-  const id = paramId.parse(req.params.id); const current = await loadSettings();
+  const id = paramId.parse(req.params.id); const { current, version } = await loadEditableSettings();
   if (!current.offers.some((offer) => offer.id === id)) return fail(res, 404, "promo.notFound");
-  await saveSettings({ ...current, offers: current.offers.filter((offer) => offer.id !== id) });
+  await saveSettings({ ...current, offers: current.offers.filter((offer) => offer.id !== id) }, version);
   const staff = authStaff(req); logActivity(staff.username, staff.role, `promotion - ${id}`); ok(res, { ok: true });
 }));
 

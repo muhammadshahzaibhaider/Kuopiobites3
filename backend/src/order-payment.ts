@@ -40,10 +40,15 @@ export async function changePaidOrderStatus(id: string, status: OrderStatus, dep
   if (!order || (order.paymentStatus !== "paid" && order.paymentStatus !== "demo_paid"))
     throw new Error("payment.notPaid");
   const current = (order.statusOverride ?? order.status ?? "placed") as OrderStatus;
+  if (current === status) return order;
   if (!canTransition(current, status)) throw new Error("order.badTransition");
   // The database update must also guard paid status, closing the read/refund race.
-  if (!await deps.update(id, status, current)) throw new Error("payment.notPaid");
+  const updated = await deps.update(id, status, current);
   const saved = await deps.get(id);
   if (!saved) throw new Error("order.notFound");
+  if (!updated) {
+    if (!["paid", "demo_paid"].includes(String(saved.paymentStatus))) throw new Error("payment.notPaid");
+    if ((saved.statusOverride ?? saved.status ?? "placed") !== status) throw new Error("order.statusChanged");
+  }
   return saved;
 }
